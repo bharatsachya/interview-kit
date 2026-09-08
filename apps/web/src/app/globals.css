@@ -223,6 +223,13 @@
     border-color: var(--color-alarm);
   }
 
+  /* While a region edge is being dragged, the whole document takes the resize cursor and
+     stops selecting text — otherwise a drag that leaves the handle highlights the page. */
+  body.is-resizing {
+    cursor: col-resize;
+    user-select: none;
+  }
+
   /* A category that is legitimately empty is dashed too, but in ink, not red. The four
      categories are a checklist and a gap is worth seeing — it is not a failure, and borrowing
      the alarm colour for it would spend the one red on a normal state. */

@@ -6,11 +6,14 @@ import { UserButton } from "@clerk/nextjs";
 import { api } from "@/lib/api/client";
 import type { KitSummary } from "@/lib/api/types";
 import { DESKTOP, useMediaQuery } from "@/lib/use-media-query";
+import { useHydrated } from "@/lib/use-hydrated";
+import { useResizable } from "@/lib/use-resizable";
 import { Button } from "@/components/industry/button";
 import { Composer } from "@/components/workspace/composer";
 import { GenerationStream } from "@/components/workspace/generation-stream";
 import { HistorySidebar } from "@/components/workspace/history-sidebar";
 import { KitDrawer } from "@/components/workspace/kit-drawer";
+import { ResizeHandle } from "@/components/workspace/resize-handle";
 import { KitPanel } from "@/components/workspace/kit-panel";
 
 /**
@@ -112,8 +115,32 @@ export function Workspace() {
     setPanelOpen(true);
   }, []);
 
+  // Both edges are draggable and both collapse, and the two are the same property: collapsed
+  // is width zero. The defaults match the CSS tokens the server renders with, so nothing jumps
+  // when the remembered width takes over after hydration.
+  const hydrated = useHydrated();
+  const sidebarResize = useResizable({
+    storageKey: "workspace.sidebar.width",
+    defaultWidth: 256,
+    min: 192,
+    max: 448,
+    edge: "right",
+    label: "Resize the history column",
+    onToggle: () => setHistoryOverride(!historyOpen),
+  });
+  const panelResize = useResizable({
+    storageKey: "workspace.panel.width",
+    defaultWidth: 480,
+    min: 320,
+    max: 880,
+    edge: "left",
+    label: "Resize the kit panel",
+    onToggle: closePanel,
+  });
+
   const activeKit = kits.find((kit) => kit.id === activeKitId) ?? null;
   const running = jobIds.length > 0;
+  const sidebarSized = hydrated && isDesktop;
 
   return (
     <div className="flex h-dvh w-full overflow-hidden">
@@ -127,10 +154,19 @@ export function Workspace() {
         />
       ) : null}
       <div
-        className={`border-divider bg-paper fixed inset-y-0 left-0 z-40 shrink-0 overflow-hidden border-r duration-300 ease-out motion-safe:transition-[width,transform] md:relative md:inset-y-auto md:z-auto ${
-          historyOpen ? "w-sidebar translate-x-0" : "w-sidebar -translate-x-full md:w-0 md:translate-x-0"
-        }`}
+        style={sidebarSized ? { width: historyOpen ? sidebarResize.width : 0 } : undefined}
+        className={`border-divider bg-paper fixed inset-y-0 left-0 z-40 shrink-0 overflow-hidden border-r duration-300 ease-out md:relative md:inset-y-auto md:z-auto ${
+          sidebarResize.dragging ? "" : "motion-safe:transition-[width,transform]"
+        } ${historyOpen ? "w-sidebar translate-x-0" : "w-sidebar -translate-x-full md:w-0 md:translate-x-0"}`}
       >
+        {historyOpen ? (
+          <ResizeHandle
+            edge="right"
+            separatorProps={sidebarResize.separatorProps}
+            dragging={sidebarResize.dragging}
+          />
+        ) : null}
+        <div style={sidebarSized ? { width: sidebarResize.width } : undefined} className="h-full w-sidebar">
         <HistorySidebar
           kits={kits}
           loading={kitsLoading}
@@ -143,6 +179,7 @@ export function Workspace() {
             setHistoryNonce((nonce) => nonce + 1);
           }}
         />
+        </div>
       </div>
 
       {/* Centre region. */}
@@ -197,6 +234,9 @@ export function Workspace() {
       {/* Right region. */}
       <KitPanel
         open={panelOpen}
+        desktop={isDesktop}
+        hydrated={hydrated}
+        resize={panelResize}
         title={activeKit?.company ?? "Kit"}
         subtitle={activeKit?.title}
         onClose={closePanel}

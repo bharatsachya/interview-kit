@@ -29,7 +29,7 @@ export function HistorySidebar({
   onRetry: () => void;
 }) {
   return (
-    <div className="flex h-full w-sidebar flex-col gap-6 overflow-y-auto p-4">
+    <div className="flex h-full w-full flex-col gap-6 overflow-y-auto p-4">
       <Button variant="secondary" onClick={onNew} className="w-full">
         New kit
       </Button>
