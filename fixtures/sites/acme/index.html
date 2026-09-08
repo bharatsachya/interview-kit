@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Acme Payments</title>
+  </head>
+  <body>
+    <h1>Acme Payments</h1>
+    <p>Card processing infrastructure for marketplaces.</p>
+
+    <!--
+      Every link here is RELATIVE and this site is served from a sub-path
+      (http://localhost:8099/acme/), the shape Appendix B's batch harness uses. Resolving these
+      against the origin root instead of the page's own URL would produce /careers/ and 404 on
+      every one of them.
+    -->
+    <nav>
+      <a href="careers/">Careers at Acme</a>
+      <a href="about.html">About us</a>
+      <a href="./pricing.html">Pricing</a>
+    </nav>
+  </body>
+</html>

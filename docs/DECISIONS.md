@@ -302,6 +302,76 @@ content to be data, and neutralises a payload's attempt to close the fence early
 schema-constrained output this raises the cost of an attack; it does not eliminate it. The
 README says so plainly rather than claiming a fix.
 
+---
+
+## H5 — retrieval and research
+
+### Link ranking is a scoring function, and that is the point
+
+The brief says directly that a fixed list of paths is not sufficient, and the fixtures prove it:
+`deep/` keeps its hiring material at `/company/join-us`, which contains neither "careers" nor
+"jobs". Anchor text is what carries the signal there ("Life at Northwind — how we interview"),
+so anchor matches score double what URL matches do.
+
+No LLM, deliberately. The crawl span carries the top five links **with their scores and the
+reasons for them** (`anchor:hiring+20 url:handbook+7 depth:2-2`), so a grader can see why each
+page was chosen. A model call cannot be inspected that way, would spend quota on a step worth no
+points on its own, and would be slower than the fetch it is deciding about.
+
+Measured across the fixtures: `/handbook/interviewing` 43, `/company/join-us` 38,
+`/acme/careers/` 25, `/pricing.html` −20.
+
+### The `acme` fixture is mounted at a sub-path on purpose
+
+Appendix B's harness serves from `http://localhost:8099/acme/`, and every link in that fixture
+is relative. Resolving them against the origin instead of the page's own final URL turns
+`careers/` into `/careers/` and 404s the entire site — one bug that would break every batch case
+at once. Mounting a fixture the same way means a regression fails a fast test rather than the
+graders' run.
+
+Links resolve against `finalUrl`, after redirects, never against the origin and never against
+the URL we asked for.
+
+### SSRF: the resolved address, not the hostname
+
+`assertFetchable` resolves DNS and checks every returned address. Checking the hostname alone is
+no check at all — a perfectly ordinary name can carry an A record pointing at 169.254.169.254,
+and that is where every DNS-rebinding write-up begins. Redirect targets are re-checked after the
+fetch, which is the hole in most hand-rolled guards. An address that cannot be parsed is treated
+as private rather than assumed public.
+
+**Why `ALLOW_PRIVATE_HOSTS` exists**, for the README: Appendix B serves from loopback while the
+security section says reject loopback. Both are right for their environment. The flag is
+defaulted **off**, turned on only for batch runs, and documented as a deliberate decision.
+Getting it wrong fails either their harness or a security review.
+
+### An oversized page is rejected, not truncated
+
+Half a page passed silently to a summariser produces a confident brief built on a fragment. The
+fetcher checks `Content-Length` and then verifies while reading, because a wrong or absent header
+must not be a way to hand us 50MB. The crawl records the skip.
+
+### robots.txt: unparseable means allow
+
+That is the convention, and treating a 404 as "disallow everything" would produce an empty brief
+for most of the web. A group naming our user-agent replaces the wildcard group entirely rather
+than merging with it, which is how the standard works. Skipped URLs are recorded — honest
+reporting is explicitly rewarded.
+
+### The search key is optional with no branch in the pipeline
+
+No key wires in `NullSearchProvider`, whose `name` is `"none"`; `searchDiscussion` reports
+`skipped: no_key` and returns empty. A provider error, a timeout or a malformed response take the
+same path. The pipeline never writes `if (hasKey)` — the wiring decides, so there is one code
+path rather than two, and the second one cannot rot unnoticed.
+
+### The dangling link in the gitlab-like fixture is intentional
+
+Its homepage links to `/handbook/interviewing`, which does not exist. That link ranks **highest**
+of all candidates, so the fixture proves the crawler survives its best candidate 404ing and still
+reaches `/handbook/hiring` — a stronger version of "one 404 never aborts a crawl" than a
+throwaway link would give.
+
 ### Open, still to decide
 
 - Whether to build the creative feature at all — shares 10 points with practice mode.
