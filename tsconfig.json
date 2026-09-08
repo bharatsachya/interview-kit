@@ -11,6 +11,8 @@
     "paths": {
       "@trao/contracts": ["packages/contracts/src/index.ts"],
       "@trao/coverage": ["packages/coverage/src/index.ts"],
+      "@trao/extraction": ["packages/extraction/src/index.ts"],
+      "@trao/generation": ["packages/generation/src/index.ts"],
       "@trao/kernel": ["packages/kernel/src/index.ts"],
       "@trao/kit": ["packages/kit/src/index.ts"],
       "@trao/llm": ["packages/llm/src/index.ts"],

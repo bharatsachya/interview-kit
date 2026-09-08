@@ -372,6 +372,89 @@ of all candidates, so the fixture proves the crawler survives its best candidate
 reaches `/handbook/hiring` — a stronger version of "one 404 never aborts a crawl" than a
 throwaway link would give.
 
+---
+
+## H6 — extraction and generation
+
+### Prompt hygiene moved to `contracts`
+
+`untrustedBlock` and `truncateForPrompt` were in `llm`, but extraction and generation both embed
+untrusted text in prompts and neither may import `llm`. They are pure string functions with no
+provider coupling — shared vocabulary for talking to a model, in the same sense `LlmRequest` is —
+so they sit next to it in `contracts`, which still imports nothing. `llm` re-exports them.
+
+The alternative, letting domain packages import `llm`, would have given them a route to a
+provider. The dependency rule earns its keep here: `extraction` genuinely cannot call a model
+except through the one handed to it, and its tests prove it by using a local stub.
+
+### Extraction: three things the code decides, not the model
+
+Worth 20 points, the largest single item, and the rubric's words are that the must-haves are
+found, marked correctly, and **nothing is invented**.
+
+1. **Ids** are assigned in order by the code, so they are stable and readable in the trace. The
+   schema has no id field, so the model cannot invent one.
+2. **Whether a requirement is real.** Every returned requirement is checked back against the
+   posting and dropped if it is not there. Not exact substring — that would drop "5+ years of
+   Python" for the model writing "five" — but a 60% content-token floor, which catches invention
+   while tolerating rewording. Drops are counted and recorded with the missing words.
+3. **Priority, where the posting says.** The posting is split on its own headings, each heading
+   classified must/nice, and a requirement under "Nice to have:" is `nice` whatever the model
+   claimed. The model's answer survives only for text under no heading.
+
+Measured on the fixtures: the rich JD produced **3 priority corrections** — the model marked all
+eight requirements `must`, and the posting's own heading demoted Kubernetes, Kafka and public
+speaking. The two-line stub kept 1 of 4: `Docker and Kubernetes`, `Experience with microservices`
+and `Strong communication skills` were all dropped as not in the posting, and an invented
+location of "San Francisco" became `""`.
+
+A heading is length-capped at 90 characters, because "experience with Kubernetes is required for
+this role" is a sentence, not a section boundary, and treating it as one would re-label
+everything after it.
+
+### Four calls, four prompts, and skipping rather than inventing
+
+One call per category with a distinct `purpose` — which also gives each its own trace span and
+its own cache key, for free. Each is seeded only with the requirements of its kind, so a
+technical requirement is never visible to the behavioural call.
+
+Routing: technical and behavioural by kind; `company-fit` from domain requirements plus the
+brief; `system-design` from technical requirements that read as architectural, falling back to
+all technical when none do. A technical requirement legitimately supports both a depth question
+and a design question, so it reaches both of those calls — but never the behavioural one.
+
+A category with no requirements is **skipped and recorded**, not called. Asking a model for five
+questions from an empty requirement list is an instruction to invent, and the empty categories
+are exactly where invention shows. `company-fit` is the exception: it can run from the company
+brief alone, with `requirement_ids: []`.
+
+The model may tag questions with requirement ids, but only ids it was actually shown; anything
+else is dropped. With a single-requirement seed there is no ambiguity, so an untagged question
+gets that one attached.
+
+### The brief makes no model call when there is nothing to summarise
+
+The rubric rewards the empty case more than the easy one. A model handed an empty context still
+writes a paragraph, and that paragraph is fiction — so when no pages and no discussion were
+retrieved, the honest brief is written in code. `sources` and `pages_used` are always set from
+what was actually fetched; the prompt explicitly tells the model not to list sources, because a
+model asked for its sources will list plausible ones.
+
+`hiring_process` is instructed to return an **empty string** when the material says nothing about
+interviewing. That is the instruction a model is most likely to ignore, and a plausible invented
+process is worse than nothing because the candidate prepares for the wrong thing.
+
+### Flashcards take no `LlmProvider` at all
+
+The strongest form of "zero model calls" is a function that has no way to make one. A question
+with an empty outline gets no card — coverage fallbacks have no outline by design, and a card
+with an empty back is worse than no card. The question still appears in the bank and on the
+schedule.
+
+Long prompts are fronted with their actual question sentence rather than a truncation, because
+practice mode is scored and a card fronted with "Our ingest pipeline buffers in memory and…" is
+not a prompt.
+
 ### Open, still to decide
 
 - Whether to build the creative feature at all — shares 10 points with practice mode.

@@ -1,0 +1,12 @@
+{
+  "//": "No @trao/llm. Extraction receives an LlmProvider as an argument, like every other package.",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@trao/contracts": ["../contracts/src/index.ts"],
+      "@trao/kit": ["../kit/src/index.ts"]
+    }
+  },
+  "include": ["src", "test"]
+}

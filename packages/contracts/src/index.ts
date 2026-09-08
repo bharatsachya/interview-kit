@@ -11,6 +11,7 @@ export * from "./cache";
 export * from "./errors";
 export * from "./llm";
 export * from "./persistence";
+export * from "./prompt";
 export * from "./retrieval";
 export * from "./time";
 export * from "./tracing";
