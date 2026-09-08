@@ -16,6 +16,18 @@ export {
 } from "./appendix-a";
 
 export {
+  evaluationOutputSchema,
+  parseCases,
+  parseCasesJSON,
+  validateEvaluationOutput,
+  type EvaluationCase,
+  type EvaluationOutput,
+  type EvaluationResult,
+  type ParseCasesResult,
+  type ValidateOutputResult,
+} from "./appendix-b";
+
+export {
   addManualQuestion,
   archiveFlashcard,
   archiveQuestion,

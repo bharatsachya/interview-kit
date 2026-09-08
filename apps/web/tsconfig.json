@@ -18,7 +18,8 @@
     "paths": {
       "@/*": ["./src/*"],
       "@trao/contracts": ["../../packages/contracts/src/index.ts"],
-      "@trao/kit": ["../../packages/kit/src/index.ts"]
+      "@trao/kit": ["../../packages/kit/src/index.ts"],
+      "@trao/scheduling": ["../../packages/scheduling/src/index.ts"]
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],

@@ -47,6 +47,10 @@
   --font-head: var(--font-barlow-condensed), ui-sans-serif, system-ui, sans-serif;
   --font-body: var(--font-barlow), ui-sans-serif, system-ui, sans-serif;
 
+  /* Objects are square; the 4px belongs to inputs and buttons alone. Naming it means a
+     component never has to remember which Tailwind radius step happens to be 4px. */
+  --radius-control: 4px;
+
   /* — measure —
      Reading measure caps at 68ch, answer outlines at 60ch, the page at 1180. */
   --container-page: 1180px;
