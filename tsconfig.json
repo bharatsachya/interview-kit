@@ -13,6 +13,7 @@
       "@trao/coverage": ["packages/coverage/src/index.ts"],
       "@trao/kernel": ["packages/kernel/src/index.ts"],
       "@trao/kit": ["packages/kit/src/index.ts"],
+      "@trao/llm": ["packages/llm/src/index.ts"],
       "@trao/scheduling": ["packages/scheduling/src/index.ts"]
     }
   },

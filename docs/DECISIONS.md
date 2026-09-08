@@ -222,6 +222,86 @@ the input. A requirement too thin to slot into a sentence ("Go") falls back to t
 The answer outline is left empty rather than guessed — an invented outline is the one part of a
 kit a candidate could not tell was made up.
 
+---
+
+## H4 — the LLM gateway
+
+### Two seams, not one
+
+`LlmProvider` in contracts is what the rest of the repo sees: prompt and schema in, parsed
+object out. `ModelTransport` is internal to `packages/llm`: raw text in, raw text out, no
+retrying, no caching, no parsing. Everything interesting lives in the gateway between them, so
+there is one place to reason about rate limits and one place to test them. The transport
+interface never leaves the package.
+
+### Budget is reserved before the call, not charged after it
+
+The obvious order — call, then charge actual usage — has a bug worth naming: if the actual
+usage tips the run over its limit, `spend()` throws and the response is discarded *after* the
+quota was already spent. Both the answer and the quota are lost.
+
+So the gateway reserves `promptTokens + outputAllowance` before sending, and never charges
+afterwards. Over-reserving errs towards stopping early, which is the safe direction when the
+daily request cap is the scarce resource. A repair round reserves again, because it is a second
+real request.
+
+### Rate limiting is a queue, not a rejection
+
+The RPM and TPM buckets serialise acquisitions through a promise chain. Without that, two
+concurrent callers both read `available`, both decide there is room, and both spend it —
+producing exactly the 429 the bucket exists to prevent. Batch mode runs two or three cases
+concurrently against one shared quota, so this is a real path, not a theoretical one.
+
+Measured against the actual batch budget: 40 calls (5 cases × 8) at 10 RPM completes in
+**3.0 minutes** of queueing, inside a 15-minute window. At 15 RPM it is 1.7.
+
+### Jitter, and why it is not decoration
+
+`random()` is injected rather than called from `Math.random`, for the same reason `Clock` is —
+the backoff tests assert exact numbers. Full jitter (uniform over `[0, ceiling]`) rather than a
+fixed schedule because concurrent cases share one quota: undithered backoff would have them all
+sleep the same interval and retry in the same instant, reproducing the burst that caused the
+429.
+
+`Retry-After` always wins when the provider sends it. It is the only party that knows when the
+window actually reopens, and guessing shorter just burns another request.
+
+### Local JSON repair before paid repair
+
+Models wrap JSON in prose or code fences far more often than they emit genuinely malformed
+JSON. `extractJson` strips fences and surrounding prose first, for free. Only a response that
+survives that and still fails the schema costs a repair call — exactly one, with the validation
+error fed back. A second repair on the same quota would be optimism rather than engineering.
+
+The repaired result is cached under the **original** prompt hash, so an identical later request
+skips the mistake entirely instead of repeating and re-correcting it.
+
+### Two fakes, deliberately
+
+`FakeLlmProvider` implements `LlmProvider` and bypasses the gateway entirely — `--fake-llm`
+wants a full pipeline run in under a second, and there is nothing to rate-limit when nothing
+leaves the process. `FakeTransport` sits underneath the gateway and scripts responses and
+errors, so limiter behaviour is exercised without slowing the pipeline tests down.
+
+`FakeLlmProvider` validates its own canned response against the caller's schema and throws if
+it does not fit. A fixture that has drifted should fail loudly in a fast test, not quietly at
+H8 against a real provider.
+
+### The tracer is required here, unlike in coverage
+
+Coverage returns a report and takes no `Tracer`, because its per-pass detail can be reconstructed
+afterwards. The gateway's cannot: `cache_hit` and `queued_ms` are per-call and are the two
+attributes you actually stare at while tuning. Making the `Tracer` a required constructor
+argument means the trace can never be accidentally lost. Tests use a small `RecordingTracer`
+local to the package, since `kernel` is out of reach.
+
+### Prompt injection: mitigated, not solved
+
+`untrustedBlock` wraps every fetched page and pasted description in delimiters that declare the
+content to be data, and neutralises a payload's attempt to close the fence early. Combined with
+schema-constrained output this raises the cost of an attack; it does not eliminate it. The
+README says so plainly rather than claiming a fix.
+
 ### Open, still to decide
 
 - Whether to build the creative feature at all — shares 10 points with practice mode.
