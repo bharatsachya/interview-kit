@@ -8,4 +8,5 @@
 export { SystemClock, FixedClock } from "./clock";
 export { formatTrace } from "./format-trace";
 export { SequentialIdGenerator, RandomIdGenerator, ScriptedIdGenerator } from "./ids";
+export { RoutedIdGenerator } from "./routed-ids";
 export { InMemoryTracer, NoopTracer } from "./tracer";

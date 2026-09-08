@@ -1,0 +1,13 @@
+{
+  "name": "@trao/auth",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "//": "No `main`/`exports` — see the note in @trao/contracts.",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "jose": "^5.9.6"
+  }
+}

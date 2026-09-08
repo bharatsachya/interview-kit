@@ -1,0 +1,13 @@
+{
+  "name": "@trao/persistence",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "//": "No `main`/`exports` — see the note in @trao/contracts.",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "mongodb": "^6.12.0"
+  }
+}

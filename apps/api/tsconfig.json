@@ -1,0 +1,30 @@
+{
+  "//": [
+    "A composition root: it may import anything, because building the adapters is its job.",
+    "The list is the transitive closure rather than just the direct imports — packages are",
+    "consumed from source, so type-checking `pipeline` here also resolves whatever `pipeline`",
+    "imports. That is the price of having no build step, and it is cheap next to a dist/ that",
+    "can go stale."
+  ],
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@trao/api-contract": ["../../packages/api-contract/src/index.ts"],
+      "@trao/auth": ["../../packages/auth/src/index.ts"],
+      "@trao/contracts": ["../../packages/contracts/src/index.ts"],
+      "@trao/coverage": ["../../packages/coverage/src/index.ts"],
+      "@trao/extraction": ["../../packages/extraction/src/index.ts"],
+      "@trao/generation": ["../../packages/generation/src/index.ts"],
+      "@trao/kernel": ["../../packages/kernel/src/index.ts"],
+      "@trao/scheduling": ["../../packages/scheduling/src/index.ts"],
+      "@trao/kit": ["../../packages/kit/src/index.ts"],
+      "@trao/llm": ["../../packages/llm/src/index.ts"],
+      "@trao/persistence": ["../../packages/persistence/src/index.ts"],
+      "@trao/pipeline": ["../../packages/pipeline/src/index.ts"],
+      "@trao/research": ["../../packages/research/src/index.ts"],
+      "@trao/retrieval": ["../../packages/retrieval/src/index.ts"]
+    }
+  },
+  "include": ["src", "test"]
+}

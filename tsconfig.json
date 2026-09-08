@@ -9,6 +9,9 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
+      "@trao/api-contract": ["packages/api-contract/src/index.ts"],
+      "@trao/auth": ["packages/auth/src/index.ts"],
+      "@trao/persistence": ["packages/persistence/src/index.ts"],
       "@trao/contracts": ["packages/contracts/src/index.ts"],
       "@trao/coverage": ["packages/coverage/src/index.ts"],
       "@trao/extraction": ["packages/extraction/src/index.ts"],

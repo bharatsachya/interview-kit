@@ -455,6 +455,74 @@ Long prompts are fronted with their actual question sentence rather than a trunc
 practice mode is scored and a card fronted with "Our ingest pipeline buffers in memory and…" is
 not a prompt.
 
+---
+
+## H10 — the Express API, auth, and persistence
+
+### `packages/api-contract` exists
+
+`apps/web/src/lib/api/types.ts` carried a note saying these wire shapes belonged in `contracts`
+once `apps/api` existed. It exists now — but they cannot go in `contracts`, which imports
+nothing and so cannot see `InternalKit` or `EvaluationCase`. A package that may import both
+`contracts` and `kit` is where they actually belong, and naming it for what it is beats filing
+HTTP shapes inside the kit document package. Two consumers share it, which is the bar.
+
+### The kit id bug, and the rule it violated
+
+H1 drew a distinction: sequential ids (`r1`, `q1`, `f1`) are read by humans and compared by
+snapshot tests, and only need to be unique inside one document; ids that outlive the run — kits,
+jobs, users — are storage keys and must be globally unique.
+
+The API wiring collapsed that. `makeDeps()` builds a fresh `SequentialIdGenerator` per job, so
+**every job produced `kit_1`**, and the second user's kit silently overwrote the first user's in
+the store. It surfaced as one ownership test seeing an empty list, which reads like a permissions
+bug rather than a data-loss one.
+
+`RoutedIdGenerator` now routes by prefix — sequential within the kit, random for `kit_` — so the
+rule lives in code rather than in a paragraph two thousand lines away. The fix belongs in
+`kernel` rather than in the API because the API is not the only place that could get it wrong.
+
+### Authentication is verified in the API, not delegated to Next.js
+
+The Express API checks Clerk tokens against JWKS itself. An API that believes a header because
+the frontend promises to set one is not authenticated; it is authenticated only to people who use
+the frontend.
+
+Failures say "Token could not be verified" and nothing more — "expired" versus "bad signature"
+tells an attacker which half of the problem to work on. Someone else's kit returns **404, not
+403**, for the same reason: confirming a resource exists is itself a leak.
+
+`DevAuthenticator` reads the user id from the header for local work, and `main.ts` refuses to
+start with it when `NODE_ENV=production`. An auth bypass a stray environment variable could
+switch on in production is not a bypass, it is a vulnerability.
+
+### Routes are wrapped rather than middlewared
+
+`guarded()` takes a handler whose signature demands a `userId`. A route that forgets to
+authenticate is a route that does not compile — which is a stronger guarantee than remembering to
+put `app.use(requireAuth)` above the right line.
+
+### Progress is read from the trace
+
+The job runner polls its own tracer and reports the current step name from the spans. A
+hand-maintained step list would be a second source of truth about what the pipeline does, and it
+would be wrong the first time a step was renamed. The `/jobs/:id` response carries the spans with
+the job for the same reason — asking for them separately lets the two answers disagree about
+which step is running.
+
+### Idempotency at the API, not in the pipeline
+
+`POST /kits` hashes `(normalised JD + company_url + days)` and hands back a completed job if that
+kit already exists for that user. Generation is about eight model calls and a site crawl; a
+double-submitted form must never pay twice. The pipeline computes and returns the hash but
+enforces nothing — batch mode has no store to check against, and a pipeline that knew about
+storage would need one.
+
+### Memory persistence is not a test double
+
+Batch mode runs on it in production, because the graders clone the repository and run one
+command. Mongo adapters exist for the app. `pipeline` imports neither.
+
 ### Open, still to decide
 
 - Whether to build the creative feature at all — shares 10 points with practice mode.
