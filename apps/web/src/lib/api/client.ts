@@ -19,12 +19,12 @@ import {
  * risks starting two, and the progress screen already polls — a second layer of cleverness
  * would make "why did it run twice" unanswerable.
  */
-const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api";
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`${BASE_URL}${path}`, {
+    response = await fetch(`${API_BASE_URL}${path}`, {
       ...init,
       headers: {
         "content-type": "application/json",

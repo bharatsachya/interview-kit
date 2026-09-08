@@ -209,6 +209,10 @@ const QUESTION_SEEDS: QuestionSeed[] = [
     ],
     difficulty: 1,
     requirementIds: ["REQ-12"],
+    // The question the gap-fill pass produced: the first generation pass left REQ-12 uncovered.
+    // `fallback` rather than `generated`, so a regeneration of behavioural can replace it and
+    // the provenance says where it came from.
+    origin: "fallback",
   },
   {
     id: "q_fit_1",

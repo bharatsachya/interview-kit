@@ -57,6 +57,21 @@
   --container-read: 68ch;
   --container-outline: 60ch;
 
+  /* Steps arrive one at a time; a small rise on entry makes the arrival legible without
+     turning a log into a performance. Applied through motion-safe: everywhere it is used. */
+  --animate-step-in: step-in 260ms ease-out both;
+
+  @keyframes step-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
   /* — workspace regions —
      Named so the open/close animation interpolates between two tokens rather than two
      arbitrary values, and so the collapsed state is literally zero of the same thing. */

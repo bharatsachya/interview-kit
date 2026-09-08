@@ -7,6 +7,8 @@ import { api } from "@/lib/api/client";
 import type { KitSummary } from "@/lib/api/types";
 import { DESKTOP, useMediaQuery } from "@/lib/use-media-query";
 import { Button } from "@/components/industry/button";
+import { Composer } from "@/components/workspace/composer";
+import { GenerationStream } from "@/components/workspace/generation-stream";
 import { HistorySidebar } from "@/components/workspace/history-sidebar";
 import { KitPanel } from "@/components/workspace/kit-panel";
 
@@ -94,7 +96,23 @@ export function Workspace() {
     setHistoryOverride((open) => (open === true ? null : open));
   }, []);
 
+  const startRun = useCallback((ids: string[]) => {
+    setJobIds(ids);
+    setActiveKitId(null);
+    setPanelOpen(false);
+  }, []);
+
+  // The panel opens on the first kit to finish. In a batch the others are reachable from
+  // history; opening and reopening the drawer under someone as each one lands would be hostile.
+  const onKitReady = useCallback((kitId: string) => {
+    setKitsLoading(true);
+    setHistoryNonce((nonce) => nonce + 1);
+    setActiveKitId((current) => current ?? kitId);
+    setPanelOpen(true);
+  }, []);
+
   const activeKit = kits.find((kit) => kit.id === activeKitId) ?? null;
+  const running = jobIds.length > 0;
 
   return (
     <div className="flex h-dvh w-full overflow-hidden">
@@ -146,14 +164,33 @@ export function Workspace() {
           <UserButton />
         </header>
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-          <div className="mx-auto flex w-full max-w-read flex-1 flex-col justify-center px-4 py-10">
-            <p className="text-2xl">Composer lands here next.</p>
-            <p className="mt-3 text-sm opacity-55">
-              Shell first: history, the three regions, and the panel animation.
-            </p>
+        {running ? (
+          <>
+            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+              <div className="mx-auto flex w-full max-w-read flex-col gap-10 px-4 py-10">
+                {jobIds.map((jobId) => (
+                  <GenerationStream
+                    key={jobId}
+                    jobId={jobId}
+                    showLabel={jobIds.length > 1}
+                    onComplete={onKitReady}
+                  />
+                ))}
+              </div>
+            </div>
+            <div className="border-divider bg-paper border-t px-4 py-4">
+              <div className="mx-auto w-full max-w-read">
+                <Composer variant="docked" onStarted={startRun} />
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+            <div className="mx-auto flex w-full max-w-read flex-1 flex-col justify-center px-4 py-10">
+              <Composer variant="centred" onStarted={startRun} />
+            </div>
           </div>
-        </div>
+        )}
       </main>
 
       {/* Right region. */}
