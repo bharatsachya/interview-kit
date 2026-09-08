@@ -1,0 +1,32 @@
+[
+  {
+    "id": "case-01",
+    "jd": "Senior Backend Engineer\nAcme Payments — Berlin (hybrid)\n\nWe move money for around 400 marketplaces and we are looking for a senior engineer to join the ledger team.\n\nRequired:\n- 5+ years building production services in Python\n- Experience operating PostgreSQL at scale, including replication\n- Designing distributed systems with clear availability trade-offs\n- Mentoring junior engineers and reviewing their work\n- A background in payments or another regulated domain\n\nNice to have:\n- Kubernetes in production\n- Experience with Kafka or a similar streaming platform\n\nWe interview in three stages and give a decision within a week.\n",
+    "company_url": "http://localhost:8099/acme/",
+    "days": 5
+  },
+  {
+    "id": "case-02",
+    "jd": "Platform Engineer — Meridian\n\nMeridian builds observability tooling for distributed systems. We are remote-first across nine countries.\n\nRequired:\n- Strong Go or Rust for systems work\n- Operating Kubernetes clusters in production\n- Designing for high throughput ingest and low query latency\n\nNice to have:\n- Public speaking or writing about engineering\n- Experience with telemetry pipelines\n",
+    "company_url": "https://meridian.test/",
+    "days": 14
+  },
+  {
+    "id": "case-03",
+    "jd": "Backend engineer needed. Must know Go.",
+    "company_url": "https://calder.test/",
+    "days": 1
+  },
+  {
+    "id": "case-04",
+    "jd": "Simulation Engineer — Northwind Labs\n\nWe build simulation software for grid operators.\n\nWhat you'll need:\n- Numerical methods and scientific computing in C++\n- Experience with energy systems or another regulated industry\n- Communicating results to non-engineers\n\nIdeally:\n- Familiarity with GPU acceleration\n",
+    "company_url": "https://northwind.test/",
+    "days": 60
+  },
+  {
+    "id": "case-05",
+    "jd": "Staff Engineer\n\nRequired:\n- Ten years of software engineering\n- Leading technical direction across teams\n",
+    "company_url": "https://gone.test/",
+    "days": 7
+  }
+]

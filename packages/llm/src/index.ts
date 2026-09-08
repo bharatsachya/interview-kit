@@ -35,6 +35,7 @@ export {
   promptHash,
   type LlmGatewayOptions,
 } from "./gateway";
+export { GeminiTransport, type GeminiOptions } from "./gemini";
 export { extractJson } from "./json";
 export { MemoryCacheStore, NullCacheStore } from "./memory-cache";
 export { DEFAULT_MAX_PAGE_CHARS, estimateTokens, truncateForPrompt, untrustedBlock } from "./tokens";

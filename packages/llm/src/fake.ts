@@ -72,10 +72,29 @@ export class FakeLlmProvider implements LlmProvider {
     this.calls.length = 0;
   }
 
+  /**
+   * Exact match, then longest registered prefix.
+   *
+   * Purposes carry a suffix so each call gets its own trace span and cache key — a category on
+   * question generation, the requirement ids on a gap fill. A fixture registered as `gap_fill`
+   * should answer `gap_fill:r3+r6` without having to enumerate every possible combination.
+   */
+  #keyFor(purpose: string): string | null {
+    if (this.#responses.has(purpose)) return purpose;
+
+    let best: string | null = null;
+    for (const key of this.#responses.keys()) {
+      if (!purpose.startsWith(key)) continue;
+      if (best === null || key.length > best.length) best = key;
+    }
+    return best;
+  }
+
   async complete<T>(request: LlmRequest<T>): Promise<LlmResult<T>> {
     this.calls.push({ purpose: request.purpose, prompt: request.prompt, tier: request.tier ?? "fast" });
 
-    if (!this.#responses.has(request.purpose)) {
+    const key = this.#keyFor(request.purpose);
+    if (key === null) {
       throw new KitError(
         "INVALID_MODEL_OUTPUT",
         `FakeLlmProvider has no canned response for "${request.purpose}". ` +
@@ -83,7 +102,7 @@ export class FakeLlmProvider implements LlmProvider {
       );
     }
 
-    const canned = this.#responses.get(request.purpose);
+    const canned = this.#responses.get(key);
     const value =
       typeof canned === "function" ? (canned as FakeResponder)(request as LlmRequest<unknown>) : canned;
 

@@ -13,3 +13,6 @@ tmp/
 .DS_Store
 *.log
 .cache/
+
+# batch output written during development
+kits.json

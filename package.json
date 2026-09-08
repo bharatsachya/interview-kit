@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "AI Interview Prep Kit — job description to a researched, editable interview prep kit",
+  "description": "AI Interview Prep Kit \u2014 job description to a researched, editable interview prep kit",
   "engines": {
     "node": ">=20"
   },
@@ -15,7 +15,9 @@
     "build": "npm run typecheck",
     "typecheck": "node scripts/typecheck.mjs",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "dev:kit": "tsx scripts/dev.ts",
+    "evaluate": "tsx scripts/evaluate.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

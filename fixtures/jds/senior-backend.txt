@@ -1,0 +1,19 @@
+Senior Backend Engineer
+Acme Payments — Berlin (hybrid)
+
+We move money for around 400 marketplaces and we are looking for a senior engineer to join
+the ledger team. Reconciliation should be boring, and we work hard to keep it that way.
+
+Required:
+- 5+ years building production services in Python
+- Experience operating PostgreSQL at scale, including replication
+- Designing distributed systems with clear availability trade-offs
+- Mentoring junior engineers and reviewing their work
+- A background in payments or another regulated domain
+
+Nice to have:
+- Kubernetes in production
+- Experience with Kafka or a similar streaming platform
+- Public speaking or writing about engineering
+
+We interview in three stages and give a decision within a week.

@@ -1,0 +1,23 @@
+{
+  "//": [
+    "The one package permitted to import every domain package — sequencing them is its whole",
+    "job. It still constructs nothing: providers, stores and clocks all arrive as arguments,",
+    "so `llm` and `retrieval` are absent from this list on purpose. The adapters are built in",
+    "apps/api/main.ts, scripts/evaluate.ts and scripts/dev.ts, and nowhere else."
+  ],
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@trao/contracts": ["../contracts/src/index.ts"],
+      "@trao/coverage": ["../coverage/src/index.ts"],
+      "@trao/extraction": ["../extraction/src/index.ts"],
+      "@trao/generation": ["../generation/src/index.ts"],
+      "@trao/kit": ["../kit/src/index.ts"],
+      "@trao/research": ["../research/src/index.ts"],
+      "@trao/retrieval": ["../retrieval/src/index.ts"],
+      "@trao/scheduling": ["../scheduling/src/index.ts"]
+    }
+  },
+  "include": ["src", "test"]
+}
