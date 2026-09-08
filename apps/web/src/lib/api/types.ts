@@ -47,6 +47,19 @@ export interface KitView {
   kit: InternalKit;
 }
 
+/** What the history sidebar lists. Deliberately small — the panel fetches the kit itself. */
+export interface KitSummary {
+  id: string;
+  title: string;
+  company: string;
+  days: number;
+  createdAt: number;
+}
+
+export interface KitListView {
+  kits: KitSummary[];
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,

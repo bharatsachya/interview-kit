@@ -4,6 +4,7 @@ import {
   type CreateJobsResponse,
   type CreateKitRequest,
   type JobView,
+  type KitListView,
   type KitView,
 } from "./types";
 
@@ -61,6 +62,10 @@ export const api = {
 
   async getJob(jobId: string, signal?: AbortSignal): Promise<JobView> {
     return request<JobView>(`/jobs/${encodeURIComponent(jobId)}`, { signal });
+  },
+
+  async listKits(signal?: AbortSignal): Promise<KitListView> {
+    return request<KitListView>("/kits", { signal });
   },
 
   async getKit(kitId: string, signal?: AbortSignal): Promise<KitView> {

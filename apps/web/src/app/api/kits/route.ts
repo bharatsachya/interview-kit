@@ -1,7 +1,25 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { parseCases } from "@trao/kit";
-import { startJob } from "@/lib/mock/pipeline";
+import { listKits, startJob } from "@/lib/mock/pipeline";
+
+/** GET /api/kits — the history sidebar's list. Newest first. */
+export async function GET() {
+  await auth.protect();
+
+  return NextResponse.json(
+    {
+      kits: listKits().map((kit) => ({
+        id: kit.id,
+        title: kit.role.title,
+        company: kit.role.company,
+        days: kit.schedule.daysAvailable,
+        createdAt: kit.createdAt,
+      })),
+    },
+    { headers: { "cache-control": "no-store" } },
+  );
+}
 
 /**
  * POST /api/kits — start one generation job.

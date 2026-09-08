@@ -86,6 +86,14 @@ export function getKit(kitId: string): InternalKit | null {
   return kits.get(kitId) ?? fallbackKit(kitId);
 }
 
+/** Newest first — the history list reads top-down and the last thing built is the live one. */
+export function listKits(): InternalKit[] {
+  const seed = fixtureKit();
+  const all = [...kits.values()];
+  if (!kits.has(seed.id)) all.push(seed);
+  return all.sort((a, b) => b.createdAt - a.createdAt);
+}
+
 /** The seeded example kit stays reachable by its own id, so the demo has something to open. */
 function fallbackKit(kitId: string): InternalKit | null {
   const seed = fixtureKit();
