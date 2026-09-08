@@ -10,7 +10,8 @@
     "baseUrl": ".",
     "paths": {
       "@trao/contracts": ["packages/contracts/src/index.ts"],
-      "@trao/kernel": ["packages/kernel/src/index.ts"]
+      "@trao/kernel": ["packages/kernel/src/index.ts"],
+      "@trao/kit": ["packages/kit/src/index.ts"]
     }
   },
   "include": ["packages/*/src", "packages/*/test", "scripts", "vitest.config.ts"]

@@ -82,6 +82,70 @@ Packages are consumed from source through tsconfig `paths`, run by tsx and vites
 per-package compile, no project references, no `dist/` to stale. `npm run build` is currently
 `npm run typecheck`; the API bundle is added at H14 when there is something to deploy.
 
+---
+
+## H2 — kit structure and state
+
+### Appendix A is reconstructed, and quarantined in one file
+
+The assessment brief was not available while this was built. Every Appendix A field name
+appears in `packages/kit/src/appendix-a.ts` and nowhere else, each tagged `[SPEC]` (quoted by
+the assessment or the skills, certain) or `[INFERRED]` (reconstructed from the prose). Internal
+state is camelCase and the output is snake_case, so `toKitJSON` has to map every field by hand
+— which means a wrong name is a one-file correction, not a search-and-replace across a repo.
+
+Inferred, and worth ten seconds against the real appendix before submission: the top-level keys
+`role` and `company_brief`, the sub-fields of both, `id` on the kit and on flashcards, and `day`
+on a schedule day. Everything else is quoted. The skill permits extension but not renaming, so
+the additions (`gaps` on the brief, `id` on flashcards) are safe either way.
+
+### `toKitJSON` constructs every field by hand
+
+Not a spread with a delete-list. A passthrough is how `pinned: true` eventually ships to a
+grader — one new internal field, one forgotten line in the delete-list. With explicit
+construction a field that is not named in the projection cannot leak, and the schema is
+`.strict()` so anything that did leak fails validation loudly rather than shipping.
+
+### Repair lives in `kit`, not in `scheduling`
+
+Skill 02 puts repair at the serialize boundary, skill 03 lists it under scheduling. They cannot
+both own it — `kit` importing `scheduling` would be a cycle, since scheduling produces
+kit-shaped data.
+
+It belongs in `kit`, and the reason is not just the cycle: **repair is not re-allocation**.
+Re-running allocation would recompute day focus and reshuffle questions, wiping exactly the days
+a user edited — the thing the `edited` flag exists to prevent. Repair does the minimum that
+restores integrity: drop dead and archived ids, drop a duplicate when a question sits on two
+days, place active questions that are on no day, recompute each day's minutes. It must not know
+the allocation policy, and both projections in this package have to call it.
+
+Placement rule for an orphan: the lightest day, earliest day breaking a tie, avoiding days the
+user edited while any unedited day exists. If every day is edited it still gets placed — an
+unscheduled question is worse than a slightly disturbed day.
+
+### The minutes table lives in `kit` too
+
+A day's `minutes` is an Appendix A field derived from another Appendix A field (`difficulty`) on
+the same document. Allocation (H3) and repair both need it, and one shared table is the only way
+the two can never disagree about what a day is worth. `scheduling` imports it from here.
+
+### Editing does not pin
+
+`editQuestion` promotes `generated` and `fallback` to `edited`; `manual` stays `manual`. It
+deliberately does not set `pinned`. Conflating the two would silently opt a user out of ever
+regenerating their own edits away, and the skill is explicit that "I changed this" and "keep
+this" are different intents.
+
+Flashcards follow their source question through a regeneration or an archive — but only while
+they are still `generated` and unpinned. A card the user rewrote outlives the question it came
+from.
+
+### Two extra integrity rules beyond the mandated ones
+
+The schema also rejects a question scheduled on two days (it would double-count minutes and read
+as a duplicate to the user), and rejects unknown fields via `.strict()` (which is what makes the
+no-provenance-leak guarantee enforced rather than asserted).
+
 ### Open, still to decide
 
 - 60-day schedule policy: spaced review days vs thin days (needed by H3, the scheduling test

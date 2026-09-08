@@ -1,0 +1,54 @@
+/**
+ * @trao/kit — the kit document: its internal shape, the Appendix A projection, and every
+ * state transition the builder performs on it.
+ *
+ * Imported by anything producing kit-shaped data. Imports nothing but contracts and zod.
+ */
+
+export {
+  kitJsonSchema,
+  validateKitJSON,
+  type KitJSON,
+  type KitJSONDay,
+  type KitJSONFlashcard,
+  type KitJSONQuestion,
+  type KitValidationResult,
+} from "./appendix-a";
+
+export {
+  addManualQuestion,
+  archiveFlashcard,
+  archiveQuestion,
+  editFlashcard,
+  editQuestion,
+  regenerateCategory,
+  setQuestionPinned,
+  type FlashcardPatch,
+  type NewQuestion,
+  type QuestionPatch,
+} from "./edits";
+
+export { MINUTES_BY_DIFFICULTY, minutesForDifficulty, minutesForQuestions } from "./minutes";
+
+export { getKitForBuilder, toKitJSON, tryToKitJSON, type BuilderKit, type ToKitJSONResult } from "./projections";
+
+export { repairSchedule } from "./repair";
+
+export {
+  QUESTION_CATEGORIES,
+  type CompanyBrief,
+  type CoverageReport,
+  type Difficulty,
+  type InternalDay,
+  type InternalFlashcard,
+  type InternalKit,
+  type InternalQuestion,
+  type InternalSchedule,
+  type Origin,
+  type Provenance,
+  type QuestionCategory,
+  type Requirement,
+  type RequirementKind,
+  type RequirementPriority,
+  type RoleSummary,
+} from "./types";
