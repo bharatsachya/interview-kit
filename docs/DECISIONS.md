@@ -525,3 +525,63 @@ carries only `passes` and `uncoveredRequirementIds`, and `RequirementKind` is an
 field that cannot be extended. The bar is built covered/uncovered only. Adding the third state
 means finding it an Appendix-A-safe home first — an internal-only flag on `Requirement`, which
 the projection would strip — and that is a kit-structure decision, not a UI one.
+
+---
+
+## Frontend session 1 — foundation, create, progress
+
+### Intake is a conversation, and the turns are scripted
+
+The create form was replaced with a conversation by request. The turns are not generated. The
+three things a kit needs — description, company site, days — are fixed and knowable, and a model
+call to ask "what is the URL?" would add latency and a failure mode while buying nothing a person
+could not read faster. Intake therefore never rate-limits and works with no API key.
+
+The brief names a JD textarea, a company website field and a days field, and all three are still
+present: each turn's composer *is* the typed control for the field being asked about, with its
+own label, input type and inline validation. The conversation is the arrangement; the fields keep
+their types.
+
+### The Appendix B parser lives in `packages/kit`
+
+`appendix-b.ts` sits beside `appendix-a.ts` because both are frozen shapes the assessment hands
+us. The multi-role upload and `scripts/evaluate.ts` call the same `parseCases`, so the two cannot
+drift. It rejects duplicate case ids: the output is one entry per case keyed by id, which
+duplicate ids make impossible, and the symptom would otherwise be a silently short `kits` array.
+
+It could not go in `contracts`, which is deliberately Zod-free.
+
+### Four phases over nine steps
+
+The progress screen reads step names off the trace rather than from a hardcoded list, then groups
+them into four phases: nine rows is a list to audit, four is a thing to watch. Per-step detail and
+real durations sit one level down. A step the pipeline adds later appears under "Other work"
+rather than disappearing — a progress display that silently omits work is worse than a coarse one.
+
+No percentage anywhere. The pipeline cannot know how long a crawl takes.
+
+### Degradation is drawn as success
+
+A skipped discussion search or an unreachable company site produces a completed phase with a
+note, never an error mark. Only a step that actually errored is `failed`, and the run still
+continues. This is `toPhaseViews`, and it has twelve tests on it precisely because it is the kind
+of state machine a later tidy-up would "simplify" into treating skipped as broken.
+
+A failed *poll* is also not a failed *job*: polls are counted and surfaced only after three
+consecutive failures, with a note saying the run is unaffected.
+
+### Elapsed time comes from the job, not from a clock
+
+`Date.now()` during render is impure, and the figure would only move when a poll happened to
+land. The job's own `createdAt`/`updatedAt` are the server's numbers and the true ones.
+
+### `src/lib/mock/` stands in for `apps/api`
+
+It emits the nine real step names as real `Span` records with real statuses, so the progress
+screen is built against the shape the pipeline will produce rather than one invented for it. It
+allocates days with the real pure allocator instead of reimplementing one, which is the only
+reason `@trao/scheduling` appears in the app's tsconfig allowlist. That entry and this directory
+are deleted together when the API lands.
+
+Its two degradations are chosen by the environment, not at random, so a demo is reproducible: no
+`TAVILY_API_KEY` skips the search, an unreachable site writes the brief from the description alone.
