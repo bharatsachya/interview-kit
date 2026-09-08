@@ -10,6 +10,7 @@ import { Button } from "@/components/industry/button";
 import { Composer } from "@/components/workspace/composer";
 import { GenerationStream } from "@/components/workspace/generation-stream";
 import { HistorySidebar } from "@/components/workspace/history-sidebar";
+import { KitDrawer } from "@/components/workspace/kit-drawer";
 import { KitPanel } from "@/components/workspace/kit-panel";
 
 /**
@@ -200,9 +201,7 @@ export function Workspace() {
         subtitle={activeKit?.title}
         onClose={closePanel}
       >
-        <div className="flex-1 overflow-y-auto p-4">
-          <p className="text-sm opacity-55">Tabs land here in step 3.</p>
-        </div>
+        <KitDrawer kitId={activeKitId} />
       </KitPanel>
     </div>
   );
