@@ -98,7 +98,16 @@ describe("repairSchedule", () => {
     expect(repaired.days[0]?.edited).toBe(true);
   });
 
-  it("de-duplicates a question scheduled on two days, keeping the earlier one", () => {
+  it("de-duplicates a question listed twice on the same day", () => {
+    const repaired = repairSchedule(
+      schedule([{ day: 1, questionIds: ["q1", "q1"] }]),
+      [makeQuestion({ id: "q1", order: 0 })],
+    );
+
+    expect(repaired.days[0]?.questionIds).toEqual(["q1"]);
+  });
+
+  it("keeps the same question on two different days — that is a spaced review, not a bug", () => {
     const repaired = repairSchedule(
       schedule([
         { day: 1, questionIds: ["q1"] },
@@ -108,7 +117,19 @@ describe("repairSchedule", () => {
     );
 
     expect(repaired.days[0]?.questionIds).toEqual(["q1"]);
-    expect(repaired.days[1]?.questionIds).toEqual([]);
+    expect(repaired.days[1]?.questionIds).toEqual(["q1"]);
+  });
+
+  it("counts a review occurrence in that day's minutes", () => {
+    const repaired = repairSchedule(
+      schedule([
+        { day: 1, questionIds: ["q1"] },
+        { day: 2, questionIds: ["q1"] },
+      ]),
+      [makeQuestion({ id: "q1", difficulty: 3, order: 0 })],
+    );
+
+    expect(repaired.days.map((d) => d.minutes)).toEqual([30, 30]);
   });
 
   it("recomputes minutes from the day's actual questions", () => {

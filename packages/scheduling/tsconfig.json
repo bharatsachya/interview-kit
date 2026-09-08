@@ -1,0 +1,12 @@
+{
+  "//": "No LLM, no network, no I/O — so no @trao/llm and no @trao/retrieval here, ever.",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@trao/contracts": ["../contracts/src/index.ts"],
+      "@trao/kit": ["../kit/src/index.ts"]
+    }
+  },
+  "include": ["src", "test"]
+}

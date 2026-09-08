@@ -146,8 +146,82 @@ The schema also rejects a question scheduled on two days (it would double-count 
 as a duplicate to the user), and rejects unknown fields via `.strict()` (which is what makes the
 no-provenance-leak guarantee enforced rather than asserted).
 
+---
+
+## H3 — scheduling and coverage
+
+### 60-day policy: spaced review days
+
+With 24 questions and 60 days, thin days leave ~36 days empty, and an empty day reads as broken
+however valid it is — the skill is explicit that no day may be structurally broken. Learning the
+material in the first stretch and revisiting it afterwards is also what anyone would actually
+advise with two months to prepare.
+
+Consequence, applied back to H2: the kit schema had rejected a question scheduled on two days.
+Spaced review requires exactly that, so the rule was narrowed to reject a repeat **within one
+day** (which double-counts minutes and reads as a bug) while allowing repeats across days.
+Review days are labelled `Review — technical depth` and drawn from the same urgency-sorted list
+with a rotating cursor, so every question is revisited before any is revisited twice.
+
+### Allocation recomputes each day's share, rather than fixing one target
+
+The obvious approach — target `total / days`, move on when a day exceeds it — is wrong with
+chunky items, and visibly so. 480 minutes over 5 days sets a 96-minute target; every 30-minute
+question overshoots immediately; days 1-4 take one question each and the entire remainder lands
+on day 5. Twenty minutes a day, then two hours the night before: precisely the thing the brief
+says not to do.
+
+Recomputing `remaining / days left` as each day is filled self-corrects — a day that overshoots
+lowers the share for the days after it, and the last day's share is by definition everything
+left, so nothing is dropped. Distributions are now `[120, 90, 100, 90, 80]` over 5 days and
+`[170, 170, 140]` over 3.
+
+This was found by looking at the output, not by a failing test — the ten mandated tests all
+passed against the broken allocator, because every one of them is about structure (day count,
+integer minutes, must-have coverage, weight ordering) and none about *volume*. Two regression
+tests now cover it: the last day is never the heaviest, and no day exceeds twice the average.
+Neither asserts monotonically decreasing minutes, because front-loading is by weight and a day
+of three medium questions legitimately out-minutes a day of two hard ones.
+
+### Coverage takes a `GapFillWriter` function, not an `LlmProvider`
+
+Skill 08's trace shows `coverage_check pass=1` and `gap_fill r3` as spans, which suggests
+passing a `Tracer` in — but `NoopTracer` lives in `kernel`, and coverage may only import
+`contracts` and `kit`. Rather than weaken the dependency rule for a default argument, coverage
+stays pure and returns a per-pass report; the pipeline turns that into spans at H7.
+
+The same reasoning applies to the model itself. Gap fill receives a narrow
+`(cluster) => Promise<draft>` function, so the package cannot call a provider even by accident
+and its tests need no fake provider — which is what let coverage be built before H4 rather than
+after it.
+
+### The writer is never asked which requirement it covered
+
+The whole trust problem in one line. If the model returns a question tagged
+`requirement_ids: ["r7"]`, a set difference sees r7 covered even when the question is about
+something else — the model mislabels, the checker believes it, and the kit ships a fake pass.
+
+So `GapFillRequest` has no field for requirement ids, and `GapFillDraft`'s optional
+`requirementIds` is only ever *checked*, never used for labelling: an id we did not supply
+rejects the draft outright. The code attaches the ids, because the code chose the cluster.
+
+### Two loop guards that interact
+
+"A pass closing zero gaps stops immediately" and "at most N attempts per requirement" are both
+budget guards, and the first fires first when there is only one uncovered requirement — so the
+attempts cap never gets a chance in that case. It earns its place when several requirements are
+outstanding and some keep succeeding: the loop stays alive, and without the cap one stubborn
+requirement would be retried on every remaining pass. Both are tested for what they actually
+guard.
+
+### Fallback questions invent nothing
+
+Every content word comes from the requirement text or the role title; the rest is fixed
+template, exported so the test can subtract the boilerplate and assert what remains came from
+the input. A requirement too thin to slot into a sentence ("Go") falls back to the role title.
+The answer outline is left empty rather than guessed — an invented outline is the one part of a
+kit a candidate could not tell was made up.
+
 ### Open, still to decide
 
-- 60-day schedule policy: spaced review days vs thin days (needed by H3, the scheduling test
-  has to assert one of them).
 - Whether to build the creative feature at all — shares 10 points with practice mode.

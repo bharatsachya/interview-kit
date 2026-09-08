@@ -80,19 +80,27 @@ describe("Appendix A validation", () => {
     expect(result.errors.join(" ")).toContain("days_available is 5");
   });
 
-  it("rejects the same question scheduled on two days", () => {
+  it("rejects the same question listed twice on one day", () => {
+    const kit = makeKitJSON();
+    const schedule = kit["schedule"] as { days: Record<string, unknown>[] };
+    schedule.days[0]!["question_ids"] = ["q1", "q1"];
+
+    const result = validateKitJSON(kit);
+    expect(result.ok).toBe(false);
+    expect(result.errors.join(" ")).toContain("listed twice on day 1");
+  });
+
+  it("accepts the same question on two different days — the 60-day policy is spaced review", () => {
     const kit = makeKitJSON();
     kit["schedule"] = {
       days_available: 2,
       days: [
-        { day: 1, focus: "a", question_ids: ["q1"], minutes: 20 },
-        { day: 2, focus: "b", question_ids: ["q1"], minutes: 20 },
+        { day: 1, focus: "Technical depth", question_ids: ["q1"], minutes: 20 },
+        { day: 2, focus: "Review — technical depth", question_ids: ["q1"], minutes: 20 },
       ],
     };
 
-    const result = validateKitJSON(kit);
-    expect(result.ok).toBe(false);
-    expect(result.errors.join(" ")).toContain("scheduled on both day 1 and day 2");
+    expect(validateKitJSON(kit).ok).toBe(true);
   });
 
   it.each(["technical", "behavioural", "system-design", "company-fit"])("accepts category %s", (category) => {

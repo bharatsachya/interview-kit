@@ -164,20 +164,20 @@ export const kitJsonSchema = z
       });
     }
 
-    // A question scheduled twice would double-count minutes and read as a duplicate to the user.
-    const seen = new Map<string, number>();
-    for (const day of kit.schedule.days) {
+    // A question listed twice on the SAME day double-counts its minutes and reads as a bug.
+    // Across days it is deliberate: the 60-day schedule policy is spaced review, so material
+    // from an early day is meant to come back later.
+    for (const [index, day] of kit.schedule.days.entries()) {
+      const seen = new Set<string>();
       for (const id of day.question_ids) {
-        const firstDay = seen.get(id);
-        if (firstDay !== undefined) {
+        if (seen.has(id)) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
-            path: ["schedule", "days"],
-            message: `question ${id} is scheduled on both day ${firstDay} and day ${day.day}`,
+            path: ["schedule", "days", index, "question_ids"],
+            message: `question ${id} is listed twice on day ${day.day}`,
           });
-        } else {
-          seen.set(id, day.day);
         }
+        seen.add(id);
       }
     }
   });

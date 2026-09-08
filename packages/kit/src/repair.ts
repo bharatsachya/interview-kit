@@ -18,9 +18,12 @@ import type { InternalQuestion, InternalSchedule } from "./types";
  * `edited` flag exists to prevent. Repair does the minimum that restores integrity:
  *
  *   1. Drop question ids that are archived or no longer exist.
- *   2. Drop a duplicate when one question appears on two days.
+ *   2. Drop a repeat within a single day.
  *   3. Place active questions that appear on no day at all.
  *   4. Recompute each day's minutes, because minutes is derived from membership.
+ *
+ * Step 2 is within a day only. A question appearing on two different days is deliberate — the
+ * 60-day schedule policy is spaced review, so early material is meant to come back later.
  *
  * That is why it lives here rather than in `scheduling`: it is document integrity, it must not
  * know the allocation policy, and both projections in this package have to call it.
@@ -28,13 +31,15 @@ import type { InternalQuestion, InternalSchedule } from "./types";
 export function repairSchedule(schedule: InternalSchedule, questions: readonly InternalQuestion[]): InternalSchedule {
   const activeById = new Map(questions.filter((q) => q.active).map((q) => [q.id, q]));
 
-  const placed = new Set<string>();
+  const scheduled = new Set<string>();
   const days = schedule.days.map((day) => {
     const questionIds: string[] = [];
+    const onThisDay = new Set<string>();
     for (const id of day.questionIds) {
-      // Steps 1 and 2: alive, and not already sitting on an earlier day.
-      if (!activeById.has(id) || placed.has(id)) continue;
-      placed.add(id);
+      // Step 1: alive. Step 2: not already listed on this same day.
+      if (!activeById.has(id) || onThisDay.has(id)) continue;
+      onThisDay.add(id);
+      scheduled.add(id);
       questionIds.push(id);
     }
     return { ...day, questionIds };
@@ -42,7 +47,7 @@ export function repairSchedule(schedule: InternalSchedule, questions: readonly I
 
   // Step 3. A question the user added by hand, or one whose day was deleted, has nowhere to be.
   // Leaving it out would hide it from the schedule while it still shows in the question bank.
-  const unplaced = questions.filter((q) => q.active && !placed.has(q.id)).sort((a, b) => a.order - b.order);
+  const unplaced = questions.filter((q) => q.active && !scheduled.has(q.id)).sort((a, b) => a.order - b.order);
 
   for (const question of unplaced) {
     const target = lightestDay(days, activeById);
