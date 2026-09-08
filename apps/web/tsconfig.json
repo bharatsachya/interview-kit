@@ -1,0 +1,26 @@
+{
+  "//": [
+    "Extends the repo base so the app is held to the same strictness as every package.",
+    "`paths` is the dependency-rule allowlist: the web app may read kit-shaped data and the",
+    "shared error/DTO types, and nothing else. It must not reach llm, retrieval or pipeline —",
+    "the browser talks to the API, never to a provider. `npm run typecheck` enforces this."
+  ],
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "allowJs": true,
+    "esModuleInterop": true,
+    "incremental": true,
+    "types": ["node"],
+    "plugins": [{ "name": "next" }],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+      "@trao/contracts": ["../../packages/contracts/src/index.ts"],
+      "@trao/kit": ["../../packages/kit/src/index.ts"]
+    }
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules", ".next"]
+}

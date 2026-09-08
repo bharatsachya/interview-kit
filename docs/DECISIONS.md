@@ -375,3 +375,70 @@ throwaway link would give.
 ### Open, still to decide
 
 - Whether to build the creative feature at all — shares 10 points with practice mode.
+
+---
+
+## H11 — the web app: design system, auth, kit view
+
+Taken out of order, ahead of H8–H10, at the request of the person building this. The kit view
+therefore reads a fixture rather than the pipeline. Nothing else about it is provisional: it
+renders the real `InternalKit` through `getKitForBuilder`, so wiring the API later replaces one
+function and no component.
+
+### The design system is the project's own, not a library's
+
+`AI Interview Prep Kit - Design System.html` is the source of truth for the look: near-white
+ground, mint for what needs you now, dusty teal for the system's own work, and one red spent
+only on failure. It specifies its own stack — one theme layer declaring the fonts and the teal
+ramp as CSS variables, then Tailwind core utilities and no arbitrary values in component code —
+so `globals.css` is a `@theme` block plus the handful of utilities Tailwind has no core class
+for (`hatch`, the `blueprint` frame and its registration marks, the reading measures).
+
+The rule this buys: a value used twice becomes a token. Nothing in a component sets a colour or
+a measure directly, so retuning the system is one file.
+
+### Difficulty and confidence are counted, never coloured
+
+Ink ticks and hatch density, with the value printed alongside and an aria-label carrying it.
+They survive greyscale, small sizes and colour blindness. The same reasoning puts a letter in
+every category square rather than relying on its hue.
+
+### Route protection is resource-based, not middleware path matching
+
+`clerkMiddleware()` establishes the auth context; it does not decide access. The decision lives
+in `app/(signed-in)/layout.tsx`, which calls `auth.protect()` and wraps every page in the group.
+
+This is Clerk's own current guidance — `createRouteMatcher` is deprecated because path matching
+can diverge from how Next actually routes a request. It diverged here in practice: with a
+matcher-based guard the signed-out root returned a 404 carrying the redirect target as its body
+instead of a 307. The route group has no path segment, so a page is protected by virtue of
+where it lives rather than by remembering to add it to a list.
+
+Ownership — whether *this* user may read *this* kit — is deliberately not here. Middleware knows
+who is signed in, not whose kit is being asked for, so that check belongs next to the load.
+
+### Clerk runs on accountless development keys
+
+`npx clerk@latest init --accountless` provisions temporary keys, so a clean clone can run the UI
+without anyone creating a Clerk account. `.env.example` documents the variables; the real values
+live in the gitignored `.env.local`.
+
+### Nothing is clickable that does not act
+
+`RequirementChip` renders buttons only when handed a handler, and plain text otherwise. The kit
+view is read-only, and a control that looks pressable but does nothing is worse than a label.
+
+### The fixture is deliberately awkward
+
+Two must-haves with no question, a brief with recorded gaps, one hand-written question and one
+edited-and-pinned. A fixture where everything succeeded would let every honest-degradation state
+go unbuilt, which is exactly the set of states the rubric reads for.
+
+### Known gap: the design system's third coverage state has no field behind it
+
+The sheet draws coverage cells in three states — covered, uncovered, and *unclear*: a
+requirement that could not be parsed, hatched and excluded from the maths. `CoverageReport`
+carries only `passes` and `uncoveredRequirementIds`, and `RequirementKind` is an Appendix A
+field that cannot be extended. The bar is built covered/uncovered only. Adding the third state
+means finding it an Appendix-A-safe home first — an internal-only flag on `Requirement`, which
+the projection would strip — and that is a kit-structure decision, not a UI one.

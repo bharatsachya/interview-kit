@@ -1,0 +1,207 @@
+@import "tailwindcss";
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Industry — the theme layer.
+
+   The design system's stack note is the rule this file obeys: one layer declares the fonts and
+   the teal ramp as CSS variables, and everything after it is Tailwind core utilities. No
+   arbitrary values in component code — if a value is needed twice, it earns a token here.
+
+   Palette: near-white ground, mint for what needs you now, dusty teal for the system's own
+   work, and one red spent only on failure. Difficulty and confidence are counted and hatched,
+   never coloured, so they survive greyscale.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@theme {
+  /* — ground — */
+  --color-paper: #f5f5f5;
+  --color-ink: #1d1f20;
+  --color-mint: #dff1f1;
+
+  /* Failure and deletion only. Nothing else in the product may use it, so it never has to
+     shout twice. */
+  --color-alarm: #ff0000;
+
+  /* Hairline frames are the product's main structural device, so the divider is a token
+     rather than a per-component opacity. */
+  --color-divider: color-mix(in srgb, #1d1f20 16%, transparent);
+
+  /* — teal ramp, one shared lightness scale —
+     100–300 tinted fills and hovers · 500 base · 700–900 text on a tint and pressed states.
+     Paragraph-size accent text is always 700 or darker. The two named colours from the
+     palette sit on the ramp: mint #DFF1F1 at 200, dusty teal #BBD5DA at 300, and the deep
+     teal used for accent text and buttons at 700. */
+  --color-teal-100: #f0f8f8;
+  --color-teal-200: #dff1f1;
+  --color-teal-300: #bbd5da;
+  --color-teal-400: #9bbcc3;
+  --color-teal-500: #7ba1aa;
+  --color-teal-600: #5e848e;
+  --color-teal-700: #476c75;
+  --color-teal-800: #34515a;
+  --color-teal-900: #24393f;
+
+  /* — type —
+     Barlow Condensed 600 for titles and interface labels; Barlow 400/500 for everything read.
+     Two families, six roles, no exceptions. Loaded by next/font in layout.tsx. */
+  --font-head: var(--font-barlow-condensed), ui-sans-serif, system-ui, sans-serif;
+  --font-body: var(--font-barlow), ui-sans-serif, system-ui, sans-serif;
+
+  /* — measure —
+     Reading measure caps at 68ch, answer outlines at 60ch, the page at 1180. */
+  --container-page: 1180px;
+  --container-read: 68ch;
+  --container-outline: 60ch;
+}
+
+@layer base {
+  html {
+    background: var(--color-paper);
+  }
+
+  body {
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-body);
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-head);
+    font-weight: 600;
+    line-height: 1.12;
+    letter-spacing: -0.015em;
+  }
+
+  /* Objects are square. The 4px belongs to inputs and buttons alone. */
+  button,
+  input,
+  select,
+  textarea {
+    border-radius: 0;
+  }
+
+  /* The system ring: 2px steel, 2px offset. Never removed, never restyled per component —
+     which is why it is set once, here, rather than in each component's class list. */
+  :focus-visible {
+    outline: 2px solid var(--color-teal-700);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--color-teal-500) 30%, transparent);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Utilities the design system names but Tailwind has no core class for.
+
+   Each exists because the system uses it in more than one component, and putting it here is
+   what keeps arbitrary values out of the components.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Not-yet-generated or skipped territory: unclear requirements excluded from the coverage
+   maths, unplanned schedule days, and the middle step of practice confidence. Reads as
+   "partly filled in", and survives greyscale because it is a texture, not a tint. */
+@utility hatch {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--color-ink) 0 1px,
+    transparent 1px 5px
+  );
+  background-color: transparent;
+  opacity: 0.55;
+}
+
+/* Denser variant, for a cell that is fully hatched rather than lightly marked. */
+@utility hatch-dense {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--color-ink) 0 1px,
+    transparent 1px 3px
+  );
+  background-color: transparent;
+  opacity: 0.7;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Blueprint frame.
+
+   Cards are hairline frames on paper with registration marks, never filled panels. Ported
+   from the design system's own `.blueprint > .corner` markup so the marks stay outside the
+   box and a wrapper that also clips an overlay cannot swallow them.
+
+   Elevation exists only on the overlay layer — dialogs, the drag ghost, the mobile confidence
+   bar — so there is no elevation utility here on purpose.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@layer components {
+  .blueprint {
+    position: relative;
+    border: 1px solid var(--color-divider);
+    border-radius: 0;
+  }
+
+  .blueprint > .corner {
+    position: absolute;
+    width: 11px;
+    height: 11px;
+    color: color-mix(in srgb, var(--color-ink) 55%, transparent);
+  }
+
+  .blueprint > .corner::before,
+  .blueprint > .corner::after {
+    content: "";
+    position: absolute;
+    background: currentColor;
+  }
+
+  .blueprint > .corner::before {
+    left: 5px;
+    top: 0;
+    width: 1px;
+    height: 100%;
+  }
+
+  .blueprint > .corner::after {
+    top: 5px;
+    left: 0;
+    width: 100%;
+    height: 1px;
+  }
+
+  .blueprint > .corner-tl {
+    top: -6px;
+    left: -6px;
+  }
+  .blueprint > .corner-tr {
+    top: -6px;
+    right: -6px;
+  }
+  .blueprint > .corner-bl {
+    bottom: -6px;
+    left: -6px;
+  }
+  .blueprint > .corner-br {
+    bottom: -6px;
+    right: -6px;
+  }
+
+  /* Incomplete or unverified: a partial brief, an unparsed requirement, a section that failed
+     to regenerate. The dashed frame is the quiet half of the one red. */
+  .blueprint-trouble {
+    border-style: dashed;
+    border-color: var(--color-alarm);
+  }
+
+  /* A category that is legitimately empty is dashed too, but in ink, not red. The four
+     categories are a checklist and a gap is worth seeing — it is not a failure, and borrowing
+     the alarm colour for it would spend the one red on a normal state. */
+  .blueprint-empty {
+    border-style: dashed;
+  }
+}
