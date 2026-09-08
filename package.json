@@ -1,0 +1,27 @@
+{
+  "name": "trao-interview-kit",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AI Interview Prep Kit — job description to a researched, editable interview prep kit",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run typecheck",
+    "typecheck": "node scripts/typecheck.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite-tsconfig-paths": "^5.1.4",
+    "vitest": "^2.1.8"
+  }
+}

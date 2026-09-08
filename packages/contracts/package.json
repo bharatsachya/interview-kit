@@ -1,0 +1,15 @@
+{
+  "name": "@trao/contracts",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "//": [
+    "No `main` and no `exports`, deliberately. Every @trao/* package is symlinked into the",
+    "root node_modules by npm workspaces, so without this omission TypeScript could resolve",
+    "any package from any package and the tsconfig paths allowlists would be decorative.",
+    "Resolution happens through tsconfig paths only."
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "@trao/kernel",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "//": [
+    "The one package beyond the list in CLAUDE.md. contracts is interfaces only, but the",
+    "Tracer, Clock and IdGenerator implementations have to live somewhere, and each of the",
+    "three has a genuine second implementation (noop vs in-memory, system vs fixed, random vs",
+    "sequential) so none of them is an abstraction invented for its own sake.",
+    "No `main`/`exports` — see the note in @trao/contracts."
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "//": [
+    "Permissive, editor/runtime-facing config. tsx and vitest resolve @trao/* through these",
+    "paths. It deliberately does NOT enforce the dependency rule — that is the job of the",
+    "per-package tsconfig.json files, which each declare only the packages they may import.",
+    "`npm run typecheck` runs those, not this one. See scripts/typecheck.mjs."
+  ],
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@trao/contracts": ["packages/contracts/src/index.ts"],
+      "@trao/kernel": ["packages/kernel/src/index.ts"]
+    }
+  },
+  "include": ["packages/*/src", "packages/*/test", "scripts", "vitest.config.ts"]
+}

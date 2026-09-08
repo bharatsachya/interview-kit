@@ -1,0 +1,9 @@
+{
+  "//": "contracts imports nothing, ever. An empty paths map is the enforcement.",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {}
+  },
+  "include": ["src", "test"]
+}
