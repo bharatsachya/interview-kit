@@ -8,9 +8,17 @@ export default async function HomePage() {
 
   return (
       <main className="flex flex-col gap-6 py-16">
-        <Eyebrow className="text-teal-700">
-          <h1 className="inline">Your kits</h1>
-        </Eyebrow>
+        <div className="flex flex-wrap items-center gap-6">
+          <Eyebrow className="text-teal-700">
+            <h1 className="inline">Your kits</h1>
+          </Eyebrow>
+          <Link
+            href="/create"
+            className="font-head rounded-control border-teal-700 bg-teal-700 text-paper ml-auto inline-flex min-h-11 items-center border px-4 text-sm tracking-wide md:min-h-9"
+          >
+            New kit
+          </Link>
+        </div>
 
         {kits.length === 0 ? (
           <Frame empty className="p-4" marks={false}>

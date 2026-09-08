@@ -1,4 +1,4 @@
-import type { InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from "react";
+import type { ComponentPropsWithRef, ReactNode } from "react";
 import { useId } from "react";
 
 /**
@@ -44,7 +44,7 @@ export function TextInput({
   error,
   id,
   ...rest
-}: InputHTMLAttributes<HTMLInputElement> & { label: string; hint?: string; error?: string }) {
+}: ComponentPropsWithRef<"input"> & { label: string; hint?: string; error?: string }) {
   const generated = useId();
   const inputId = id ?? generated;
   return (
@@ -67,7 +67,7 @@ export function TextArea({
   id,
   className = "",
   ...rest
-}: TextareaHTMLAttributes<HTMLTextAreaElement> & { label: string; hint?: string; error?: string }) {
+}: ComponentPropsWithRef<"textarea"> & { label: string; hint?: string; error?: string }) {
   const generated = useId();
   const inputId = id ?? generated;
   return (
