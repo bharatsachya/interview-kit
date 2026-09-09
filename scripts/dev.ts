@@ -70,7 +70,16 @@ async function main(): Promise<number> {
   const elapsed = Date.now() - startedAt;
 
   if (flags.tracePretty) process.stderr.write(`${formatTrace(result.spans)}\n\n`);
-  if (flags.trace !== null) await writeJson(flags.trace, result.spans);
+
+  if (flags.trace !== null) {
+    // A failed run's trace goes to a sibling file. It is still worth having — a 429 or an
+    // unreachable site is exactly when you want the spans — but writing it over the path the
+    // caller named destroys the last good artifact, which is a poor trade for a run that
+    // produced no kit. Learned by destroying one.
+    const path = result.status === "ok" ? flags.trace : flags.trace.replace(/(\.json)?$/, ".failed.json");
+    await writeJson(path, result.spans);
+    if (result.status !== "ok") process.stderr.write(`  trace written to ${path} (${flags.trace} left untouched)\n`);
+  }
 
 
   if (result.status === "failed") {
