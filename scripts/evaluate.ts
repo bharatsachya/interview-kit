@@ -5,6 +5,9 @@ import { toErrorShape } from "@trao/contracts";
 import { parseCasesJSON, validateEvaluationOutput, type EvaluationCase, type EvaluationResult } from "@trao/kit";
 import { generateKit } from "@trao/pipeline";
 import { wire } from "./composition";
+import { loadEnv } from "./load-env";
+
+loadEnv();
 
 /**
  * The frozen batch command.

@@ -10,6 +10,10 @@ import { FakeFetcher, LiveHttpFetcher, fixtureMounts } from "@trao/retrieval";
 import { createApp } from "./app";
 import { JobRunner } from "./jobs";
 import { fakeLlmResponses, gapFillResponse } from "../../../fixtures/fake-llm-responses";
+import { loadEnv } from "../../../scripts/load-env";
+
+// Before anything reads process.env.
+loadEnv();
 
 /**
  * The API's composition root.

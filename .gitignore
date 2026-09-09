@@ -16,3 +16,6 @@ tmp/
 
 # batch output written during development
 kits.json
+
+# smoke output
+tmp/

@@ -4,6 +4,9 @@ import { dirname } from "node:path";
 import { formatTrace } from "@trao/kernel";
 import { generateKit } from "@trao/pipeline";
 import { wire } from "./composition";
+import { loadEnv } from "./load-env";
+
+loadEnv();
 
 /**
  * Headless dev runner. One case, no UI, no database.
