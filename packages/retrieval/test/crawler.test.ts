@@ -3,6 +3,8 @@ import type { FetchResult } from "@trao/contracts";
 import { crawlSite } from "../src/crawler";
 import { FakeFetcher, fixtureMounts } from "../src/fake-fetcher";
 import { extractLinks } from "../src/html";
+import { anchorCandidates, frameworkStateCandidates, jsonLdCandidates, mergeCandidates } from "../src/discovery";
+import { normaliseUrl } from "../src/url";
 import { rankLinks, scoreLink } from "../src/ranking";
 import { discoverFromSitemaps, parseSitemap, sitemapUrlsFromRobots } from "../src/sitemap";
 import { isAllowed, parseRobots } from "../src/robots";
@@ -12,14 +14,19 @@ function fetcher(overrides?: FakeFetcher["options"]["overrides"]): FakeFetcher {
   return new FakeFetcher({ root: FIXTURE_ROOT, mounts: fixtureMounts(), ...(overrides ? { overrides } : {}) });
 }
 
+/** A bare candidate, for scoring tests that do not care where the link was found. */
+function link(url: string, anchor: string) {
+  return { url, anchor, position: "unknown" as const, source: "anchor" as const };
+}
+
 async function homepageOf(url: string, f: FakeFetcher): Promise<FetchResult> {
   return f.fetch(url);
 }
 
 describe("link ranking", () => {
   it("puts /handbook/hiring above /blog/post-42", () => {
-    const hiring = scoreLink({ url: "https://meridian.test/handbook/hiring", anchor: "How we hire" });
-    const blog = scoreLink({ url: "https://meridian.test/blog/post-42", anchor: "Why we rewrote our ingest pipeline" });
+    const hiring = scoreLink(link("https://meridian.test/handbook/hiring", "How we hire"), "hiring");
+    const blog = scoreLink(link("https://meridian.test/blog/post-42", "Why we rewrote our ingest pipeline"), "hiring");
 
     expect(hiring.score).toBeGreaterThan(blog.score);
   });
@@ -27,36 +34,36 @@ describe("link ranking", () => {
   it("finds hiring material at a path no fixed list would guess", () => {
     // The brief says a fixed list of paths is not sufficient. /company/join-us has no "careers"
     // and no "jobs" in it; the anchor text is what carries the signal.
-    const ranked = rankLinks([
-      { url: "https://northwind.test/product", anchor: "Product" },
-      { url: "https://northwind.test/docs/api", anchor: "API documentation" },
-      { url: "https://northwind.test/company/join-us", anchor: "Life at Northwind — how we interview" },
-      { url: "https://northwind.test/blog/2023/annual-review", anchor: "2023 in review" },
-    ]);
+    const ranked = rankLinks(
+      [
+        link("https://northwind.test/product", "Product"),
+        link("https://northwind.test/docs/api", "API documentation"),
+        link("https://northwind.test/company/join-us", "Life at Northwind — how we interview"),
+        link("https://northwind.test/blog/2023/annual-review", "2023 in review"),
+      ],
+      "hiring",
+    );
 
     expect(ranked[0]?.url).toBe("https://northwind.test/company/join-us");
   });
 
   it("pushes legal and privacy pages to the bottom", () => {
-    const ranked = rankLinks([
-      { url: "https://meridian.test/legal/privacy", anchor: "Privacy policy" },
-      { url: "https://meridian.test/about", anchor: "About us" },
-    ]);
+    const ranked = rankLinks(
+      [link("https://meridian.test/legal/privacy", "Privacy policy"), link("https://meridian.test/about", "About us")],
+      "about",
+    );
 
     expect(ranked[0]?.url).toBe("https://meridian.test/about");
   });
 
   it("explains itself, which is why this is not a model call", () => {
-    const scored = scoreLink({ url: "https://meridian.test/handbook/hiring", anchor: "How we hire" });
+    const scored = scoreLink(link("https://meridian.test/handbook/hiring", "How we hire"), "hiring");
     expect(scored.reasons.join(" ")).toContain("hiring");
   });
 
   it("is deterministic", () => {
-    const links = [
-      { url: "https://a.test/careers", anchor: "Careers" },
-      { url: "https://a.test/jobs", anchor: "Jobs" },
-    ];
-    expect(rankLinks(links)).toEqual(rankLinks(links));
+    const links = [link("https://a.test/careers", "Careers"), link("https://a.test/jobs", "Jobs")];
+    expect(rankLinks(links, "hiring")).toEqual(rankLinks(links, "hiring"));
   });
 });
 
@@ -249,9 +256,10 @@ describe("crawlSite", () => {
       clock: new TestClock(),
     });
 
-    expect(result.topLinks.length).toBeGreaterThan(0);
-    expect(result.topLinks.length).toBeLessThanOrEqual(5);
-    expect(result.topLinks[0]).toHaveProperty("reasons");
+    expect(result.topLinks.hiring.length).toBeGreaterThan(0);
+    expect(result.topLinks.hiring.length).toBeLessThanOrEqual(5);
+    expect(result.topLinks.hiring[0]).toHaveProperty("reasons");
+    expect(result.topLinks.hiring[0]).toHaveProperty("outcome");
     expect(result.linksFound).toBeGreaterThan(0);
   });
 });
@@ -373,7 +381,7 @@ describe("sitemap discovery", () => {
 
     // /join/how-we-hire outranks /pricing and /legal/privacy, both of which the sitemap also
     // declares. Nothing in the code knows the word "join".
-    expect(result.topLinks[0]?.url).toBe("https://halcyon.test/join/how-we-hire");
+    expect(result.topLinks.hiring[0]?.url).toBe("https://halcyon.test/join/how-we-hire");
     expect(result.sitemapUrls).toBeGreaterThan(0);
     expect(result.sitemapsFetched.length).toBeGreaterThan(0);
   });
@@ -436,32 +444,196 @@ describe("sitemap discovery", () => {
   });
 });
 
-describe("unscored link reasons", () => {
-  it("says why found links never reached the ranker", async () => {
+
+/**
+ * Discovery reworked: every source merged, everything scored, only then filtered.
+ *
+ * From a live crawl of galaxy.ai — the homepage text said "Careers", the crawler found five
+ * links, discarded four as external before scoring anything, and concluded there was no hiring
+ * page. One of the four was the hiring page, on an applicant tracking system.
+ */
+describe("an external careers link", () => {
+  it("is followed to the ATS and recorded as external", async () => {
     const f = fetcher();
-    const result = await crawlSite(await homepageOf("https://meridian.test/", f), {
+    const result = await crawlSite(await homepageOf("https://kestrel.test/", f), {
       fetcher: f,
       clock: new TestClock(),
-      maxPages: 20,
     });
 
-    // The gitlab-like fixture links to external.test in its footer.
-    expect(result.unscored.external).toBeGreaterThan(0);
-    expect(result.unscored).toHaveProperty("self");
-    expect(result.unscored).toHaveProperty("duplicate");
+    const hiring = result.pages.find((page) => page.url.includes("greenhouse.io"));
+    expect(hiring, "the careers page is on greenhouse and must still be found").toBeDefined();
+    expect(hiring?.text).toContain("How we interview");
+    expect(hiring?.external).toBe(true);
+    expect(result.hiringPageExternal).toBe(true);
   });
 
-  it("distinguishes a client-rendered site from a broken ranker", async () => {
+  it("scores the ATS host as a signal rather than discarding it", () => {
+    const ats = scoreLink(link("https://boards.greenhouse.io/kestrel", "Careers"), "hiring");
+    const twitter = scoreLink(link("https://twitter.com/kestrel", "Twitter"), "hiring");
+
+    expect(ats.score).toBeGreaterThan(twitter.score);
+    expect(ats.reasons.join(" ")).toContain("host:ats");
+  });
+
+  it("does not wander onto an unrelated external link", async () => {
     const f = fetcher();
-    const result = await crawlSite(await homepageOf("https://halcyon.test/", f), {
+    const result = await crawlSite(await homepageOf("https://kestrel.test/", f), {
+      fetcher: f,
+      clock: new TestClock(),
+    });
+
+    expect(result.pages.every((page) => !page.url.includes("twitter.com"))).toBe(true);
+    expect(result.skipped.some((s) => s.reason === "external_not_followed")).toBe(true);
+  });
+
+  it("stays on the site when external following is off", async () => {
+    const f = fetcher();
+    const result = await crawlSite(await homepageOf("https://kestrel.test/", f), {
+      fetcher: f,
+      clock: new TestClock(),
+      followExternalHiring: false,
+    });
+
+    expect(result.hiringPageExternal).toBe(false);
+    expect(result.pages.every((page) => !page.external)).toBe(true);
+  });
+});
+
+describe("a page whose routes are only in framework state", () => {
+  it("finds the hiring page from __NEXT_DATA__", async () => {
+    const f = fetcher();
+    const homepage = await homepageOf("https://lumen.test/", f);
+
+    // Not one anchor on the page.
+    expect(anchorCandidates(homepage.body, homepage.finalUrl)).toEqual([]);
+
+    const result = await crawlSite(homepage, { fetcher: f, clock: new TestClock() });
+    const hiring = result.pages.find((page) => page.url.includes("/company/how-we-hire"));
+
+    expect(hiring, "the route was declared in __NEXT_DATA__").toBeDefined();
+    expect(hiring?.text).toContain("code reading exercise");
+    expect(result.bySource["framework-state"]).toBeGreaterThan(0);
+  });
+
+  it("ignores asset and API paths in the state blob", () => {
+    const candidates = frameworkStateCandidates(
+      '<script id="__NEXT_DATA__">{"a":"/_next/static/chunk.js","b":"/api/session","c":"/careers","d":"/logo.svg"}</script>',
+      "https://a.test/",
+    );
+
+    expect(candidates.map((c) => new URL(c.url).pathname)).toEqual(["/careers"]);
+  });
+
+  it("reads sameAs out of a JSON-LD Organization block", () => {
+    const found = jsonLdCandidates(
+      '<script type="application/ld+json">{"@type":"Organization","url":"https://a.test/","sameAs":["https://jobs.lever.co/a"]}</script>',
+      "https://a.test/",
+    );
+
+    expect(found.map((c) => c.url)).toContain("https://jobs.lever.co/a");
+  });
+});
+
+describe("URL normalisation before dedupe", () => {
+  it("counts /careers, /careers/ and /careers?utm_source=nav as one candidate", () => {
+    const merged = mergeCandidates([
+      link("https://a.test/careers", "Careers"),
+      link("https://a.test/careers/", ""),
+      link("https://a.test/careers?utm_source=nav&utm_medium=header", ""),
+    ]);
+
+    expect(merged).toHaveLength(1);
+    // The richest description survives the merge.
+    expect(merged[0]?.anchor).toBe("Careers");
+  });
+
+  it.each([
+    ["https://A.test/Careers/", "https://a.test/Careers"],
+    ["https://www.a.test/careers", "https://a.test/careers"],
+    ["https://a.test/careers#openings", "https://a.test/careers"],
+    ["https://a.test/careers?b=2&a=1", "https://a.test/careers?a=1&b=2"],
+    ["https://a.test:443/careers", "https://a.test/careers"],
+    ["https://a.test/careers/index.html", "https://a.test/careers"],
+  ])("normalises %s", (input, expected) => {
+    expect(normaliseUrl(input)).toBe(expected);
+  });
+
+  it("keeps a parameter that selects the page", () => {
+    expect(normaliseUrl("https://a.test/jobs?team=eng")).toContain("team=eng");
+  });
+
+  it("spends only one fetch on a page linked three ways", async () => {
+    const f = new FakeFetcher({
+      root: FIXTURE_ROOT,
+      mounts: fixtureMounts(),
+      overrides: {
+        "https://dupe.test/": {
+          body: `<nav><a href="/careers">Careers</a></nav>
+                 <main><a href="/careers/">Open roles</a></main>
+                 <footer><a href="/careers?utm_source=footer">Join us</a></footer>`,
+        },
+        "https://dupe.test/careers": { body: "<h1>Careers</h1><p>How we hire: two rounds.</p>" },
+      },
+    });
+
+    const result = await crawlSite(await f.fetch("https://dupe.test/"), {
       fetcher: f,
       clock: new TestClock(),
       useSitemap: false,
     });
 
-    // No anchors, nothing external, nothing duplicate — the page genuinely has no links.
-    expect(result.linksFound).toBe(0);
-    expect(result.linksScored).toBe(0);
-    expect(result.unscored).toEqual({ external: 0, self: 0, duplicate: 0 });
+    expect(result.linksFound).toBe(1);
+    expect(f.requested.filter((url) => url.includes("careers"))).toHaveLength(1);
+  });
+});
+
+describe("the two scorers", () => {
+  it("ranks /handbook/hiring above /blog/post-42 for hiring", () => {
+    const hiring = scoreLink(link("https://meridian.test/handbook/hiring", "How we hire"), "hiring");
+    const blog = scoreLink(link("https://meridian.test/blog/post-42", "Why we rewrote our ingest pipeline"), "hiring");
+
+    expect(hiring.score).toBeGreaterThan(blog.score);
+  });
+
+  it("ranks an about page above a hiring page for about", () => {
+    const about = scoreLink(link("https://a.test/about", "About us"), "about");
+    const careers = scoreLink(link("https://a.test/careers", "Careers"), "about");
+
+    expect(about.score).toBeGreaterThan(careers.score);
+  });
+
+  it("weights a nav link above the same link buried in a page", () => {
+    const inNav = scoreLink({ ...link("https://a.test/careers", "Careers"), position: "nav" }, "hiring");
+    const inBody = scoreLink({ ...link("https://a.test/careers", "Careers"), position: "main" }, "hiring");
+
+    expect(inNav.score).toBeGreaterThan(inBody.score);
+  });
+
+  it("reports an outcome for every top link", async () => {
+    const f = fetcher();
+    const result = await crawlSite(await homepageOf("https://meridian.test/", f), {
+      fetcher: f,
+      clock: new TestClock(),
+    });
+
+    for (const kind of ["hiring", "about"] as const) {
+      for (const entry of result.topLinks[kind]) {
+        expect(entry.outcome).toBeTruthy();
+        expect(entry.reasons.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("fetches from both lists rather than three of whichever scores higher", async () => {
+    const f = fetcher();
+    const result = await crawlSite(await homepageOf("https://meridian.test/", f), {
+      fetcher: f,
+      clock: new TestClock(),
+      maxPages: 5,
+    });
+
+    const kinds = new Set(result.pages.map((page) => page.kind));
+    expect(kinds.has("hiring")).toBe(true);
+    expect(kinds.has("about")).toBe(true);
   });
 });

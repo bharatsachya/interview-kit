@@ -10,19 +10,34 @@ export {
   DEFAULT_MAX_DEPTH,
   DEFAULT_MAX_PAGES,
   DEFAULT_REQUESTS_PER_SECOND,
+  DEFAULT_PER_SCORER,
   DEFAULT_TIMEOUT_MS,
+  DEFAULT_EXTERNAL_HIRING_THRESHOLD,
   USER_AGENT,
   crawlSite,
   type CrawlOptions,
   type CrawlResult,
   type CrawledPage,
+  type LinkOutcome,
+  type RankedReport,
+  type SkipReason,
   type SkippedUrl,
-  type UnscoredReasons,
 } from "./crawler";
 export { FakeFetcher, fixtureMounts, type FakeFetcherOptions } from "./fake-fetcher";
 export { cleanText, extractLinks, isSameSite, pageTitle, type ExtractedLink } from "./html";
 export { LiveHttpFetcher, type HttpFetcherOptions } from "./http-fetcher";
-export { rankLinks, scoreLink, type ScoredLink } from "./ranking";
+export { ATS_HOSTS, rankLinks, scoreLink, type ScoredLink, type ScoreOptions, type ScorerKind } from "./ranking";
+export {
+  anchorCandidates,
+  candidatesFromHtml,
+  frameworkStateCandidates,
+  jsonLdCandidates,
+  mergeCandidates,
+  type Candidate,
+  type CandidateSource,
+  type LinkPosition,
+} from "./discovery";
+export { hostOf, isSameRegistrableSite, normaliseUrl } from "./url";
 export {
   MAX_SITEMAP_FETCHES,
   MAX_SITEMAP_URLS,

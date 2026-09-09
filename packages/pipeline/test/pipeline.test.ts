@@ -260,7 +260,11 @@ describe("a full run with fakes", () => {
 
     const crawl = d.tracer.byStep("crawl_site");
     expect(crawl?.attrs["links_found"]).toBeGreaterThan(0);
-    expect(String(crawl?.attrs["top_links"])).toContain("handbook");
+    // Two ranked lists now, each entry carrying its score and what became of it.
+    expect(String(crawl?.attrs["top_hiring"])).toContain("handbook");
+    expect(String(crawl?.attrs["top_hiring"])).toContain(":fetched");
+    expect(crawl?.attrs["top_about"]).toBeDefined();
+    expect(crawl?.attrs["sources"]).toBeDefined();
   });
 
   it("skips the discussion search without a key, rather than failing", async () => {

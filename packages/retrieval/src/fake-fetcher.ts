@@ -126,6 +126,9 @@ export function fixtureMounts(): Record<string, string> {
     "https://gone.test/": "broken",
     "https://northwind.test/": "deep",
     "https://halcyon.test/": "spa",
+    "https://kestrel.test/": "ats",
+    "https://boards.greenhouse.io/kestrel": "greenhouse/acme",
+    "https://lumen.test/": "nextjs",
     "http://localhost:8099/acme/": "acme",
   };
 }

@@ -210,13 +210,17 @@ async function run(
       pages_fetched: result.pages.length,
       pages_skipped: result.skipped.length,
       robots_blocked: result.robotsBlocked,
-      // Why the found links did not all reach the ranker. Without this, links_found=1
-      // links_scored=0 on a client-rendered site is indistinguishable from a broken ranker.
-      unscored: `external=${result.unscored.external} self=${result.unscored.self} duplicate=${result.unscored.duplicate}`,
       sitemap_urls: result.sitemapUrls,
       ...(result.sitemapsFetched.length > 0 ? { sitemaps: result.sitemapsFetched } : {}),
+      // Where the candidates came from, so a client-rendered site is legible rather than
+      // looking like a broken ranker.
+      sources: Object.entries(result.bySource).map(([source, count]) => `${source}=${count}`),
+      hiring_page_external: result.hiringPageExternal,
+      // Top five per scorer with score and outcome — the evidence that ranking ran in code and
+      // that what it chose is what got fetched.
+      top_hiring: result.topLinks.hiring.map((l) => `${l.url}=${l.score}:${l.outcome}`),
+      top_about: result.topLinks.about.map((l) => `${l.url}=${l.score}:${l.outcome}`),
       // The evidence that ranking happened in code, and why each page was chosen.
-      top_links: result.topLinks.map((link) => `${link.url}=${link.score}`),
     });
     return result;
   });
