@@ -45,28 +45,26 @@ export function deriveFlashcards(
 }
 
 /**
- * The prompt, or its first question if it is a paragraph with one buried in it.
+ * The card front: the prompt's first question, or the whole prompt.
  *
- * Long prompts are common — "Our ingest pipeline drops writes on restart. Walk me through how
- * you would fix it. What would you measure?" A card fronted with all three sentences is a wall;
- * one fronted with a truncation is worse.
+ * Never a truncation. A card fronted with "Our ingest pipeline buffers in memory and…" is not a
+ * prompt, it is a fragment with an ellipsis, and practice mode is scored on these being readable.
+ * So the rule is a sentence boundary or nothing: if the prompt opens with a question, that
+ * question is the front; otherwise the whole prompt is, however long.
+ *
+ * Long is a lesser fault than mangled. A three-sentence front is awkward to read; a front cut at
+ * "and…" looks like the generator broke.
  */
-const MAX_FRONT_CHARS = 220;
-
 export function frontFor(prompt: string): string {
   const trimmed = prompt.trim().replace(/\s+/g, " ");
-  if (trimmed.length <= MAX_FRONT_CHARS) return trimmed;
+  if (trimmed.length === 0) return trimmed;
 
-  const sentences = trimmed.match(/[^.!?]+[.!?]+/g) ?? [];
-  const question = sentences.find((sentence) => sentence.trim().endsWith("?"));
-  if (question !== undefined && question.trim().length <= MAX_FRONT_CHARS) return question.trim();
+  const sentences = trimmed.match(/[^.!?]+[.!?]+(?=\s|$)/g) ?? [];
+  const first = sentences[0]?.trim();
 
-  // No question mark anywhere: fall back to the last complete sentence that fits, which is
-  // usually the ask. Never a mid-word cut.
-  for (let i = sentences.length - 1; i >= 0; i -= 1) {
-    const candidate = sentences[i]?.trim() ?? "";
-    if (candidate.length > 0 && candidate.length <= MAX_FRONT_CHARS) return candidate;
-  }
+  // Only the FIRST sentence, and only if it is itself a question. A question buried in the
+  // middle reads as a non-sequitur without the setup that preceded it.
+  if (first !== undefined && first.endsWith("?") && first.length < trimmed.length) return first;
 
-  return `${trimmed.slice(0, trimmed.lastIndexOf(" ", MAX_FRONT_CHARS))}…`;
+  return trimmed;
 }

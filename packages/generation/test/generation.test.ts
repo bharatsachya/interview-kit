@@ -400,3 +400,77 @@ describe("the gap-fill writer", () => {
     expect(llm.calls).toHaveLength(0);
   });
 });
+
+/**
+ * Flashcard fronts are never truncated.
+ *
+ * Practice mode is scored on these. A card fronted with "Our ingest pipeline buffers in memory
+ * and…" is not a prompt, it is a fragment with an ellipsis, and it reads as a broken generator.
+ */
+describe("frontFor never truncates", () => {
+  const PROMPTS = [
+    "How would you shard this table?",
+    "Our ingest pipeline buffers in memory and loses data whenever a node restarts, which cost us a customer. How would you make it durable without adding more than ten milliseconds of write latency?",
+    "Walk me through a time when streaming partial outputs from a sub-agent caused a race condition in your orchestration UI. How did you handle user interrupts without corrupting the memory context?",
+    "Describe your approach to mentoring.",
+    "Tell me about a production incident. What broke? What did you change afterwards?",
+    "Design a system where availability is the binding constraint and defend the trade-off you make.",
+  ];
+
+  it.each(PROMPTS)("leaves no ellipsis on %#", (prompt) => {
+    const front = frontFor(prompt);
+    expect(front).not.toContain("…");
+    expect(front).not.toMatch(/\.\.\.$/);
+  });
+
+  it.each(PROMPTS)("ends every front on a sentence boundary (%#)", (prompt) => {
+    expect(frontFor(prompt)).toMatch(/[.!?]$/);
+  });
+
+  it.each(PROMPTS)("keeps the front a prefix of the prompt, never a rewrite (%#)", (prompt) => {
+    const normalised = prompt.trim().replace(/\s+/g, " ");
+    expect(normalised.startsWith(frontFor(prompt))).toBe(true);
+  });
+
+  it("uses the first sentence when it is itself the question", () => {
+    expect(frontFor("How do you debug a failing rollout? Assume no logs.")).toBe(
+      "How do you debug a failing rollout?",
+    );
+  });
+
+  it("keeps the whole prompt when the setup comes first", () => {
+    // Cutting to the buried question would lose the constraint it depends on.
+    const prompt = "Our writes drop on restart. How would you make it durable?";
+    expect(frontFor(prompt)).toBe(prompt);
+  });
+
+  it("keeps a long single-sentence prompt whole rather than cutting it", () => {
+    const long =
+      "Design the ingestion path for a ledger that must sustain ten thousand writes a second while keeping strict ordering guarantees across three regions.";
+    expect(frontFor(long)).toBe(long);
+  });
+
+  it("produces card fronts that are all complete sentences", () => {
+    const cards = deriveFlashcards(
+      PROMPTS.map((prompt, index) => ({
+        id: `q${index}`,
+        category: "technical" as const,
+        prompt,
+        answerOutline: "Some outline.",
+        difficulty: 2 as const,
+        requirementIds: [],
+        origin: "generated" as const,
+        pinned: false,
+        active: true,
+        order: index,
+      })),
+      ids(),
+    );
+
+    expect(cards).toHaveLength(PROMPTS.length);
+    for (const card of cards) {
+      expect(card.front).not.toContain("…");
+      expect(card.front).toMatch(/[.!?]$/);
+    }
+  });
+});
