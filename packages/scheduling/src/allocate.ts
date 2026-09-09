@@ -6,7 +6,7 @@ import {
   type InternalSchedule,
   type Requirement,
 } from "@trao/kit";
-import { focusFor } from "./focus";
+import { assignFocuses } from "./focus";
 import { byUrgency, indexRequirements } from "./weight";
 
 /**
@@ -52,9 +52,17 @@ export function allocateSchedule(input: AllocationInput): InternalSchedule {
   distribute(active, buckets);
   const reviewDays = fillReviewDays(active, buckets);
 
+  // Focus is assigned across the whole schedule at once: a day is named after the requirements
+  // that distinguish it from the others, which cannot be decided one day at a time.
+  const focuses = assignFocuses(
+    buckets.map((questions, index) => ({ questions, review: reviewDays.has(index) })),
+    requirements,
+    (r) => (r.priority === "must" ? 2 : 1),
+  );
+
   return {
     daysAvailable,
-    days: buckets.map((questions, index) => toDay(index + 1, questions, reviewDays.has(index))),
+    days: buckets.map((questions, index) => toDay(index + 1, questions, focuses[index] as string)),
   };
 }
 
@@ -90,11 +98,17 @@ export function reallocateSchedule(
   distribute(remaining, buckets);
   const reviewBuckets = fillReviewDays(remaining, buckets);
 
+  const focuses = assignFocuses(
+    buckets.map((questions, slot) => ({ questions, review: reviewBuckets.has(slot) })),
+    requirements,
+    (r) => (r.priority === "must" ? 2 : 1),
+  );
+
   const days = existing.days.map((day, index) => {
     const preserved = editedDays.get(index);
     if (preserved) return preserved;
     const slot = openIndexes.indexOf(index);
-    return toDay(day.day, buckets[slot] ?? [], reviewBuckets.has(slot));
+    return toDay(day.day, buckets[slot] ?? [], focuses[slot] as string);
   });
 
   return { daysAvailable: existing.daysAvailable, days };
@@ -174,10 +188,10 @@ function fillReviewDays(source: readonly InternalQuestion[], buckets: InternalQu
   return reviewDays;
 }
 
-function toDay(day: number, questions: readonly InternalQuestion[], review: boolean): InternalDay {
+function toDay(day: number, questions: readonly InternalQuestion[], focus: string): InternalDay {
   return {
     day,
-    focus: focusFor(questions, { review }),
+    focus,
     questionIds: questions.map((q) => q.id),
     minutes: minutesForQuestions(questions),
     edited: false,

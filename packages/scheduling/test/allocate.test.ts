@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { minutesForQuestions, repairSchedule, type InternalQuestion } from "@trao/kit";
+import { minutesForQuestions, repairSchedule, type InternalQuestion, type Requirement } from "@trao/kit";
 import { allocateSchedule, reallocateSchedule } from "../src/allocate";
-import { EMPTY_DAY_FOCUS } from "../src/focus";
+import { EMPTY_DAY_FOCUS, subjectOf } from "../src/focus";
 import { questionWeight, indexRequirements } from "../src/weight";
 import { REQUIREMENTS, realisticQuestions, question, resetIds } from "./fixtures";
 
@@ -320,5 +320,89 @@ describe("repair, against an allocated schedule", () => {
     const repaired = repairSchedule(edited, questions);
     expect(repaired.days[0]?.focus).toBe("My own plan");
     expect(repaired.days[0]?.questionIds).toEqual(edited.days[0]?.questionIds);
+  });
+});
+
+/**
+ * Day focus names the subject, not the shape of the questions.
+ *
+ * The first version labelled days by category, which gave "Technical depth" to three days and
+ * "Mixed practice" to the rest — a schedule you cannot navigate, because it says what kind of
+ * question is on a day and nothing about what the day is about.
+ */
+describe("day focus", () => {
+  const REAL_REQUIREMENTS: Requirement[] = [
+    { id: "r1", text: "Orchestration UX — sub-agent state, streaming partial output, interrupts", kind: "technical", priority: "must" },
+    { id: "r2", text: "Connected services: Gmail, Drive and Slack", kind: "technical", priority: "must" },
+    { id: "r3", text: "5+ years building production services in Python", kind: "technical", priority: "must" },
+    { id: "r4", text: "Mentoring junior engineers and reviewing their work", kind: "behavioural", priority: "must" },
+    { id: "r5", text: "A background in payments or another regulated domain", kind: "domain", priority: "nice" },
+  ];
+
+  const oneQuestionPer = (): InternalQuestion[] =>
+    REAL_REQUIREMENTS.map((r, index) =>
+      question({ id: `q${index + 1}`, requirementIds: [r.id], difficulty: 2, order: index }),
+    );
+
+  const scheduleOf = (days: number) =>
+    allocateSchedule({ questions: oneQuestionPer(), requirements: REAL_REQUIREMENTS, daysAvailable: days });
+
+  it("names the subject rather than the category", () => {
+    const focuses = scheduleOf(5).days.map((d) => d.focus);
+
+    expect(focuses).not.toContain("Mixed practice");
+    expect(focuses).not.toContain("Technical depth");
+    expect(focuses.join(" | ")).toContain("Orchestration UX");
+  });
+
+  it("strips the qualification and keeps the subject", () => {
+    expect(subjectOf("5+ years building production services in Python")).toBe("Production services in Python");
+    expect(subjectOf("Experience operating PostgreSQL at scale")).toBe("PostgreSQL at scale");
+    expect(subjectOf("Orchestration UX — sub-agent state, streaming partial output")).toBe("Orchestration UX");
+    expect(subjectOf("Ability to scope an ambiguous spec")).toBe("Scope an ambiguous spec");
+  });
+
+  it.each([3, 5, 7])("gives no two days the same focus unless they share requirements (%s days)", (days) => {
+    const schedule = scheduleOf(days);
+    const byId = new Map(oneQuestionPer().map((q) => [q.id, q]));
+
+    const requirementsOn = (dayIndex: number): string =>
+      [
+        ...new Set(
+          (schedule.days[dayIndex]?.questionIds ?? []).flatMap((id) => byId.get(id)?.requirementIds ?? []),
+        ),
+      ]
+        .sort()
+        .join(",");
+
+    for (let a = 0; a < schedule.days.length; a += 1) {
+      for (let b = a + 1; b < schedule.days.length; b += 1) {
+        if (schedule.days[a]?.focus !== schedule.days[b]?.focus) continue;
+        expect(
+          requirementsOn(a),
+          `day ${a + 1} and day ${b + 1} share the focus "${schedule.days[a]?.focus}" without sharing requirements`,
+        ).toBe(requirementsOn(b));
+      }
+    }
+  });
+
+  it("keeps the review prefix on a repeated day", () => {
+    const schedule = scheduleOf(12);
+    const review = schedule.days.filter((d) => d.focus.startsWith("Review — "));
+
+    expect(review.length).toBeGreaterThan(0);
+    for (const day of review) expect(day.focus.length).toBeGreaterThan("Review — ".length);
+  });
+
+  it("still says something honest when there are no questions at all", () => {
+    const schedule = allocateSchedule({ questions: [], requirements: [], daysAvailable: 2 });
+    for (const day of schedule.days) expect(day.focus).toBe(EMPTY_DAY_FOCUS);
+  });
+
+  it("falls back to the question's own words when it covers no requirement", () => {
+    const orphan = question({ id: "q1", requirementIds: [], prompt: "Why does agent observability matter here?" });
+    const schedule = allocateSchedule({ questions: [orphan], requirements: [], daysAvailable: 1 });
+
+    expect(schedule.days[0]?.focus).toContain("agent observability");
   });
 });

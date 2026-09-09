@@ -6,5 +6,5 @@
  */
 
 export { allocateSchedule, reallocateSchedule, type AllocationInput } from "./allocate";
-export { EMPTY_DAY_FOCUS, MIXED_FOCUS, focusFor } from "./focus";
+export { EMPTY_DAY_FOCUS, assignFocuses, subjectOf, type DayForFocus } from "./focus";
 export { byUrgency, indexRequirements, priorityWeight, questionWeight } from "./weight";
