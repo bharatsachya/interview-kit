@@ -17,10 +17,20 @@ export {
   type CrawlResult,
   type CrawledPage,
   type SkippedUrl,
+  type UnscoredReasons,
 } from "./crawler";
 export { FakeFetcher, fixtureMounts, type FakeFetcherOptions } from "./fake-fetcher";
 export { cleanText, extractLinks, isSameSite, pageTitle, type ExtractedLink } from "./html";
 export { LiveHttpFetcher, type HttpFetcherOptions } from "./http-fetcher";
 export { rankLinks, scoreLink, type ScoredLink } from "./ranking";
+export {
+  MAX_SITEMAP_FETCHES,
+  MAX_SITEMAP_URLS,
+  discoverFromSitemaps,
+  parseSitemap,
+  sitemapUrlsFromRobots,
+  type DiscoverOptions,
+  type SitemapDiscovery,
+} from "./sitemap";
 export { ALLOW_ALL, isAllowed, parseRobots, type RobotsRules } from "./robots";
 export { assertFetchable, isFetchable, isPrivateAddress, type UrlGuardOptions } from "./url-guard";

@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Halcyon</title>
+  </head>
+  <body>
+    <!--
+      A client-rendered app. The server sends a mount point and a bundle; every link on the real
+      page is produced by JavaScript we do not run. Raw HTML therefore contains no anchors at
+      all, which is the exact shape that made a live crawl report links_found=1 links_scored=0.
+      The hiring page is reachable only because the site declares it in its own sitemap.
+    -->
+    <div id="root"></div>
+    <script src="/assets/app.js"></script>
+  </body>
+</html>

@@ -12,3 +12,4 @@ export {
   type DiscussionSearchResult,
 } from "./discussion";
 export { NullSearchProvider, TavilySearchProvider, type TavilyOptions } from "./providers";
+export { filterRelevant, type RelevanceInput, type RelevanceOutcome } from "./relevance";

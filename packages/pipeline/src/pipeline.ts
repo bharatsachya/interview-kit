@@ -210,6 +210,11 @@ async function run(
       pages_fetched: result.pages.length,
       pages_skipped: result.skipped.length,
       robots_blocked: result.robotsBlocked,
+      // Why the found links did not all reach the ranker. Without this, links_found=1
+      // links_scored=0 on a client-rendered site is indistinguishable from a broken ranker.
+      unscored: `external=${result.unscored.external} self=${result.unscored.self} duplicate=${result.unscored.duplicate}`,
+      sitemap_urls: result.sitemapUrls,
+      ...(result.sitemapsFetched.length > 0 ? { sitemaps: result.sitemapsFetched } : {}),
       // The evidence that ranking happened in code, and why each page was chosen.
       top_links: result.topLinks.map((link) => `${link.url}=${link.score}`),
     });
@@ -218,8 +223,18 @@ async function run(
 
   // ── 4. search_discussion ───────────────────────────────────────────────────────────────
   const discussion = await deps.tracer.span("search_discussion", async (s) => {
-    const result = await searchDiscussion(deps.search, { company, roleTitle: extraction.role.title });
+    const result = await searchDiscussion(deps.search, {
+      company,
+      roleTitle: extraction.role.title,
+      companyUrl: input.companyUrl,
+    });
     s.setAll({ provider: result.provider, query: result.query, result_count: result.results.length });
+    if (result.filtered.length > 0) {
+      s.setAll({
+        filtered_irrelevant: result.filtered.length,
+        filtered: result.filtered.map((d) => `${new URL(d.url).hostname}=${d.reason}`),
+      });
+    }
     if (result.skippedReason !== undefined) s.skip(result.skippedReason);
     return result;
   });

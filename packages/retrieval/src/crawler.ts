@@ -2,6 +2,7 @@ import type { Clock, FetchResult, HttpFetcher } from "@trao/contracts";
 import { cleanText, extractLinks, isSameSite, pageTitle } from "./html";
 import { ALLOW_ALL, isAllowed, parseRobots, type RobotsRules } from "./robots";
 import { rankLinks, type ScoredLink } from "./ranking";
+import { discoverFromSitemaps } from "./sitemap";
 
 /**
  * Best-first crawl of one company site.
@@ -35,12 +36,31 @@ export interface SkippedUrl {
   detail?: string;
 }
 
+/**
+ * Why a discovered link never reached the ranker.
+ *
+ * Without these, `links_found=306 links_scored=88` and `links_found=1 links_scored=0` look like
+ * the same kind of fact, and a client-rendered site is indistinguishable from a broken ranker.
+ */
+export interface UnscoredReasons {
+  /** Pointed at another domain. */
+  external: number;
+  /** The page we were already on. */
+  self: number;
+  /** Already queued or already visited. */
+  duplicate: number;
+}
+
 export interface CrawlResult {
   pages: CrawledPage[];
   skipped: SkippedUrl[];
   linksFound: number;
   linksScored: number;
   robotsBlocked: number;
+  unscored: UnscoredReasons;
+  /** URLs the site declared in its own sitemap. Zero is normal; it is how a SPA is readable. */
+  sitemapUrls: number;
+  sitemapsFetched: string[];
   /** Top five with their scores, for the trace. The evidence that ranking happened in code. */
   topLinks: { url: string; score: number; reasons: string[] }[];
 }
@@ -55,6 +75,8 @@ export interface CrawlOptions {
   requestsPerSecond?: number;
   /** Fetched once per site. A missing or unparseable file means allow. */
   robotsTxt?: string | null;
+  /** Sitemap discovery. On by default; off for tests that assert on anchors alone. */
+  useSitemap?: boolean;
 }
 
 /**
@@ -89,15 +111,30 @@ export async function crawlSite(homepage: FetchResult, options: CrawlOptions): P
   const queue: (ScoredLink & { depth: number })[] = [];
   let linksFound = 0;
   let robotsBlocked = 0;
+  const unscored: UnscoredReasons = { external: 0, self: 0, duplicate: 0 };
 
-  const enqueue = (html: string, baseUrl: string, depth: number): void => {
+  const consider = (candidates: { url: string; anchor: string }[], depth: number): void => {
     if (depth > maxDepth) return;
-    const links = extractLinks(html, baseUrl).filter((link) => isSameSite(link.url, origin));
-    linksFound += links.length;
 
-    for (const scored of rankLinks(links)) {
+    const sameSite: { url: string; anchor: string }[] = [];
+    for (const link of candidates) {
+      if (!isSameSite(link.url, origin)) {
+        unscored.external += 1;
+        continue;
+      }
+      sameSite.push(link);
+    }
+
+    for (const scored of rankLinks(sameSite)) {
       const key = normalise(scored.url);
-      if (visited.has(key) || queue.some((q) => normalise(q.url) === key)) continue;
+      if (visited.has(key)) {
+        unscored.self += 1;
+        continue;
+      }
+      if (queue.some((q) => normalise(q.url) === key)) {
+        unscored.duplicate += 1;
+        continue;
+      }
 
       if (!isAllowed(robots, new URL(scored.url).pathname)) {
         robotsBlocked += 1;
@@ -110,7 +147,34 @@ export async function crawlSite(homepage: FetchResult, options: CrawlOptions): P
     }
   };
 
+  const enqueue = (html: string, baseUrl: string, depth: number): void => {
+    if (depth > maxDepth) return;
+    const links = extractLinks(html, baseUrl);
+    linksFound += links.length;
+    consider(links, depth);
+  };
+
   enqueue(homepage.body, homepage.finalUrl, 1);
+
+  // The site's own declaration of what it contains, fed through the same ranker as the anchors.
+  // On a client-rendered page this is the only list there is; on a normal site it adds the pages
+  // the homepage happens not to link to. Either way we still do not guess a path — the site
+  // names its URLs and the scoring function chooses among them.
+  let sitemap = { urls: [] as string[], fetched: [] as string[] };
+  if (options.useSitemap !== false) {
+    sitemap = await discoverFromSitemaps({
+      fetcher: options.fetcher,
+      baseUrl: homepage.finalUrl,
+      robotsTxt: options.robotsTxt ?? null,
+      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options.maxBytes !== undefined ? { maxBytes: options.maxBytes } : {}),
+    });
+
+    linksFound += sitemap.urls.length;
+    // No anchor text to score on, so the URL tokens carry it — which is what the ranker already
+    // weighs when an anchor is empty.
+    consider(sitemap.urls.map((url) => ({ url, anchor: "" })), 1);
+  }
   const topLinks = [...queue]
     .sort((a, b) => b.score - a.score)
     .slice(0, 5)
@@ -164,7 +228,17 @@ export async function crawlSite(homepage: FetchResult, options: CrawlOptions): P
 
   for (const remaining of queue) skipped.push({ url: remaining.url, reason: "budget" });
 
-  return { pages, skipped, linksFound, linksScored, robotsBlocked, topLinks };
+  return {
+    pages,
+    skipped,
+    linksFound,
+    linksScored,
+    robotsBlocked,
+    unscored,
+    sitemapUrls: sitemap.urls.length,
+    sitemapsFetched: sitemap.fetched,
+    topLinks,
+  };
 }
 
 /** Trailing-slash and index variants are the same page; fetching both wastes the budget. */

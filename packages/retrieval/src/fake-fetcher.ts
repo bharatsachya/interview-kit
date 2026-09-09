@@ -71,7 +71,11 @@ export class FakeFetcher implements HttpFetcher {
       url,
       finalUrl: url,
       status: 200,
-      contentType: filePath.endsWith(".txt") ? "text/plain; charset=utf-8" : "text/html; charset=utf-8",
+      contentType: filePath.endsWith(".txt")
+        ? "text/plain; charset=utf-8"
+        : filePath.endsWith(".xml")
+          ? "application/xml; charset=utf-8"
+          : "text/html; charset=utf-8",
       body,
       bytes,
     };
@@ -121,6 +125,7 @@ export function fixtureMounts(): Record<string, string> {
     "https://calder.test/": "sparse",
     "https://gone.test/": "broken",
     "https://northwind.test/": "deep",
+    "https://halcyon.test/": "spa",
     "http://localhost:8099/acme/": "acme",
   };
 }
