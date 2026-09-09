@@ -263,17 +263,10 @@ async function run(
       companySummary: brief.summary,
       llm: deps.llm,
       ids: deps.ids,
+      // The category spans are emitted by generation, around the calls they describe.
+      span: s,
       ...(deps.questionsPerCategory !== undefined ? { perCategory: deps.questionsPerCategory } : {}),
     });
-
-    // One child span per category — the visible proof the four are generated separately.
-    for (const report of result.reports) {
-      await s.child(`category:${report.category}`, async (c) => {
-        c.setAll({ requirements_in: report.requirementsIn, questions_out: report.questionsOut });
-        if (report.skipped !== undefined) c.skip(report.skipped);
-        if (report.failed !== undefined) c.set("failed", report.failed);
-      });
-    }
 
     s.set("questions_out", result.questions.length);
     return result;
@@ -289,23 +282,10 @@ async function run(
         ...(hiringPage !== null ? { hiringProcess: hiringPage.text } : {}),
         ids: deps.ids,
         writer: createGapFillWriter({ llm: deps.llm }),
+        // Checks and fills are recorded by coverage, in the order they actually happen.
+        span: s,
         ...(deps.maxCoveragePasses !== undefined ? { maxExtraPasses: deps.maxCoveragePasses } : {}),
       });
-
-      // A report's attempts are the gap fills that ran *before* its check, so they are emitted
-      // first — otherwise the trace reads as though pass 2 happened before the fills that
-      // caused it, which is the opposite of the story the trace is meant to tell.
-      for (const report of result.reports) {
-        for (const attempt of report.attempts) {
-          await s.child(`gap_fill ${attempt.requirementIds.join("+")}`, async (c) => {
-            c.setAll({ accepted: attempt.accepted, ...(attempt.reason ? { reason: attempt.reason } : {}) });
-            if (!attempt.accepted) c.skip(attempt.reason ?? "rejected");
-          });
-        }
-        await s.child(`coverage_check pass=${report.pass}`, async (c) => {
-          c.setAll({ musts: report.mustCount, covered: report.coveredCount, gaps: report.gapIds });
-        });
-      }
 
       s.setAll({ passes: result.passes, fallbacks: result.fallbackCount, uncovered: result.uncoveredRequirementIds });
       // Tags trimmed before the first check. A requirement returning to the gap list because its

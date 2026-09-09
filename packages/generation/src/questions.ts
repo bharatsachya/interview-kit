@@ -1,4 +1,4 @@
-import { truncateForPrompt, untrustedBlock, type IdGenerator, type LlmProvider } from "@trao/contracts";
+import { NOOP_SPAN, truncateForPrompt, untrustedBlock, type IdGenerator, type LlmProvider, type SpanHandle } from "@trao/contracts";
 import type { Difficulty, InternalQuestion, QuestionCategory, Requirement } from "@trao/kit";
 import { z } from "zod";
 
@@ -76,6 +76,15 @@ export interface QuestionGenerationInput {
   llm: LlmProvider;
   ids: IdGenerator;
   perCategory?: number;
+  /**
+   * The parent span, so each category wraps its own call.
+   *
+   * Emitting these afterwards from the returned reports made them 0ms annotations sitting beside
+   * the calls rather than around them, which is not what "four separate calls" looks like in a
+   * trace. With the call inside the span, `llm:generate_questions:technical` is a child of
+   * `category:technical` and the nesting is the evidence.
+   */
+  span?: SpanHandle;
 }
 
 export interface CategoryReport {
@@ -95,23 +104,29 @@ export interface QuestionGenerationResult {
 export async function generateQuestions(input: QuestionGenerationInput): Promise<QuestionGenerationResult> {
   const questions: InternalQuestion[] = [];
   const reports: CategoryReport[] = [];
+  const span = input.span ?? NOOP_SPAN;
 
   for (const category of ["technical", "behavioural", "system-design", "company-fit"] as const) {
     const seed = requirementsFor(category, input.requirements);
 
-    // Skipping is honest. Calling a model with no requirements and asking for five questions is
-    // an instruction to invent, and the empty categories are exactly where invention shows.
-    if (seed.length === 0 && category !== "company-fit") {
-      reports.push({ category, requirementsIn: 0, questionsOut: 0, skipped: "no_requirements" });
-      continue;
-    }
-    if (category === "company-fit" && seed.length === 0 && (input.companySummary ?? "").trim().length === 0) {
-      reports.push({ category, requirementsIn: 0, questionsOut: 0, skipped: "no_context" });
-      continue;
-    }
+    const report = await span.child(`category:${category}`, async (c): Promise<CategoryReport> => {
+      c.set("requirements_in", seed.length);
 
-    try {
-      const { data } = await input.llm.complete({
+      // Skipping is honest. Calling a model with no requirements and asking for five questions
+      // is an instruction to invent, and the empty categories are where invention shows.
+      if (seed.length === 0 && category !== "company-fit") {
+        c.set("questions_out", 0);
+        c.skip("no_requirements");
+        return { category, requirementsIn: 0, questionsOut: 0, skipped: "no_requirements" };
+      }
+      if (category === "company-fit" && seed.length === 0 && (input.companySummary ?? "").trim().length === 0) {
+        c.set("questions_out", 0);
+        c.skip("no_context");
+        return { category, requirementsIn: 0, questionsOut: 0, skipped: "no_context" };
+      }
+
+      try {
+        const { data } = await input.llm.complete({
         // A distinct purpose per category: a distinct span in the trace and a distinct cache key.
         purpose: `generate_questions:${category}`,
         prompt: buildPrompt(category, seed, input),
@@ -141,16 +156,19 @@ export async function generateQuestions(input: QuestionGenerationInput): Promise
         });
       }
 
-      reports.push({ category, requirementsIn: seed.length, questionsOut: data.questions.length });
+      c.set("questions_out", data.questions.length);
+      return { category, requirementsIn: seed.length, questionsOut: data.questions.length };
     } catch (error) {
-      // One category failing is a thinner kit, not a failed run.
-      reports.push({
-        category,
-        requirementsIn: seed.length,
-        questionsOut: 0,
-        failed: error instanceof Error ? error.message : String(error),
-      });
+      // One category failing is a thinner kit, not a failed run. Recorded on the span rather
+      // than thrown, so the sibling categories still run.
+      const message = error instanceof Error ? error.message : String(error);
+      c.setAll({ questions_out: 0, failed: message });
+      c.skip("failed");
+      return { category, requirementsIn: seed.length, questionsOut: 0, failed: message };
     }
+    });
+
+    reports.push(report);
   }
 
   return { questions, reports };

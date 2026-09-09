@@ -64,3 +64,22 @@ export interface Tracer {
   /** Completed and in-flight spans, in start order. Safe to mutate; these are copies. */
   export(): Span[];
 }
+
+/**
+ * A handle that records nothing.
+ *
+ * The null object for `SpanHandle`, so a package that accepts a parent span can be called
+ * without one — from a test, or from a caller that is not tracing — without every call site
+ * guarding on undefined.
+ *
+ * It lives here rather than in `kernel` because the packages that need it may import only
+ * `contracts`, and a no-op implementation of an interface is part of that interface's
+ * vocabulary in the same way `KitError` is.
+ */
+export const NOOP_SPAN: SpanHandle = {
+  id: "noop",
+  set: () => {},
+  setAll: () => {},
+  skip: () => {},
+  child: (_step, fn) => fn(NOOP_SPAN),
+};

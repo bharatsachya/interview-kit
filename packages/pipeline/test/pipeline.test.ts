@@ -30,15 +30,27 @@ class StubLlm implements LlmProvider {
   readonly name = "stub";
   readonly calls: { purpose: string; prompt: string }[] = [];
   #failures = new Map<string, Error>();
+  #tracer: Tracer | undefined;
 
   constructor(private readonly responses: Record<string, (r: LlmRequest<unknown>) => unknown>) {}
+
+  /** Emit `llm:<purpose>` spans the way the real gateway does, so nesting can be asserted. */
+  tracing(tracer: Tracer): this {
+    this.#tracer = tracer;
+    return this;
+  }
 
   failOn(purposePrefix: string, error: Error): this {
     this.#failures.set(purposePrefix, error);
     return this;
   }
 
-  async complete<T>(request: LlmRequest<T>): Promise<LlmResult<T>> {
+  complete<T>(request: LlmRequest<T>): Promise<LlmResult<T>> {
+    if (this.#tracer === undefined) return this.#answer(request);
+    return this.#tracer.span(`llm:${request.purpose}`, () => this.#answer(request));
+  }
+
+  async #answer<T>(request: LlmRequest<T>): Promise<LlmResult<T>> {
     this.calls.push({ purpose: request.purpose, prompt: request.prompt });
 
     for (const [prefix, error] of this.#failures) {
@@ -61,16 +73,19 @@ class StubLlm implements LlmProvider {
 class TestTracer implements Tracer {
   readonly spans: Span[] = [];
   #depth: string[] = [];
+  /** Monotonic, so "this span started before that one" is a real assertion. */
+  #tick = 0;
 
   async span<T>(step: string, fn: (s: SpanHandle) => Promise<T>): Promise<T> {
     const attrs: Record<string, unknown> = {};
     const id = `s${this.spans.length + 1}`;
+    const startedAt = (this.#tick += 1);
     const span: Span = {
       id,
       parentId: this.#depth.at(-1) ?? null,
       step,
-      startedAt: 0,
-      endedAt: 0,
+      startedAt,
+      endedAt: startedAt,
       durationMs: 0,
       status: "ok",
       attrs,
@@ -95,6 +110,8 @@ class TestTracer implements Tracer {
       span.status = "failed";
       throw error;
     } finally {
+      span.endedAt = (this.#tick += 1);
+      span.durationMs = span.endedAt - span.startedAt;
       this.#depth.pop();
     }
   }
@@ -110,6 +127,14 @@ class TestTracer implements Tracer {
   childrenOf(step: string): Span[] {
     const parent = this.byStep(step);
     return parent === undefined ? [] : this.spans.filter((s) => s.parentId === parent.id);
+  }
+
+  allByStep(predicate: (step: string) => boolean): Span[] {
+    return this.spans.filter((s) => predicate(s.step));
+  }
+
+  parentOf(span: Span): Span | undefined {
+    return this.spans.find((s) => s.id === span.parentId);
   }
 }
 
@@ -388,5 +413,118 @@ describe("idempotency", () => {
   it("reports the hash on the result, so the caller can store it", async () => {
     const result = await generateKit({ jd: RICH_JD, companyUrl: "https://meridian.test/", days: 5 }, deps());
     expect(result.hash).toBe(hashSubmission(RICH_JD, "https://meridian.test/", 5));
+  });
+});
+
+/**
+ * A posting with more must-haves than the fake covers in bulk, so gap fill actually runs and
+ * there is a second pass to order against.
+ */
+const GAPPY_JD = `Staff Infrastructure Engineer
+Northwind Labs — Remote
+
+Required:
+- Deep experience with Kubernetes cluster operations
+- PostgreSQL replication and failover
+- Kafka streaming pipelines at high throughput
+- Terraform modules for reproducible infrastructure
+- Prometheus and Grafana observability
+- Linux performance tuning under load
+- Mentoring junior engineers
+`;
+
+describe("the trace describes the work, not a replay of it", () => {
+  /**
+   * These spans used to be emitted from returned reports after the step finished, which made
+   * them 0ms annotations timestamped at the end. In a real run `coverage_check pass=1` carried a
+   * timestamp 2.5 seconds LATER than the gap-fill calls it had triggered — read cold, the trace
+   * said fills happened before any check, which is the opposite of the evidence it exists to
+   * provide.
+   */
+  const runGappy = async () => {
+    const llm = new StubLlm({ ...fakeLlmResponses(), gap_fill: gapFillResponse });
+    const d = deps({ llm });
+    llm.tracing(d.tracer);
+    await generateKit({ jd: GAPPY_JD, companyUrl: "https://northwind.test/", days: 7 }, d);
+    return d.tracer;
+  };
+
+  it("starts every coverage_check before the gap fills it caused", async () => {
+    const tracer = await runGappy();
+
+    const checks = tracer.allByStep((step) => step.startsWith("coverage_check"));
+    const fills = tracer.allByStep((step) => step.startsWith("gap_fill "));
+
+    expect(checks.length).toBeGreaterThanOrEqual(2);
+    expect(fills.length).toBeGreaterThan(0);
+
+    const firstCheck = checks[0] as Span;
+    for (const fill of fills) {
+      expect(fill.startedAt, `${fill.step} started before ${firstCheck.step}`).toBeGreaterThan(firstCheck.startedAt);
+    }
+
+    // And the pass that observed the result starts after the fills that produced it.
+    const lastCheck = checks.at(-1) as Span;
+    for (const fill of fills) {
+      expect(lastCheck.startedAt, `${lastCheck.step} started before ${fill.step} finished`).toBeGreaterThan(fill.endedAt);
+    }
+  });
+
+  it("orders the checks by pass number", async () => {
+    const tracer = await runGappy();
+    const checks = tracer.allByStep((step) => step.startsWith("coverage_check"));
+
+    expect(checks.map((c) => c.step)).toEqual(["coverage_check pass=1", "coverage_check pass=2"]);
+    expect(checks[0]?.startedAt).toBeLessThan(checks[1]?.startedAt as number);
+  });
+
+  it("makes every llm span a child of the step that made the call", async () => {
+    const tracer = await runGappy();
+    const llmSpans = tracer.allByStep((step) => step.startsWith("llm:"));
+
+    expect(llmSpans.length).toBeGreaterThan(0);
+
+    for (const span of llmSpans) {
+      const parent = tracer.parentOf(span);
+      expect(parent, `${span.step} has no parent`).toBeDefined();
+
+      const purpose = span.step.slice("llm:".length);
+      if (purpose.startsWith("generate_questions:")) {
+        expect(parent?.step).toBe(`category:${purpose.slice("generate_questions:".length)}`);
+      } else if (purpose.startsWith("gap_fill")) {
+        expect(parent?.step.startsWith("gap_fill "), `${span.step} hangs off ${parent?.step}`).toBe(true);
+      } else {
+        // extract_requirements, generate_brief — the step name IS the purpose.
+        expect(parent?.step).toBe(purpose);
+      }
+    }
+  });
+
+  it("nests each gap fill inside the coverage span, not beside it", async () => {
+    const tracer = await runGappy();
+    const coverage = tracer.byStep("coverage") as Span;
+
+    for (const fill of tracer.allByStep((step) => step.startsWith("gap_fill "))) {
+      expect(fill.parentId).toBe(coverage.id);
+      expect(fill.startedAt).toBeGreaterThan(coverage.startedAt);
+      expect(fill.endedAt).toBeLessThanOrEqual(coverage.endedAt);
+    }
+  });
+
+  it("wraps each category around its own call rather than annotating afterwards", async () => {
+    const llm = new StubLlm({ ...fakeLlmResponses(), gap_fill: gapFillResponse });
+    const d = deps({ llm });
+    llm.tracing(d.tracer);
+    await generateKit({ jd: RICH_JD, companyUrl: "https://meridian.test/", days: 5 }, d);
+
+    for (const category of d.tracer.allByStep((step) => step.startsWith("category:"))) {
+      // A span that merely annotates has zero duration and no children.
+      if (category.status === "skipped") continue;
+      const children = d.tracer.spans.filter((s) => s.parentId === category.id);
+      expect(children.map((c) => c.step), `${category.step} wraps nothing`).toEqual([
+        `llm:generate_questions:${category.step.slice("category:".length)}`,
+      ]);
+      expect(category.durationMs).toBeGreaterThan(0);
+    }
   });
 });
