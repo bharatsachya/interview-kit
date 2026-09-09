@@ -20,7 +20,8 @@
     "evaluate": "tsx scripts/evaluate.ts",
     "smoke": "tsx scripts/smoke.ts",
     "api": "tsx apps/api/src/main.ts",
-    "api:fake": "FAKE_LLM=true FAKE_FETCH=true tsx apps/api/src/main.ts"
+    "api:fake": "FAKE_LLM=true FAKE_FETCH=true tsx apps/api/src/main.ts",
+    "trace": "tsx scripts/trace-view.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

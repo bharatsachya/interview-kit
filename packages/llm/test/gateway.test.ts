@@ -400,3 +400,74 @@ describe("tiers and tracing", () => {
     expect(tracer.spans[0]?.status).toBe("failed");
   });
 });
+
+describe("--record-prompts", () => {
+  it("records nothing by default, so a production trace is not a copy of the user's input", async () => {
+    const { gateway, tracer } = harness([OK]);
+    await gateway.complete(ask());
+
+    expect(tracer.lastAttrs["prompt"]).toBeUndefined();
+    expect(tracer.lastAttrs["response"]).toBeUndefined();
+    // The hash is always there, so calls can still be correlated without storing the text.
+    expect(tracer.lastAttrs["prompt_hash"]).toBeDefined();
+  });
+
+  it("records the prompt and the raw response when asked", async () => {
+    const clock = new TestClock(0);
+    const tracer = new RecordingTracer();
+    const gateway = new LlmGateway({
+      transport: new FakeTransport([OK]),
+      cache: new MemoryCacheStore(clock),
+      clock,
+      tracer,
+      budget: unlimitedBudget(clock),
+      models: { quality: "model-pro", fast: "model-flash" },
+      recordPrompts: true,
+    });
+
+    await gateway.complete(ask({ prompt: "Say hello politely." }));
+
+    expect(tracer.lastAttrs["prompt"]).toBe("Say hello politely.");
+    expect(tracer.lastAttrs["response"]).toBe(OK);
+  });
+
+  it("records both rounds separately when a repair happens", async () => {
+    const clock = new TestClock(0);
+    const tracer = new RecordingTracer();
+    const gateway = new LlmGateway({
+      transport: new FakeTransport([JSON.stringify({ salutation: "wrong" }), OK]),
+      cache: new MemoryCacheStore(clock),
+      clock,
+      tracer,
+      budget: unlimitedBudget(clock),
+      models: { quality: "model-pro", fast: "model-flash" },
+      recordPrompts: true,
+    });
+
+    await gateway.complete(ask());
+
+    expect(tracer.lastAttrs["response"]).toContain("salutation");
+    expect(tracer.lastAttrs["repair_prompt"]).toContain("{ greeting: string }");
+    expect(tracer.lastAttrs["repair_response"]).toBe(OK);
+  });
+
+  it("clips a very long prompt, so one trace cannot be fifty megabytes", async () => {
+    const clock = new TestClock(0);
+    const tracer = new RecordingTracer();
+    const gateway = new LlmGateway({
+      transport: new FakeTransport([OK]),
+      cache: new MemoryCacheStore(clock),
+      clock,
+      tracer,
+      budget: unlimitedBudget(clock),
+      models: { quality: "model-pro", fast: "model-flash" },
+      recordPrompts: true,
+      recordedPromptChars: 100,
+    });
+
+    await gateway.complete(ask({ prompt: "x".repeat(5_000) }));
+
+    expect(String(tracer.lastAttrs["prompt"]).length).toBeLessThan(200);
+    expect(String(tracer.lastAttrs["prompt"])).toContain("more characters]");
+  });
+});

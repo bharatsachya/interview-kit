@@ -1,4 +1,4 @@
-import { KitError, type LlmProvider, type LlmRequest, type LlmResult } from "@trao/contracts";
+import { KitError, type LlmProvider, type LlmRequest, type LlmResult, type Tracer } from "@trao/contracts";
 import { estimateTokens } from "./tokens";
 import { ProviderError, type ModelTransport, type ModelTransportRequest, type ModelTransportResponse } from "./transport";
 
@@ -33,17 +33,31 @@ export type FakeResponse = unknown;
 export interface FakeLlmProviderOptions {
   /** Keyed by `LlmRequest.purpose`. Values may be plain data or a `FakeResponder`. */
   responses?: Record<string, FakeResponse>;
+  /**
+   * Emit an `llm:<purpose>` span per call, matching the shape the real gateway emits.
+   *
+   * Bypassing the gateway is what makes fake runs fast, but it also means fake traces show no
+   * model calls at all — so `--record-prompts` would silently record nothing and a fake trace
+   * would look structurally different from a live one. With a tracer supplied, the two read the
+   * same and the trace viewer needs no special case.
+   */
+  tracer?: Tracer;
+  recordPrompts?: boolean;
 }
 
 export class FakeLlmProvider implements LlmProvider {
   readonly name = "fake";
   readonly calls: RecordedCall[] = [];
   readonly #responses = new Map<string, FakeResponse>();
+  readonly #tracer: Tracer | undefined;
+  readonly #recordPrompts: boolean;
 
   constructor(options: FakeLlmProviderOptions = {}) {
     for (const [purpose, response] of Object.entries(options.responses ?? {})) {
       this.#responses.set(purpose, response);
     }
+    this.#tracer = options.tracer;
+    this.#recordPrompts = options.recordPrompts ?? false;
   }
 
   /**
@@ -90,7 +104,28 @@ export class FakeLlmProvider implements LlmProvider {
     return best;
   }
 
-  async complete<T>(request: LlmRequest<T>): Promise<LlmResult<T>> {
+  complete<T>(request: LlmRequest<T>): Promise<LlmResult<T>> {
+    if (this.#tracer === undefined) return this.#answer(request);
+    return this.#tracer.span(`llm:${request.purpose}`, async (span) => {
+      const result = await this.#answer(request);
+      span.setAll({
+        model: "fake",
+        cache_hit: false,
+        input_tokens: result.usage.inputTokens,
+        output_tokens: result.usage.outputTokens,
+        attempt: 1,
+        queued_ms: 0,
+        rate_limited: false,
+        repair_attempted: false,
+        ...(this.#recordPrompts
+          ? { prompt: request.prompt, response: JSON.stringify(result.data, null, 2) }
+          : {}),
+      });
+      return result;
+    });
+  }
+
+  async #answer<T>(request: LlmRequest<T>): Promise<LlmResult<T>> {
     this.calls.push({ purpose: request.purpose, prompt: request.prompt, tier: request.tier ?? "fast" });
 
     const key = this.#keyFor(request.purpose);

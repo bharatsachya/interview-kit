@@ -53,6 +53,18 @@ export interface LlmGatewayOptions {
   maxAttempts?: number;
   cacheTtlSeconds?: number;
   backoff?: BackoffOptions;
+
+  /**
+   * Record the prompt and the raw response on each call's span.
+   *
+   * Off by default, and it should stay off in production: prompts contain the pasted job
+   * description and whole fetched pages, so a trace with this on is a copy of the user's input
+   * sitting in a log. On for `--record-prompts`, where the point is to read exactly what was
+   * sent and exactly what came back.
+   */
+  recordPrompts?: boolean;
+  /** Cap on each recorded string, so one trace cannot be fifty megabytes. */
+  recordedPromptChars?: number;
 }
 
 /** Gemini's free tier sits around 10-15 RPM and 250,000 TPM. Stay under, not level with. */
@@ -142,6 +154,14 @@ export class LlmGateway implements LlmProvider {
       );
       const usage = response.usage ?? { inputTokens: promptTokens, outputTokens: estimateTokens(response.text) };
       span.set("output_tokens", usage.outputTokens);
+
+      if (this.options.recordPrompts === true) {
+        const cap = this.options.recordedPromptChars ?? 8_000;
+        span.setAll({
+          [round === 0 ? "prompt" : "repair_prompt"]: clip(prompt, cap),
+          [round === 0 ? "response" : "repair_response"]: clip(response.text, cap),
+        });
+      }
 
       const parsed = this.#parse(request.schema, response.text);
       if (parsed.ok) {
@@ -234,4 +254,8 @@ function repairPrompt(original: string, error: string): string {
 function describe(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function clip(text: string, max: number): string {
+  return text.length <= max ? text : `${text.slice(0, max)}\n…[${text.length - max} more characters]`;
 }

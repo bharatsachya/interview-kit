@@ -32,6 +32,7 @@ interface Flags {
   noCache: boolean;
   allowPrivateHosts: boolean;
   tracePretty: boolean;
+  recordPrompts: boolean;
   trace: string | null;
   out: string | null;
 }
@@ -44,6 +45,7 @@ async function main(): Promise<number> {
     fakeLlm: flags.fakeLlm,
     fakeFetch: flags.fakeFetch,
     noCache: flags.noCache,
+    recordPrompts: flags.recordPrompts,
     allowPrivateHosts: flags.allowPrivateHosts,
     deterministicIds: flags.fakeLlm,
   });
@@ -69,6 +71,7 @@ async function main(): Promise<number> {
 
   if (flags.tracePretty) process.stderr.write(`${formatTrace(result.spans)}\n\n`);
   if (flags.trace !== null) await writeJson(flags.trace, result.spans);
+
 
   if (result.status === "failed") {
     process.stderr.write(`FAILED  ${result.error?.code}: ${result.error?.message}\n`);
@@ -110,6 +113,7 @@ function parseFlags(argv: string[]): Flags {
     noCache: false,
     allowPrivateHosts: false,
     tracePretty: false,
+    recordPrompts: false,
     trace: null,
     out: null,
   };
@@ -132,6 +136,7 @@ function parseFlags(argv: string[]): Flags {
       case "--no-cache": flags.noCache = true; break;
       case "--allow-private-hosts": flags.allowPrivateHosts = true; break;
       case "--trace-pretty": flags.tracePretty = true; break;
+      case "--record-prompts": flags.recordPrompts = true; break;
       case "--trace": flags.trace = next(); break;
       case "--out": flags.out = next(); break;
       case "--help":
@@ -180,6 +185,8 @@ Usage: npm run dev:kit -- --jd <file|-> --url <company-url> [options]
   --allow-private-hosts    permit loopback and private addresses (implied by --fake-fetch)
 
   --trace-pretty           print the span tree to stderr
+  --record-prompts         record each model call's prompt and response on its span,
+                           so "npm run trace" can show them (never use in production)
   --trace <file>           write the spans as JSON
   --out <file>             write the kit JSON (default: stdout)
 `;

@@ -29,6 +29,8 @@ export interface WiringOptions {
   fakeLlm?: boolean;
   fakeFetch?: boolean;
   noCache?: boolean;
+  /** Record each model call's prompt and raw response on its span. Never on in production. */
+  recordPrompts?: boolean;
   allowPrivateHosts?: boolean;
   /** Per-run limits. Omitted means unlimited, which is what the dev runner wants. */
   budget?: { maxCalls: number; maxTokens: number; timeoutMs: number };
@@ -46,6 +48,14 @@ export interface Wiring {
   budget: Budget;
   /** What was actually wired, for the run banner. Honest about what is fake. */
   describe: string[];
+  /**
+   * Prompts the fake provider saw.
+   *
+   * The real gateway records prompts on its spans, but `FakeLlmProvider` bypasses the gateway
+   * entirely — which is what makes fake runs fast — so it has no span to write to. Reading its
+   * call log back is how `--record-prompts` still shows prompt shape without spending quota.
+   */
+  recordedPrompts: () => { purpose: string; prompt: string }[];
 }
 
 export const FIXTURE_ROOT = resolve(process.cwd(), "fixtures", "sites");
@@ -72,7 +82,12 @@ export function wire(options: WiringOptions = {}): Wiring {
   // ── The model ──────────────────────────────────────────────────────────────────────────
   let llm: LlmProvider;
   if (options.fakeLlm === true) {
-    const fake = new FakeLlmProvider({ responses: fakeLlmResponses() });
+    const fake = new FakeLlmProvider({
+      responses: fakeLlmResponses(),
+      // Emit the same span shape the gateway does, so a fake trace and a live trace read alike.
+      tracer,
+      ...(options.recordPrompts === true ? { recordPrompts: true } : {}),
+    });
     fake.respondWith("gap_fill", gapFillResponse);
     llm = fake;
     describe.push("llm: FakeLlmProvider (no network, no quota)");
@@ -94,6 +109,7 @@ export function wire(options: WiringOptions = {}): Wiring {
       },
       requestsPerMinute: Number(process.env["GEMINI_RPM"] ?? 10),
       tokensPerMinute: Number(process.env["GEMINI_TPM"] ?? 250_000),
+      ...(options.recordPrompts === true ? { recordPrompts: true } : {}),
     });
     describe.push(`llm: Gemini via gateway${options.noCache === true ? " (cache bypassed)" : ""}`);
   }
@@ -109,12 +125,27 @@ export function wire(options: WiringOptions = {}): Wiring {
   }
 
   // ── Search: optional by design. No key degrades, it never throws. ──────────────────────
+  //
+  // Gated on `fakeFetch` rather than `fakeLlm`, because "am I allowed to touch the network" is
+  // what actually decides this. Tying it to the model flag meant --fake-llm silently disabled a
+  // real Tavily key, which is exactly the wrong behaviour when the thing being tested is search.
   const tavilyKey = process.env["TAVILY_API_KEY"] ?? "";
+  const offline = options.fakeFetch === true;
   const search: SearchProvider =
-    tavilyKey === "" || options.fakeLlm === true
-      ? new NullSearchProvider()
-      : new TavilySearchProvider({ apiKey: tavilyKey });
-  describe.push(`search: ${search.name}${search.name === "none" ? " (no TAVILY_API_KEY — step will be skipped)" : ""}`);
+    tavilyKey === "" || offline ? new NullSearchProvider() : new TavilySearchProvider({ apiKey: tavilyKey });
 
-  return { llm, fetcher, search, tracer, clock, ids, budget, describe };
+  describe.push(
+    `search: ${search.name}${
+      search.name === "none"
+        ? offline && tavilyKey !== ""
+          ? " (--fake-fetch is offline; TAVILY_API_KEY ignored)"
+          : " (no TAVILY_API_KEY — step will be skipped)"
+        : ""
+    }`,
+  );
+
+  const recordedPrompts = (): { purpose: string; prompt: string }[] =>
+    llm instanceof FakeLlmProvider ? llm.calls.map((c) => ({ purpose: c.purpose, prompt: c.prompt })) : [];
+
+  return { llm, fetcher, search, tracer, clock, ids, budget, describe, recordedPrompts };
 }
