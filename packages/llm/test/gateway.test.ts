@@ -471,3 +471,33 @@ describe("--record-prompts", () => {
     expect(String(tracer.lastAttrs["prompt"])).toContain("more characters]");
   });
 });
+
+describe("fenced output costs no repair", () => {
+  const FENCED = [
+    '```json\n{"greeting":"hello"}\n```',
+    '```\n{"greeting":"hello"}\n```',
+    '```JSON\n{"greeting":"hello"}\n```',
+    'Here you go:\n```json\n{"greeting":"hello"}\n```',
+    '~~~json\n{"greeting":"hello"}\n~~~',
+    '```json\n{"greeting":"hello"}',
+  ];
+
+  it.each(FENCED)("parses %j with zero repair attempts", async (raw) => {
+    const { gateway, transport, tracer } = harness([raw]);
+
+    const result = await gateway.complete(ask());
+
+    expect(result.data).toEqual({ greeting: "hello" });
+    expect(result.repaired).toBe(false);
+    // The whole point: one request, not two. Backticks are not worth a call from a daily quota.
+    expect(transport.callCount).toBe(1);
+    expect(tracer.lastAttrs["repair_attempted"]).toBe(false);
+  });
+
+  it("still spends exactly one repair when the JSON is genuinely the wrong shape", async () => {
+    const { gateway, transport } = harness(['```json\n{"salutation":"wrong"}\n```', OK]);
+
+    await gateway.complete(ask());
+    expect(transport.callCount).toBe(2);
+  });
+});

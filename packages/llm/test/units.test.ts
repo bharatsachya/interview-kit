@@ -144,3 +144,35 @@ describe("FakeLlmProvider", () => {
     expect(fake.promptsFor("greet")).toEqual(["a", "b"]);
   });
 });
+
+/**
+ * Fenced output, exhaustively.
+ *
+ * Models wrap JSON in code fences far more often than they emit malformed JSON, and a fence
+ * costs a repair call only if we let it. Some of these parse through the fence pattern and some
+ * through the surrounding-prose fallback; the point of pinning all of them is that which path
+ * handles which is an implementation detail, and none of them may start costing a request.
+ */
+describe("code fences never reach the model twice", () => {
+  const FENCED: [string, string][] = [
+    ["a json fence", '```json\n{"a":1}\n```'],
+    ["a bare fence", '```\n{"a":1}\n```'],
+    ["an uppercase language tag", '```JSON\n{"a":1}\n```'],
+    ["a wrong language tag", '```javascript\n{"a":1}\n```'],
+    ["a fence on one line", '```json {"a":1} ```'],
+    ["a fence the model forgot to close", '```json\n{"a":1}'],
+    ["prose either side", 'Sure!\n```json\n{"a":1}\n```\nHope that helps.'],
+    ["leading blank lines", '\n\n```json\n{"a":1}\n```'],
+    ["a tilde fence", '~~~json\n{"a":1}\n~~~'],
+    ["a fenced array", "```json\n[1, 2, 3]\n```"],
+  ];
+
+  it.each(FENCED)("strips %s", (_name, raw) => {
+    expect(extractJson(raw)).toEqual(raw.includes("[") ? [1, 2, 3] : { a: 1 });
+  });
+
+  it("keeps a fence that appears inside a string value", () => {
+    const parsed = extractJson('{"note":"use ```json for blocks"}') as { note: string };
+    expect(parsed.note).toBe("use ```json for blocks");
+  });
+});
