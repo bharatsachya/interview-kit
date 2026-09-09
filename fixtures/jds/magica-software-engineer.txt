@@ -1,0 +1,47 @@
+Software Engineer
+Magica
+
+You'll build the platform where users give Magica work and watch it execute. The agent runs
+server-side; the frontend is where users describe outcomes, see sub-agents running, review
+output, course-correct, and approve sensitive actions.
+
+Most of what you ship falls into one of three areas:
+
+Orchestration UX — sub-agent state, streaming partial output, exposing memory, handling
+interrupts and approvals.
+
+Connected services — the surfaces that let users plug Gmail, Drive, Slack, and the rest of
+their stack into Magica.
+
+Channels — keeping the web experience consistent with Magica's presence on WhatsApp, Telegram,
+and iMessage.
+
+What's hard
+
+You're designing UI for a system whose behavior is probabilistic and asynchronous. "The agent is
+working" is a non-trivial UX problem at every layer.
+
+AI features degrade in subtle ways. Something that works in dev can break silently when model
+behavior shifts. You build with monitoring and evals in mind from day one.
+
+The codebase moves fast. Refactors and migrations are regular. You stay oriented without waiting
+for documentation that doesn't exist.
+
+You'll do most of the building through coding agents; writing code by hand is too slow now. What
+matters is directing them well and catching when they're wrong.
+
+What we're looking for
+
+A portfolio of real things you've shipped. Ability to take an ambiguous spec, scope it, and ship
+something usable in days, not weeks. Prior work on AI or agent products is a plus.
+
+How to apply
+
+Send us a connection request on LinkedIn at try.magica.com/apply with a short note covering:
+
+The role ("Software Engineer")
+One line on why you're a good fit
+Where you found this opening
+
+We see your LinkedIn profile with the request, so keep the note short. If you're a fit, we'll
+get back within a few days.

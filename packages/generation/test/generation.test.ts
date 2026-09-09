@@ -132,26 +132,26 @@ describe("requirement routing", () => {
     expect(requirementsFor("system-design", REQUIREMENTS).map((r) => r.id)).toEqual(["r2"]);
   });
 
-  it("falls back to all technical requirements when none read as architectural", () => {
+  it("takes nothing when no requirement reads as architectural, rather than falling back", () => {
+    // The fallback produced a design question about a "portfolio verification service handling
+    // 50,000 submissions per second" from the requirement "a portfolio of real things you've
+    // shipped". No system-design section is better than an invented one.
     const plain: Requirement[] = [{ id: "r1", text: "Five years of Python", kind: "technical", priority: "must" }];
-    expect(requirementsFor("system-design", plain).map((r) => r.id)).toEqual(["r1"]);
+    expect(requirementsFor("system-design", plain)).toEqual([]);
   });
 });
 
 describe("skipping rather than inventing", () => {
   it("skips a category with no requirements instead of asking for questions from nothing", async () => {
+    // r1 is "Five years of Python" — technical, but nothing architectural about it, so
+    // system-design is skipped too rather than being handed it as a fallback.
     const technicalOnly: Requirement[] = [REQUIREMENTS[0] as Requirement];
-    const llm = new StubLlm({
-      "generate_questions:technical": questionsFor(["r1"]),
-      "generate_questions:system-design": questionsFor(["r1"]),
-    });
+    const llm = new StubLlm({ "generate_questions:technical": questionsFor(["r1"]) });
 
     const result = await generateQuestions({ requirements: technicalOnly, roleTitle: "Engineer", company: "Acme", llm, ids: ids() });
 
-    expect(llm.calls.map((c) => c.purpose)).toEqual([
-      "generate_questions:technical",
-      "generate_questions:system-design",
-    ]);
+    expect(llm.calls.map((c) => c.purpose)).toEqual(["generate_questions:technical"]);
+    expect(result.reports.find((r) => r.category === "system-design")?.skipped).toBe("no_requirements");
     expect(result.reports.find((r) => r.category === "behavioural")?.skipped).toBe("no_requirements");
     expect(result.reports.find((r) => r.category === "company-fit")?.skipped).toBe("no_context");
   });
@@ -160,7 +160,6 @@ describe("skipping rather than inventing", () => {
     const technicalOnly: Requirement[] = [REQUIREMENTS[0] as Requirement];
     const llm = new StubLlm({
       "generate_questions:technical": questionsFor(["r1"]),
-      "generate_questions:system-design": questionsFor(["r1"]),
       "generate_questions:company-fit": questionsFor([]),
     });
 

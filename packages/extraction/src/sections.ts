@@ -17,8 +17,45 @@ import { contentTokens, normalise } from "./text";
 const NICE_HEADING =
   /\b(nice[\s-]?to[\s-]?have|bonus|preferred|desirable|would be (?:a )?(?:plus|great|nice)|good to have|pluses|advantageous|optional|ideally)\b/i;
 
-const MUST_HEADING =
-  /\b(required|requirements|must[\s-]?have|essential|minimum|you(?:'| a)?ll need|what you(?:'| wi)?ll need|qualifications|who you are|about you|we(?:'| a)?re looking for|responsibilities)\b/i;
+/**
+ * Not all must-headings are equally strong, and the difference decides a real conflict.
+ *
+ * "Required:" is an explicit statement of necessity. "What we're looking for" is a section
+ * label that happens to introduce requirements. When a line under the former says "though Helm
+ * is a plus", the requirement is still required — the aside is about a sub-part. When a line
+ * under the latter says "Prior work on AI products is a plus", the line is the more specific
+ * statement and it wins.
+ *
+ * Treating every must-heading as absolute marked all twenty requirements of a prose posting
+ * `must`, including the one it explicitly called a plus.
+ */
+const STRONG_MUST_HEADING =
+  /\b(required|requirements|must[\s-]?have|essential|minimum|you(?:'| a)?ll need|what you(?:'| wi)?ll need|non-?negotiable)\b/i;
+
+const WEAK_MUST_HEADING =
+  /\b(qualifications|who you are|about you|we(?:'| a)?re looking for|responsibilities|what you(?:'| wi)?ll do)\b/i;
+
+const MUST_HEADING = new RegExp(`${STRONG_MUST_HEADING.source}|${WEAK_MUST_HEADING.source}`, "i");
+
+/**
+ * Priority stated inside the line itself rather than by a heading.
+ *
+ * "Prior work on AI or agent products is a plus" is a nice-to-have, and a posting written as
+ * prose says so this way instead of putting it under a "Nice to have:" heading. Heading
+ * detection alone marked every requirement in such a posting `must`, which is precisely the
+ * distinction the rubric names.
+ */
+const INLINE_NICE =
+  /\b(is a plus|are a plus|a bonus|bonus points|nice to have|would be (?:a )?(?:plus|bonus|nice|great)|preferred|ideally|desirable|not required|optional)\b/i;
+
+const INLINE_MUST = /\b(must have|required|essential|you will need|non-?negotiable)\b/i;
+
+/** `null` when the line says nothing either way. */
+export function inlinePriority(text: string): RequirementPriority | null {
+  if (INLINE_NICE.test(text)) return "nice";
+  if (INLINE_MUST.test(text)) return "must";
+  return null;
+}
 
 export interface JdSection {
   heading: string;
@@ -72,15 +109,26 @@ export function priorityFromPosting(
   jd: string,
   sections: readonly JdSection[],
 ): RequirementPriority | null {
-  if (sections.length === 0) return null;
-
   const line = locateLine(requirementText, jd);
-  if (line === null) return null;
 
-  for (const section of sections) {
-    if (line > section.startLine && line < section.endLine) return section.priority;
+  // Checked against the source line, not only the extracted phrase — "is a plus" usually sits
+  // in the part of the sentence that extraction trimmed off.
+  const sourceLine = line === null ? "" : (jd.split(/\r?\n/)[line] ?? "");
+  const inline = inlinePriority(`${requirementText} ${sourceLine}`);
+
+  if (line !== null) {
+    for (const section of sections) {
+      if (line <= section.startLine || line >= section.endLine) continue;
+
+      // An explicit "is a plus" on the line beats a mere section label, but not an explicit
+      // "Required:" heading.
+      const strong = STRONG_MUST_HEADING.test(section.heading) || NICE_HEADING.test(section.heading);
+      if (!strong && inline !== null) return inline;
+      return section.priority;
+    }
   }
-  return null;
+
+  return inline;
 }
 
 /** Index of the line the requirement most likely came from, or null when nothing matches. */

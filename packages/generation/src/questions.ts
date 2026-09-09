@@ -161,8 +161,7 @@ export async function generateQuestions(input: QuestionGenerationInput): Promise
  *
  * Technical requirements reach both the technical and system-design calls, because the same
  * requirement genuinely supports both a depth question and a design question — but system design
- * only takes the ones that read as architectural, falling back to all of them for a role that has
- * technical requirements but no obvious architectural language.
+ * takes only the ones that read as architectural, and takes none if there are none.
  *
  * A technical requirement never reaches the behavioural call, and vice versa.
  */
@@ -178,8 +177,13 @@ export function requirementsFor(
     case "behavioural":
       return requirements.filter((r) => r.kind === "behavioural");
     case "system-design": {
-      const architectural = technical.filter((r) => SYSTEM_DESIGN_SIGNALS.test(r.text));
-      return architectural.length > 0 ? architectural : technical;
+      // No fallback to "all technical". Seeding this call with whatever technical requirements
+      // happen to exist produced a design question about a "portfolio verification service
+      // handling 50,000 submissions per second" from the requirement "a portfolio of real
+      // things you've shipped" — an invented domain wearing a scale constraint. A posting with
+      // nothing architectural in it should yield no system-design section, which the category
+      // report records as skipped.
+      return technical.filter((r) => SYSTEM_DESIGN_SIGNALS.test(r.text));
     }
     case "company-fit":
       return requirements.filter((r) => r.kind === "domain");

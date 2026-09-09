@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { extractRequirements } from "../src/extract";
 import { checkGrounding } from "../src/grounding";
-import { locateLine, priorityFromPosting, sectionsOf } from "../src/sections";
+import { inlinePriority, locateLine, priorityFromPosting, sectionsOf } from "../src/sections";
 import { contentTokens } from "../src/text";
 import { RICH_JD, STUB_JD, StubLlm, sequentialIds } from "./fixtures";
 
@@ -210,5 +210,49 @@ describe("section detection", () => {
 
     expect(result.requirements[0]?.priority).toBe("nice");
     expect(result.priorityCorrections).toBe(0);
+  });
+});
+
+describe("priority stated inline rather than by a heading", () => {
+  const PROSE_JD = `Software Engineer
+Magica
+
+You will build the orchestration UX.
+
+What we're looking for
+
+A portfolio of real things you've shipped. Ability to scope an ambiguous spec.
+Prior work on AI or agent products is a plus.
+`;
+
+  it("marks an 'is a plus' line as nice, even though the model said must", async () => {
+    const result = await extract(PROSE_JD, {
+      role: { title: "Software Engineer", company: "Magica", location: "", summary: "" },
+      requirements: [
+        { text: "A portfolio of real things you've shipped", kind: "technical", priority: "must" },
+        { text: "Prior work on AI or agent products", kind: "domain", priority: "must" },
+      ],
+    });
+
+    expect(result.requirements.find((r) => r.text.includes("portfolio"))?.priority).toBe("must");
+    expect(result.requirements.find((r) => r.text.includes("Prior work"))?.priority).toBe("nice");
+    expect(result.priorityCorrections).toBe(1);
+  });
+
+  it.each([
+    ["Kubernetes experience is a plus", "nice"],
+    ["Bonus points for Rust", "nice"],
+    ["Kafka would be great", "nice"],
+    ["A PhD is preferred", "nice"],
+    ["Five years of Python is required", "must"],
+    ["You will need a security clearance", "must"],
+    ["Writes clean code", null],
+  ])("reads %j as %s", (line, expected) => {
+    expect(inlinePriority(line)).toBe(expected);
+  });
+
+  it("lets a heading win over a phrase inside one line", () => {
+    const jd = "Required:\n- Kubernetes, though Helm is a plus\n";
+    expect(priorityFromPosting("Kubernetes, though Helm is a plus", jd, sectionsOf(jd))).toBe("must");
   });
 });

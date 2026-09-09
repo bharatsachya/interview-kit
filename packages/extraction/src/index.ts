@@ -13,5 +13,5 @@ export {
   type ExtractionResult,
 } from "./extract";
 export { MIN_GROUNDING_RATIO, checkGrounding, type GroundingVerdict } from "./grounding";
-export { locateLine, priorityFromPosting, sectionsOf, type JdSection } from "./sections";
+export { inlinePriority, locateLine, priorityFromPosting, sectionsOf, type JdSection } from "./sections";
 export { contentTokens, normalise } from "./text";
