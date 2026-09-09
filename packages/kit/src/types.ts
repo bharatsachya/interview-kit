@@ -38,6 +38,14 @@ export interface Requirement {
   text: string;
   kind: RequirementKind;
   priority: RequirementPriority;
+  /**
+   * The sentence of the posting this was taken from. Internal only — never in Appendix A output.
+   *
+   * Extraction always sets it; a requirement built by hand in a test may not. Coverage's gap fill
+   * and the overlap gate read it to judge a generated question against the words the requirement
+   * actually sits in, rather than against the phrase extraction trimmed it down to.
+   */
+  sourceSpan?: string;
 }
 
 /** Fields every user-editable item carries. Never in the Appendix A output. */
@@ -114,6 +122,13 @@ export interface RoleSummary {
   /** Required by Appendix A. Extracted from the posting if present, empty string otherwise. */
   location: string;
   summary: string;
+  /**
+   * What the role does, as opposed to what the candidate must have.
+   *
+   * The other half of extraction's two piles. Keeping it means the "what you'll build" sentences
+   * of a posting have somewhere to go that is not the requirement list.
+   */
+  responsibilities: string[];
 }
 
 export interface CoverageReport {

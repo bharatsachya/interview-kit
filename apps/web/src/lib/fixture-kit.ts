@@ -413,6 +413,12 @@ export function fixtureKit(): InternalKit {
       location: "London (hybrid, 2 days on-site)",
       summary:
         "Owns the services that move money: the payments API, the ledger behind it, and the reconciliation that proves the two agree. The posting is unusually specific about idempotency and about migrating live tables, and it asks for someone who will write the design document and then defend it.",
+      responsibilities: [
+        "Own the payments API and the double-entry ledger behind it",
+        "Run the reconciliation that proves the API and the ledger agree",
+        "Migrate live payment tables without taking the service down",
+        "Write the design document for each change and defend it in review",
+      ],
     },
     companyBrief: {
       summary:

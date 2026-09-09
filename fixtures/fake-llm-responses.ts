@@ -40,14 +40,18 @@ function extractionResponse(request: Req): unknown {
     .map((line) => line.replace(/^[-*•]\s*/, "").trim())
     .filter((line) => line.length > 3);
 
-  // No bullets — a two-line posting. Take the sentences that state a need.
+  // No bullets — a prose posting. Take the sentences that state a need. Paragraphs are
+  // unwrapped first, or a requirement comes out with the posting's line breaks inside it.
   const sentences =
     bullets.length > 0
       ? bullets
       : jd
-          .split(/(?<=[.!?])\s+/)
+          .split(/\n\s*\n/)
+          .flatMap((paragraph) => paragraph.replace(/\s+/g, " ").trim().split(/(?<=[.!?])\s+/))
           .map((s) => s.trim())
-          .filter((s) => s.length > 3 && /\b(must|need|require|know|experience|looking)\b/i.test(s));
+          // A short chunk with no full stop is a heading ("What we're looking for"), not a need.
+          .filter((s) => !/^[^.!?]{0,40}$/.test(s))
+          .filter((s) => s.length > 3 && /\b(must|need|require|know|experience|looking|ability)\b/i.test(s));
 
   const niceIndex = lines.findIndex((line) => /nice to have|bonus|preferred/i.test(line));
   const niceLines = new Set(niceIndex === -1 ? [] : lines.slice(niceIndex).map((l) => l.replace(/^[-*•]\s*/, "").trim()));
@@ -59,6 +63,7 @@ function extractionResponse(request: Req): unknown {
       location: locationFrom(jd),
       summary: `A ${(lines[0] ?? "engineering").toLowerCase()} role.`,
     },
+    responsibilities: responsibilitiesFrom(jd, sentences),
     requirements: sentences.slice(0, 12).map((text) => ({
       text,
       kind: kindOf(text),
@@ -67,6 +72,31 @@ function extractionResponse(request: Req): unknown {
       priority: niceLines.has(text) ? "must" : "must",
     })),
   };
+}
+
+/**
+ * Pile A: what the role does.
+ *
+ * Prose sentences written about the job rather than about the candidate — which for a crude
+ * fake means the ones that say "you'll build" and are not already in the requirement pile.
+ * Grounded by construction, because they are copied out of the posting whole.
+ */
+function responsibilitiesFrom(jd: string, requirementTexts: string[]): string[] {
+  const taken = new Set(requirementTexts);
+
+  return jd
+    .split(/\n\s*\n/)
+    .flatMap((paragraph) => paragraph.replace(/\s+/g, " ").trim().split(/(?<=[.!?])\s+/))
+    .map((sentence) => sentence.trim())
+    .filter(
+      (sentence) =>
+        sentence.length > 20 &&
+        !taken.has(sentence) &&
+        /\b(you(?:'ll| will)? (?:build|ship|own|design|work)|falls into|the surfaces|keeping the|responsibilit)/i.test(
+          sentence,
+        ),
+    )
+    .slice(0, 6);
 }
 
 function kindOf(text: string): "technical" | "behavioural" | "domain" {

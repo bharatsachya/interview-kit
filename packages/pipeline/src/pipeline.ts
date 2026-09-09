@@ -142,10 +142,20 @@ async function run(
       requirement_count: result.requirements.length,
       must_count: result.requirements.filter((r) => r.priority === "must").length,
       nice_count: result.requirements.filter((r) => r.priority === "nice").length,
+      responsibility_count: result.role.responsibilities.length,
       dropped_as_invented: result.dropped.length,
       priority_corrections: result.priorityCorrections,
     });
     if (result.requirements.length === 0) s.set("thin_description", true);
+    // An example list the model split into one requirement per name, put back together.
+    if (result.merged.length > 0) {
+      s.setAll({
+        merged_example_lists: result.merged.length,
+        merged_away: result.merged.flatMap((group) => group.from).length,
+      });
+    }
+    // Flagged, never fatal. The kit still ships; the trace says not to trust its requirements.
+    if (result.suspicious) s.setAll({ suspicious_extraction: true, suspicious_reasons: result.suspiciousReasons });
     return result;
   });
 

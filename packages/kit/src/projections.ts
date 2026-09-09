@@ -66,6 +66,7 @@ export function tryToKitJSON(kit: InternalKit): ToKitJSONResult {
       company: kit.role.company,
       location: kit.role.location,
       summary: kit.role.summary,
+      responsibilities: [...kit.role.responsibilities],
     },
     company_brief: {
       summary: kit.companyBrief.summary,

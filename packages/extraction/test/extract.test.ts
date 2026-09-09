@@ -1,9 +1,21 @@
+import type { Requirement } from "@trao/kit";
 import { describe, expect, it } from "vitest";
-import { extractRequirements } from "../src/extract";
+import { extractRequirements, sanityCheck } from "../src/extract";
 import { checkGrounding } from "../src/grounding";
+import { isBareName } from "../src/merge";
 import { inlinePriority, locateLine, priorityFromPosting, sectionsOf } from "../src/sections";
-import { contentTokens } from "../src/text";
-import { RICH_JD, STUB_JD, StubLlm, sequentialIds } from "./fixtures";
+import { spansOf } from "../src/spans";
+import { contentTokens, normalise } from "../src/text";
+import {
+  MAGICA_INTEGRATIONS,
+  MAGICA_JD,
+  MAGICA_OVER_SPLIT_RESPONSE,
+  MAGICA_RESPONSE,
+  RICH_JD,
+  STUB_JD,
+  StubLlm,
+  sequentialIds,
+} from "./fixtures";
 
 const richResponse = {
   role: {
@@ -100,6 +112,7 @@ describe("the two-line stub", () => {
   it("returns few requirements and invents none", async () => {
     const result = await extract(STUB_JD, stubResponse);
 
+    expect(result.requirements.length).toBeLessThanOrEqual(3);
     expect(result.requirements).toHaveLength(1);
     expect(result.requirements[0]?.text).toBe("Must know Go");
     expect(result.dropped).toHaveLength(3);
@@ -254,5 +267,179 @@ Prior work on AI or agent products is a plus.
   it("lets a heading win over a phrase inside one line", () => {
     const jd = "Required:\n- Kubernetes, though Helm is a plus\n";
     expect(priorityFromPosting("Kubernetes, though Helm is a plus", jd, sectionsOf(jd))).toBe("must");
+  });
+});
+
+describe("two piles — the Magica posting", () => {
+  it("keeps the six integration names out of the requirement list", async () => {
+    const result = await extract(MAGICA_JD, MAGICA_RESPONSE);
+
+    for (const name of MAGICA_INTEGRATIONS) {
+      const standalone = result.requirements.filter((r) => normalise(r.text) === normalise(name));
+      expect(standalone, `"${name}" survived as a requirement of its own`).toHaveLength(0);
+    }
+  });
+
+  it("produces a study list a person could actually work through", async () => {
+    const result = await extract(MAGICA_JD, MAGICA_RESPONSE);
+
+    // The live run produced twenty, all must, for an 1,800-character posting.
+    expect(result.requirements.length).toBeLessThanOrEqual(10);
+    expect(result.requirements.filter((r) => r.priority === "nice").length).toBeGreaterThan(0);
+    expect(result.suspicious).toBe(false);
+  });
+
+  it("collapses each example list into one requirement that still names everything", async () => {
+    const result = await extract(MAGICA_JD, MAGICA_RESPONSE);
+
+    // Two sentences listed products, so two merges: the connected services and the channels.
+    expect(result.merged).toHaveLength(2);
+    expect(result.merged.flatMap((group) => group.from)).toEqual(expect.arrayContaining([...MAGICA_INTEGRATIONS]));
+
+    // Nothing is lost — every name is still readable inside the requirement that replaced it.
+    const allText = result.requirements.map((r) => r.text).join(" ");
+    for (const name of MAGICA_INTEGRATIONS) expect(allText).toContain(name);
+  });
+
+  it("puts what the role does into role.responsibilities instead", async () => {
+    const result = await extract(MAGICA_JD, MAGICA_RESPONSE);
+
+    expect(result.role.responsibilities.length).toBeGreaterThan(0);
+    expect(result.role.responsibilities.join(" ")).toContain("Orchestration UX");
+    for (const responsibility of result.role.responsibilities) {
+      expect(normalise(MAGICA_JD)).toContain(normalise(responsibility));
+    }
+  });
+
+  it("drops a responsibility the posting does not contain", async () => {
+    const result = await extract(MAGICA_JD, {
+      ...MAGICA_RESPONSE,
+      responsibilities: [...MAGICA_RESPONSE.responsibilities, "Run the Kubernetes cluster and the Terraform estate"],
+    });
+
+    expect(result.role.responsibilities.join(" ")).not.toContain("Terraform");
+  });
+
+  it("still defends the requirement list when the model ignores the two piles", async () => {
+    const result = await extract(MAGICA_JD, MAGICA_OVER_SPLIT_RESPONSE);
+
+    for (const name of MAGICA_INTEGRATIONS) {
+      expect(result.requirements.map((r) => normalise(r.text))).not.toContain(normalise(name));
+    }
+    // The prompt is what keeps "sub-agent state" out of the list — the code can only merge what
+    // the model split. It still cuts a sixteen-item list down by the two example lists.
+    expect(result.requirements.length).toBeLessThan(MAGICA_OVER_SPLIT_RESPONSE.requirements.length);
+    expect(result.merged).toHaveLength(2);
+  });
+});
+
+describe("source spans", () => {
+  it.each([
+    ["the rich posting", RICH_JD],
+    ["the Magica posting", MAGICA_JD],
+    ["the two-line stub", STUB_JD],
+  ])("gives every requirement of %s a span that is in the posting", async (_name, jd) => {
+    const response =
+      jd === RICH_JD ? richResponse : jd === MAGICA_JD ? MAGICA_RESPONSE : { role: { title: "", company: "", location: "", summary: "" }, requirements: [{ text: "Must know Go", kind: "technical", priority: "must" }] };
+
+    const result = await extract(jd, response);
+    expect(result.requirements.length).toBeGreaterThan(0);
+
+    for (const requirement of result.requirements) {
+      expect(requirement.sourceSpan ?? "").not.toBe("");
+      expect(normalise(jd), `span not in the posting: ${requirement.sourceSpan}`).toContain(
+        normalise(requirement.sourceSpan ?? ""),
+      );
+    }
+  });
+
+  it("carries the whole sentence, not just the phrase the model returned", async () => {
+    const result = await extract(MAGICA_JD, MAGICA_RESPONSE);
+    const portfolio = result.requirements.find((r) => r.text.includes("portfolio"));
+
+    expect(portfolio?.sourceSpan).toContain("A portfolio of real things you've shipped.");
+  });
+
+  it("splits a posting into bullets and sentences, not lines", () => {
+    const spans = spansOf(MAGICA_JD).map((span) => span.text);
+
+    // A sentence wrapped across two lines is one span.
+    expect(spans).toContain(
+      "Connected services — the surfaces that let users plug Gmail, Drive, Slack, and the rest of their stack into Magica.",
+    );
+    // A block of bullets is one span each, never fused.
+    const bulletSpans = spansOf(RICH_JD).map((span) => span.text);
+    expect(bulletSpans).toContain("5+ years building production services in Python");
+    expect(bulletSpans).toContain("Kubernetes in production");
+  });
+});
+
+describe("bare names", () => {
+  it.each([
+    ["Gmail", true],
+    ["iMessage", true],
+    ["exposing memory", true],
+    ["Experience with Kafka", false],
+    ["Five years of Python", false],
+    ["Mentoring junior engineers", false],
+    ["", false],
+  ])("reads %j as a bare name: %s", (text, expected) => {
+    expect(isBareName(text)).toBe(expected);
+  });
+});
+
+describe("the sanity gate", () => {
+  const requirements = (count: number, priority: "must" | "nice" = "must"): Requirement[] =>
+    Array.from({ length: count }, (_, i) => ({
+      id: `r${i + 1}`,
+      text: `requirement ${i + 1}`,
+      kind: "technical" as const,
+      priority: i === 0 ? priority : "must",
+    }));
+
+  it("flags more than one requirement per hundred characters of posting", () => {
+    const verdict = sanityCheck(requirements(20), 1_829);
+
+    expect(verdict.suspicious).toBe(true);
+    expect(verdict.reasons[0]).toContain("20 requirements from 1829 characters");
+  });
+
+  it("flags a long posting whose requirements are all must", () => {
+    const verdict = sanityCheck(requirements(8), 1_800);
+
+    expect(verdict.suspicious).toBe(true);
+    expect(verdict.reasons.join(" ")).toContain("every one of 8 requirements is a must");
+  });
+
+  it("says nothing about a posting with a believable mix", () => {
+    expect(sanityCheck(requirements(8, "nice"), 1_800).suspicious).toBe(false);
+  });
+
+  it("does not expect a short posting to distinguish must from nice", () => {
+    expect(sanityCheck(requirements(3), 400).suspicious).toBe(false);
+  });
+
+  it("reaches the caller as a flag rather than a failure", async () => {
+    const jd = `Backend Engineer
+
+Required:
+- Python
+- Go
+- Rust
+- SQL
+- Redis
+`;
+    const result = await extract(jd, {
+      role: { title: "Backend Engineer", company: "", location: "", summary: "" },
+      requirements: ["Python", "Go", "Rust", "SQL", "Redis"].map((text) => ({
+        text,
+        kind: "technical" as const,
+        priority: "must" as const,
+      })),
+    });
+
+    expect(result.requirements.length).toBeGreaterThan(0);
+    expect(result.suspicious).toBe(true);
+    expect(result.suspiciousReasons.length).toBeGreaterThan(0);
   });
 });

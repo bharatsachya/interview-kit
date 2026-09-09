@@ -74,6 +74,7 @@ const roleSchema = z
     company: z.string(), // [INFERRED]
     location: z.string(), // [SPEC] required, and "" when the posting does not say
     summary: z.string(), // [INFERRED]
+    responsibilities: z.array(z.string()), // [SPEC] the role breakdown's "what the role does"
   })
   .strict();
 

@@ -71,6 +71,7 @@ export function makeKit(overrides: Partial<InternalKit> = {}): InternalKit {
       company: "Acme",
       location: "Berlin, hybrid",
       summary: "Backend work on the payments platform.",
+      responsibilities: ["Own the ledger service"],
     },
     companyBrief: {
       summary: "Acme builds payment infrastructure.",
@@ -103,7 +104,13 @@ export function makeKit(overrides: Partial<InternalKit> = {}): InternalKit {
 export function makeKitJSON(): Record<string, unknown> {
   return {
     id: "kit_1",
-    role: { title: "Senior Backend Engineer", company: "Acme", location: "Berlin", summary: "Backend." },
+    role: {
+      title: "Senior Backend Engineer",
+      company: "Acme",
+      location: "Berlin",
+      summary: "Backend.",
+      responsibilities: ["Own the ledger service"],
+    },
     company_brief: {
       summary: "Acme builds payment infrastructure.",
       what_they_do: "Card processing.",
