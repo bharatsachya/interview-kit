@@ -64,6 +64,21 @@ export class GeminiTransport implements ModelTransport {
 
     if (!response.ok) {
       const detail = await safeText(response);
+
+      // A retired model is a 404 that reads like a bug in our URL. Google removes numbered
+      // models for newly issued keys, so `gemini-2.5-flash` works for one developer and 404s
+      // for the next — worth naming explicitly rather than leaving someone to read the raw
+      // body and guess.
+      if (response.status === 404 && /no longer available|not found for API version/i.test(detail)) {
+        throw new ProviderError(
+          `Model "${request.model}" is not available to this API key. ` +
+            `Set GEMINI_MODEL_QUALITY / GEMINI_MODEL_FAST in .env to a model the key can use — ` +
+            `the floating aliases gemini-flash-latest and gemini-flash-lite-latest are the safe default. ` +
+            `Provider said: ${detail}`,
+          { status: 404, retryable: false },
+        );
+      }
+
       throw new ProviderError(`Gemini responded ${response.status}: ${detail}`, {
         status: response.status,
         ...(retryAfterMs(response) !== undefined ? { retryAfterMs: retryAfterMs(response) as number } : {}),

@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import type { Budget, Clock, HttpFetcher, IdGenerator, LlmProvider, SearchProvider, Tracer } from "@trao/contracts";
-import { InMemoryTracer, RandomIdGenerator, SequentialIdGenerator, SystemClock } from "@trao/kernel";
+import { InMemoryTracer, RandomIdGenerator, RoutedIdGenerator, SequentialIdGenerator, SystemClock } from "@trao/kernel";
 import {
   FakeLlmProvider,
   LlmGateway,
@@ -65,7 +65,17 @@ export function wire(options: WiringOptions = {}): Wiring {
   const tracer = new InMemoryTracer(clock);
   const describe: string[] = [];
 
-  const ids: IdGenerator = options.deterministicIds === true ? new SequentialIdGenerator() : new RandomIdGenerator();
+  // Requirement, question and flashcard ids are ALWAYS sequential — r1, q1, f1 — because they
+  // live inside one document and are read by humans in the trace. The first live run used random
+  // ids for everything and put `r15c61aa7aac94c589cb192905d61174e` into every prompt, which is
+  // 32 characters of noise per requirement for the model to copy back correctly.
+  //
+  // Only ids that outlive the run need to be globally unique. `deterministicIds` therefore
+  // controls just those, so a fake run produces a byte-identical kit while a real one does not
+  // collide across runs.
+  const ids: IdGenerator = new RoutedIdGenerator(new SequentialIdGenerator(), {
+    kit_: options.deterministicIds === true ? new SequentialIdGenerator() : new RandomIdGenerator(),
+  });
 
   const budget: Budget =
     options.budget === undefined
@@ -104,8 +114,14 @@ export function wire(options: WiringOptions = {}): Wiring {
       budget,
       models: {
         // Extraction is worth 20 points and asks for `quality`. Everything else takes `fast`.
-        quality: process.env["GEMINI_MODEL_QUALITY"] ?? "gemini-2.5-flash",
-        fast: process.env["GEMINI_MODEL_FAST"] ?? "gemini-2.5-flash-lite",
+        //
+        // The floating `-latest` aliases rather than a pinned version, deliberately. Google
+        // retires numbered models for new API keys — `gemini-2.5-flash` 404s with "no longer
+        // available to new users" on a key issued today — and a submission that a grader runs
+        // months from now must not fail on a deprecation. Reproducibility loses to still
+        // working; pin GEMINI_MODEL_* in .env when an exact version matters.
+        quality: process.env["GEMINI_MODEL_QUALITY"] ?? "gemini-flash-latest",
+        fast: process.env["GEMINI_MODEL_FAST"] ?? "gemini-flash-lite-latest",
       },
       requestsPerMinute: Number(process.env["GEMINI_RPM"] ?? 10),
       tokensPerMinute: Number(process.env["GEMINI_TPM"] ?? 250_000),

@@ -73,6 +73,10 @@ function buildPrompt(request: {
     ...((request.hiringProcess ?? "").trim().length > 0
       ? [untrustedBlock("hiring_process", truncateForPrompt(request.hiringProcess as string, 1_000)), ""]
       : []),
-    "Return JSON only.",
+    "Return JSON of exactly this shape and nothing else:",
+    "",
+    '{ "prompt": "", "answer_outline": "", "difficulty": 2 }',
+    "",
+    "`answer_outline` is a single string, not a list.",
   ].join("\n");
 }

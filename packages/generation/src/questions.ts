@@ -24,19 +24,47 @@ export const DEFAULT_QUESTIONS_PER_CATEGORY = 5;
 const SYSTEM_DESIGN_SIGNALS =
   /\b(scal|distribut|architect|design|infrastructur|latency|throughput|availab|reliab|micro-?service|queue|stream|cache|shard|partition|concurren|capacity|resilien|failover|load)\w*/i;
 
-const questionsSchema = z.object({
-  questions: z
-    .array(
-      z.object({
-        prompt: z.string().min(1),
-        answer_outline: z.string(),
-        difficulty: z.number().int().min(1).max(3),
-        /** Checked against what we supplied, never trusted. */
-        requirement_ids: z.array(z.string()).default([]),
-      }),
-    )
-    .max(12),
-});
+/**
+ * Deliberately tolerant of how models actually answer.
+ *
+ * Every one of these coercions was observed on the first live Gemini run, in a single response:
+ * a bare array instead of the wrapper object, `question` instead of `prompt`, and
+ * `answer_outline` as an array of bullet strings instead of one string. None of it showed up
+ * against the fake, which returns the right shape by construction — which is precisely the class
+ * of bug a fake hides.
+ *
+ * Being strict here would be principled and wrong. Each rejection costs a repair round, and a
+ * second failure loses the whole category — four categories failing this way produced a kit with
+ * zero questions. The prompt states the exact shape (see `buildPrompt`); this is the belt to
+ * that pair of braces.
+ */
+const questionItemSchema = z.preprocess((value) => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+  const item = { ...(value as Record<string, unknown>) };
+
+  if (item["prompt"] === undefined && typeof item["question"] === "string") item["prompt"] = item["question"];
+  if (item["answer_outline"] === undefined && item["outline"] !== undefined) item["answer_outline"] = item["outline"];
+  if (Array.isArray(item["answer_outline"])) {
+    item["answer_outline"] = (item["answer_outline"] as unknown[]).map((line) => `- ${String(line)}`).join("\n");
+  }
+  if (typeof item["difficulty"] === "string") item["difficulty"] = Number.parseInt(item["difficulty"], 10);
+  if (typeof item["requirement_ids"] === "string") item["requirement_ids"] = [item["requirement_ids"]];
+
+  return item;
+}, z.object({
+  prompt: z.string().min(1),
+  answer_outline: z.string(),
+  difficulty: z.number().int().min(1).max(3),
+  /** Checked against what we supplied, never trusted. */
+  requirement_ids: z.array(z.string()).default([]),
+}));
+
+const questionsSchema = z.preprocess(
+  // A bare array is the single most common deviation: the prompt asks for questions, so the
+  // model returns questions rather than an object containing them.
+  (value) => (Array.isArray(value) ? { questions: value } : value),
+  z.object({ questions: z.array(questionItemSchema).max(12) }),
+);
 
 export interface QuestionGenerationInput {
   requirements: readonly Requirement[];
@@ -180,6 +208,9 @@ const INSTRUCTIONS: Readonly<Record<QuestionCategory, string[]>> = {
     "would want to know before joining, how their background meets this industry. Use only what",
     "the brief below actually says about the company. If the brief is thin, ask fewer questions",
     "rather than inventing detail about the company.",
+    "Never mention the brief, the material you were given, or its limitations. The candidate",
+    "reads these questions; a question that says 'given that company details are limited' is",
+    "about our retrieval, not about them.",
   ],
 };
 
@@ -225,6 +256,28 @@ function buildPrompt(
     lines.push(untrustedBlock("company_brief", truncateForPrompt(input.companySummary as string, 1_500)), "");
   }
 
-  lines.push("Return JSON only.");
+  // Stating the envelope explicitly. Without it the model returns a bare array of items keyed
+  // `question`, which is a perfectly reasonable reading of "write questions" and fails the
+  // schema twice.
+  lines.push(
+    "Return JSON of exactly this shape and nothing else:",
+    "",
+    "{",
+    '  "questions": [',
+    "    {",
+    '      "prompt": "the question, as a single string",',
+    '      "answer_outline": "the points a strong answer covers, as a SINGLE string, not a list",',
+    '      "difficulty": 2,',
+    // An id from this call's own list, never a made-up one — a literal example id would both
+    // teach the model a value that does not exist and leak another category's id into this
+    // prompt, which is the thing the four-separate-calls test checks for.
+    `      "requirement_ids": [${seed[0] !== undefined ? JSON.stringify(seed[0].id) : ""}]`,
+    "    }",
+    "  ]",
+    "}",
+    "",
+    "`questions` must be present. Do not return a bare array. `prompt` is the key, not",
+    "`question`. `answer_outline` is one string, not an array.",
+  );
   return lines.join("\n");
 }

@@ -97,8 +97,8 @@ async function main(): Promise<void> {
         tracer,
         budget,
         models: {
-          quality: env("GEMINI_MODEL_QUALITY", "gemini-2.5-flash"),
-          fast: env("GEMINI_MODEL_FAST", "gemini-2.5-flash-lite"),
+          quality: env("GEMINI_MODEL_QUALITY", "gemini-flash-latest"),
+          fast: env("GEMINI_MODEL_FAST", "gemini-flash-lite-latest"),
         },
         requestsPerMinute: Number(env("GEMINI_RPM", "10")),
         tokensPerMinute: Number(env("GEMINI_TPM", "250000")),

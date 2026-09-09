@@ -84,11 +84,21 @@ export async function generateBrief(input: BriefInput): Promise<BriefResult> {
     schema: briefSchema,
   });
 
+  const hiringProcess = data.hiring_process.trim();
+
+  // A page that mentioned interviewing was found, and the model still had nothing to say about
+  // the process. Without this the kit shows an empty hiring section and no reason for it, which
+  // reads as a bug rather than as an honest gap — and the whole point of the empty-string
+  // instruction is that saying nothing has to be visible.
+  if (hadHiringPage && hiringProcess.length === 0) {
+    gaps.push("The company site was read, but none of it described the interview process in enough detail to summarise.");
+  }
+
   return {
     brief: {
       summary: data.summary.trim(),
       whatTheyDo: data.what_they_do.trim(),
-      hiringProcess: data.hiring_process.trim(),
+      hiringProcess,
       sources,
       pagesUsed,
       gaps,
@@ -144,6 +154,10 @@ function buildPrompt(input: BriefInput): string {
     "",
     discussion.length > 0 ? discussion : "(no public discussion was retrieved)",
     "",
-    "Return JSON only.",
+    "Return JSON of exactly this shape and nothing else:",
+    "",
+    '{ "summary": "", "what_they_do": "", "hiring_process": "" }',
+    "",
+    "Every value is a single string. `hiring_process` may be empty.",
   ].join("\n");
 }
