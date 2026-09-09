@@ -4,7 +4,7 @@ import type { InternalQuestion, Requirement } from "@trao/kit";
 import { generateBrief } from "../src/brief";
 import { deriveFlashcards, frontFor } from "../src/flashcards";
 import { createGapFillWriter } from "../src/gap-fill";
-import { generateQuestions, requirementsFor } from "../src/questions";
+import { generateQuestions, requirementsFor, responsibilitiesFor } from "../src/questions";
 
 class StubLlm implements LlmProvider {
   readonly name = "stub";
@@ -472,5 +472,85 @@ describe("frontFor never truncates", () => {
       expect(card.front).not.toContain("…");
       expect(card.front).toMatch(/[.!?]$/);
     }
+  });
+});
+
+/**
+ * Responsibilities are material, even though they are not requirements.
+ *
+ * A live run on a platform-engineering posting produced three requirements and seven
+ * responsibilities. The seven were the entire substance of the job — orchestration UX, streaming
+ * partial output, interrupts and approvals, three messaging channels — and none of them produced
+ * a question, because generation only ever saw the requirements. The kit asked about portfolios
+ * and ambiguity and nothing about the work.
+ */
+describe("responsibilities reach question generation", () => {
+  const RESPONSIBILITIES = [
+    "Orchestration UX — sub-agent state, streaming partial output, handling interrupts and approvals",
+    "Connected services — let users plug Gmail, Drive and Slack into the product",
+    "Keeping the web experience consistent across WhatsApp, Telegram and iMessage",
+  ];
+
+  const thin: Requirement[] = [
+    { id: "r1", text: "A portfolio of real things you've shipped", kind: "technical", priority: "must" },
+  ];
+
+  it("gives the technical call the work as well as the requirements", async () => {
+    const llm = new StubLlm({ ...ALL_CATEGORIES, "generate_questions:technical": questionsFor(["r1"]) });
+    await generateQuestions({
+      requirements: thin,
+      responsibilities: RESPONSIBILITIES,
+      roleTitle: "Software Engineer",
+      company: "Magica",
+      llm,
+      ids: ids(),
+    });
+
+    const technical = llm.calls.find((c) => c.purpose.endsWith(":technical"))?.prompt ?? "";
+    expect(technical).toContain("streaming partial output");
+    expect(technical).toContain("do NOT tag questions about");
+  });
+
+  it("runs system design on architectural work when no requirement is architectural", async () => {
+    // Previously skipped as no_requirements while "streaming partial output" sat unused.
+    const llm = new StubLlm({ "generate_questions:system-design": questionsFor([]) });
+    const result = await generateQuestions({
+      requirements: thin,
+      responsibilities: RESPONSIBILITIES,
+      roleTitle: "Software Engineer",
+      company: "Magica",
+      llm,
+      ids: ids(),
+    });
+
+    expect(llm.calls.some((c) => c.purpose.endsWith("system-design"))).toBe(true);
+    expect(result.reports.find((r) => r.category === "system-design")?.skipped).toBeUndefined();
+  });
+
+  it("keeps the work away from the behavioural call", () => {
+    // "Build the connected services surfaces" as a behavioural prompt is a technical question
+    // wearing a story.
+    expect(responsibilitiesFor("behavioural", RESPONSIBILITIES)).toEqual([]);
+    expect(responsibilitiesFor("technical", RESPONSIBILITIES)).toHaveLength(3);
+  });
+
+  it("gives system design only the architectural ones", () => {
+    const design = responsibilitiesFor("system-design", RESPONSIBILITIES);
+    expect(design).toHaveLength(1);
+    expect(design[0]).toContain("streaming partial output");
+  });
+
+  it("still skips a category with neither requirements nor work", async () => {
+    const llm = new StubLlm({ "generate_questions:technical": questionsFor(["r1"]) });
+    const result = await generateQuestions({
+      requirements: thin,
+      responsibilities: [],
+      roleTitle: "E",
+      company: "A",
+      llm,
+      ids: ids(),
+    });
+
+    expect(result.reports.find((r) => r.category === "behavioural")?.skipped).toBe("no_requirements");
   });
 });

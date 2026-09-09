@@ -29,6 +29,12 @@ function env(name: string, fallback = ""): string {
   return process.env[name] ?? fallback;
 }
 
+function modelList(variable: string, fallback: readonly string[]): string[] {
+  const configured = env(variable).trim();
+  if (configured === "") return [...fallback];
+  return configured.split(",").map((name) => name.trim()).filter((name) => name !== "");
+}
+
 function flag(name: string): boolean {
   return /^(1|true|yes)$/i.test(env(name));
 }
@@ -97,8 +103,10 @@ async function main(): Promise<void> {
         tracer,
         budget,
         models: {
-          quality: env("GEMINI_MODEL_QUALITY", "gemini-flash-latest"),
-          fast: env("GEMINI_MODEL_FAST", "gemini-flash-lite-latest"),
+          // Preferred first, then fallbacks — see scripts/composition.ts for why both a
+          // floating alias and a pinned name are needed.
+          quality: modelList("GEMINI_MODEL_QUALITY", ["gemini-flash-latest", "gemini-3.6-flash", "gemini-3.5-flash"]),
+          fast: modelList("GEMINI_MODEL_FAST", ["gemini-flash-lite-latest", "gemini-3.5-flash-lite"]),
         },
         requestsPerMinute: Number(env("GEMINI_RPM", "10")),
         tokensPerMinute: Number(env("GEMINI_TPM", "250000")),

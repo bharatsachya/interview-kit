@@ -60,6 +60,13 @@ export interface Wiring {
 
 export const FIXTURE_ROOT = resolve(process.cwd(), "fixtures", "sites");
 
+/** `GEMINI_MODEL_QUALITY=a,b,c` overrides the list; a single name pins one model. */
+function modelList(variable: string, fallback: readonly string[]): string[] {
+  const configured = (process.env[variable] ?? "").trim();
+  if (configured === "") return [...fallback];
+  return configured.split(",").map((name) => name.trim()).filter((name) => name !== "");
+}
+
 export function wire(options: WiringOptions = {}): Wiring {
   const clock = new SystemClock();
   const tracer = new InMemoryTracer(clock);
@@ -115,13 +122,14 @@ export function wire(options: WiringOptions = {}): Wiring {
       models: {
         // Extraction is worth 20 points and asks for `quality`. Everything else takes `fast`.
         //
-        // The floating `-latest` aliases rather than a pinned version, deliberately. Google
-        // retires numbered models for new API keys — `gemini-2.5-flash` 404s with "no longer
-        // available to new users" on a key issued today — and a submission that a grader runs
-        // months from now must not fail on a deprecation. Reproducibility loses to still
-        // working; pin GEMINI_MODEL_* in .env when an exact version matters.
-        quality: process.env["GEMINI_MODEL_QUALITY"] ?? "gemini-flash-latest",
-        fast: process.env["GEMINI_MODEL_FAST"] ?? "gemini-flash-lite-latest",
+        // Preferred first, then fallbacks. The floating `-latest` alias leads because Google
+        // retires numbered models for newly issued keys — `gemini-2.5-flash` 404s with "no
+        // longer available to new users" on a key created today — so a pinned-only list is a
+        // time bomb in a repo someone runs months from now. But `gemini-flash-latest` also
+        // returned 503 on three consecutive runs while other models answered in under a second,
+        // so an alias alone is a different time bomb. The list survives both.
+        quality: modelList("GEMINI_MODEL_QUALITY", ["gemini-flash-latest", "gemini-3.6-flash", "gemini-3.5-flash"]),
+        fast: modelList("GEMINI_MODEL_FAST", ["gemini-flash-lite-latest", "gemini-3.5-flash-lite"]),
       },
       requestsPerMinute: Number(process.env["GEMINI_RPM"] ?? 10),
       tokensPerMinute: Number(process.env["GEMINI_TPM"] ?? 250_000),

@@ -501,3 +501,90 @@ describe("fenced output costs no repair", () => {
     expect(transport.callCount).toBe(2);
   });
 });
+
+/**
+ * Model fallback.
+ *
+ * Google returns 503 UNAVAILABLE on a busy model with no Retry-After. `gemini-flash-latest`
+ * failed three consecutive live runs while `gemini-flash-lite-latest` answered in under a
+ * second, and each failure cost a whole case. A second model sitting right there makes that a
+ * choice rather than an outcome.
+ */
+describe("falling back to another model", () => {
+  const unavailable = () => new ProviderError("503 high demand", { status: 503 });
+
+  function withModels(script: ScriptedStep[], quality: string[]) {
+    const clock = new TestClock(0);
+    const transport = new FakeTransport(script);
+    const tracer = new RecordingTracer();
+    const gateway = new LlmGateway({
+      transport,
+      cache: new MemoryCacheStore(clock),
+      clock,
+      tracer,
+      budget: unlimitedBudget(clock),
+      models: { quality, fast: "model-flash" },
+      maxAttempts: 2,
+      backoff: { random: () => 0 },
+    });
+    return { gateway, transport, tracer };
+  }
+
+  it("moves to the next model when the first is unavailable", async () => {
+    // Two 503s exhaust the first model's retries, then the second answers.
+    const { gateway, transport, tracer } = withModels([unavailable(), unavailable(), OK], ["busy", "spare"]);
+
+    const result = await gateway.complete(ask({ tier: "quality" }));
+
+    expect(result.data).toEqual({ greeting: "hello" });
+    expect(transport.requests.map((r) => r.model)).toEqual(["busy", "busy", "spare"]);
+    expect(tracer.lastAttrs["fell_back_from"]).toBe("busy");
+    expect(tracer.lastAttrs["model"]).toBe("spare");
+  });
+
+  it("moves on from a retired model too", async () => {
+    const retired = new ProviderError("404 no longer available", { status: 404, retryable: false });
+    const { gateway, transport } = withModels([retired, OK], ["retired", "current"]);
+
+    await gateway.complete(ask({ tier: "quality" }));
+    expect(transport.requests.map((r) => r.model)).toEqual(["retired", "current"]);
+  });
+
+  it("does not fall back on a malformed request — a second model fails the same way", async () => {
+    const bad = new ProviderError("400 Bad Request", { status: 400 });
+    const { gateway, transport } = withModels([bad, OK], ["first", "second"]);
+
+    await expect(gateway.complete(ask({ tier: "quality" }))).rejects.toMatchObject({ code: "LLM_UNAVAILABLE" });
+    expect(transport.requests.map((r) => r.model)).toEqual(["first"]);
+  });
+
+  it("fails when every model is unavailable", async () => {
+    const { gateway, transport } = withModels([unavailable()], ["one", "two"]);
+
+    await expect(gateway.complete(ask({ tier: "quality" }))).rejects.toMatchObject({ code: "LLM_UNAVAILABLE" });
+    // Two attempts each, both models.
+    expect(transport.requests.map((r) => r.model)).toEqual(["one", "one", "two", "two"]);
+  });
+
+  it("charges the fallback as the second request it is", async () => {
+    const clock = new TestClock(0);
+    const gateway = new LlmGateway({
+      transport: new FakeTransport([unavailable(), OK]),
+      cache: new MemoryCacheStore(clock),
+      clock,
+      tracer: new RecordingTracer(),
+      budget: new RunBudget({ maxCalls: 1, maxTokens: 1e9, deadlineAt: 1e12 }, clock),
+      models: { quality: ["busy", "spare"], fast: "model-flash" },
+      maxAttempts: 1,
+      backoff: { random: () => 0 },
+    });
+
+    await expect(gateway.complete(ask({ tier: "quality" }))).rejects.toMatchObject({ code: "BUDGET_EXHAUSTED" });
+  });
+
+  it("accepts a single model name as before", async () => {
+    const { gateway, transport } = withModels([OK], ["only"]);
+    await gateway.complete(ask({ tier: "quality" }));
+    expect(transport.requests[0]?.model).toBe("only");
+  });
+});

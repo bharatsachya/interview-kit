@@ -45,9 +45,16 @@ export function subjectOf(requirementText: string): string {
   // Long labels are shortened at a clause boundary or not at all. A hard word cut produces
   // "Mentoring junior engineers and reviewing their", which is worse than the full sentence:
   // a truncation that ends on "their" reads as a bug, and a label nobody trusts is not a label.
+  if (text.split(" ").length > MAX_LABEL_WORDS) {
+    // A comma is the strongest boundary a requirement text offers: "take an ambiguous spec,
+    // scope it, and ship something usable in days" is one subject with two elaborations.
+    const beforeComma = (text.split(",")[0] ?? text).trim();
+    if (beforeComma.split(" ").length >= 2) text = beforeComma;
+  }
+
   const words = text.split(" ").filter(Boolean);
   if (words.length > MAX_LABEL_WORDS) {
-    const boundary = words.slice(0, MAX_LABEL_WORDS).findLastIndex((word) => /^(and|or|with|including|plus)$/i.test(word));
+    const boundary = words.slice(0, MAX_LABEL_WORDS).findLastIndex((word) => /^(and|or|with|including|plus|for|that)$/i.test(word));
     if (boundary > 1) text = words.slice(0, boundary).join(" ").replace(/,$/, "");
   }
 
@@ -128,13 +135,43 @@ function requirementIdsOf(
   return seen;
 }
 
-/** The subject of a question that covers no requirement, taken from its own first clause. */
+/**
+ * The subject of a question that covers no requirement.
+ *
+ * Questions grounded in a responsibility rather than a requirement have no id to name them by,
+ * so the label comes from the prompt. A prompt is a sentence, not a phrase, and needs a firmer
+ * hand than a requirement text: the interrogative stem carries no information ("Tell me about a
+ * time when you…"), and what follows runs to twenty words. Cutting at a clause boundary here is
+ * the whole job rather than an edge case, so the word cap is enforced.
+ */
+const QUESTION_STEM =
+  /^(?:tell me about(?: a)?(?: time(?: when)?)?|describe(?: a| the| your)?|walk (?:me )?through(?: a| the)?|design(?: a| the)?|explain(?: how| why| the)?|how (?:would|do|did) you|what (?:would|do|did) you|given [^,]+,\s*)\s*/i;
+
+const BOUNDARY_WORD = /^(and|or|with|for|that|where|which|when|using|across|including|plus|to|in|on|at|from|by)$/i;
+const MAX_QUESTION_LABEL_WORDS = 8;
+
 function firstPromptSubject(questions: readonly InternalQuestion[]): string {
-  const prompt = questions[0]?.prompt ?? "";
-  const clause = prompt.split(/[?.]/)[0]?.trim() ?? "";
-  return clause.length > 0 ? clause : prompt;
+  const prompt = (questions[0]?.prompt ?? "").trim().replace(/\s+/g, " ");
+  if (prompt.length === 0) return "";
+
+  let text = (prompt.split(/[?.]/)[0] ?? prompt).trim();
+  text = text.replace(QUESTION_STEM, "").trim();
+  text = (text.split(",")[0] ?? text).trim();
+
+  const words = text.split(" ").filter(Boolean);
+  if (words.length > MAX_QUESTION_LABEL_WORDS) {
+    const head = words.slice(0, MAX_QUESTION_LABEL_WORDS);
+    const boundary = head.findLastIndex((word) => BOUNDARY_WORD.test(word));
+    text = (boundary > 1 ? head.slice(0, boundary) : head).join(" ");
+  }
+
+  return text.length > 0 ? text : prompt;
 }
 
+/** "AI or agent products" must not become "aI or agent products". */
 function lowerFirst(value: string): string {
-  return value.charAt(0).toLowerCase() + value.slice(1);
+  const first = value.charAt(0);
+  const second = value.charAt(1);
+  if (second !== "" && second === second.toUpperCase() && second !== second.toLowerCase()) return value;
+  return first.toLowerCase() + value.slice(1);
 }

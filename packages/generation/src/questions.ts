@@ -73,6 +73,20 @@ export interface QuestionGenerationInput {
   /** From the crawl. Empty when no hiring page was found. */
   hiringProcess?: string;
   companySummary?: string;
+  /**
+   * What the role actually does, as opposed to what the candidate must have.
+   *
+   * Extraction keeps these separate from requirements, correctly — "build the orchestration UX"
+   * is not something a candidate can already possess, so it cannot be a must-have and coverage
+   * cannot track it. But dropping them here produced a kit for a platform-engineering role whose
+   * only questions were about portfolios and ambiguity, while streaming partial output,
+   * interrupts, approvals and three messaging channels went unasked. The job was in the posting
+   * and not in the kit.
+   *
+   * They are context, never seeds: a question grounded in one carries no requirement id, which
+   * is honest — it covers work, not a stated requirement.
+   */
+  responsibilities?: readonly string[];
   llm: LlmProvider;
   ids: IdGenerator;
   perCategory?: number;
@@ -108,18 +122,28 @@ export async function generateQuestions(input: QuestionGenerationInput): Promise
 
   for (const category of ["technical", "behavioural", "system-design", "company-fit"] as const) {
     const seed = requirementsFor(category, input.requirements);
+    const context = responsibilitiesFor(category, input.responsibilities ?? []);
 
     const report = await span.child(`category:${category}`, async (c): Promise<CategoryReport> => {
       c.set("requirements_in", seed.length);
 
-      // Skipping is honest. Calling a model with no requirements and asking for five questions
-      // is an instruction to invent, and the empty categories are where invention shows.
-      if (seed.length === 0 && category !== "company-fit") {
+      c.set("responsibilities_in", context.length);
+
+      // Skipping is honest. Calling a model with nothing and asking for five questions is an
+      // instruction to invent, and the empty categories are where invention shows. But a
+      // responsibility is material even though it is not a requirement, so a category with work
+      // to ask about is not empty.
+      if (seed.length === 0 && context.length === 0 && category !== "company-fit") {
         c.set("questions_out", 0);
         c.skip("no_requirements");
         return { category, requirementsIn: 0, questionsOut: 0, skipped: "no_requirements" };
       }
-      if (category === "company-fit" && seed.length === 0 && (input.companySummary ?? "").trim().length === 0) {
+          if (
+        category === "company-fit" &&
+        seed.length === 0 &&
+        context.length === 0 &&
+        (input.companySummary ?? "").trim().length === 0
+      ) {
         c.set("questions_out", 0);
         c.skip("no_context");
         return { category, requirementsIn: 0, questionsOut: 0, skipped: "no_context" };
@@ -129,7 +153,7 @@ export async function generateQuestions(input: QuestionGenerationInput): Promise
         const { data } = await input.llm.complete({
         // A distinct purpose per category: a distinct span in the trace and a distinct cache key.
         purpose: `generate_questions:${category}`,
-        prompt: buildPrompt(category, seed, input),
+        prompt: buildPrompt(category, seed, context, input),
         schema: questionsSchema,
       });
 
@@ -236,9 +260,30 @@ const INSTRUCTIONS: Readonly<Record<QuestionCategory, string[]>> = {
   ],
 };
 
+/**
+ * Which responsibilities each call may see.
+ *
+ * Behavioural is excluded: a responsibility describes work, and a behavioural question grounded
+ * in "build the connected services surfaces" would be a technical question wearing a story
+ * prompt. System design takes only the architectural ones, by the same test used on requirements.
+ */
+export function responsibilitiesFor(category: QuestionCategory, responsibilities: readonly string[]): string[] {
+  switch (category) {
+    case "technical":
+      return [...responsibilities];
+    case "system-design":
+      return responsibilities.filter((text) => SYSTEM_DESIGN_SIGNALS.test(text));
+    case "behavioural":
+      return [];
+    case "company-fit":
+      return [...responsibilities];
+  }
+}
+
 function buildPrompt(
   category: QuestionCategory,
   seed: readonly Requirement[],
+  responsibilities: readonly string[],
   input: QuestionGenerationInput,
 ): string {
   const wanted = input.perCategory ?? DEFAULT_QUESTIONS_PER_CATEGORY;
@@ -260,6 +305,17 @@ function buildPrompt(
       "requirements it genuinely covers, using `requirement_ids`. Only these ids exist:",
       "",
       ...seed.map((r) => `- ${r.id} [${r.priority}] ${r.text}`),
+      "",
+    );
+  }
+
+  if (responsibilities.length > 0) {
+    lines.push(
+      "The role also involves the work below. It is what the person will build, so it is fair",
+      "ground for questions — but it is not a list of requirements, so do NOT tag questions about",
+      "it with requirement ids. Leave `requirement_ids` empty for those.",
+      "",
+      ...responsibilities.map((text) => `- ${text}`),
       "",
     );
   }

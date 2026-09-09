@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  isKitError,
   KitError,
   type Budget,
   type CacheStore,
@@ -15,7 +16,7 @@ import { retryDelay, type BackoffOptions } from "./backoff";
 import { perMinute, TokenBucket } from "./bucket";
 import { extractJson } from "./json";
 import { estimateTokens } from "./tokens";
-import { ProviderError, type ModelTransport } from "./transport";
+import { ProviderError, type ModelTransport, type ModelTransportResponse } from "./transport";
 
 /**
  * The one gateway. Nothing else in the repo touches a model provider.
@@ -46,8 +47,15 @@ export interface LlmGatewayOptions {
    * Which model each tier maps to. Requirement extraction is worth 20 points and asks for
    * `quality`; everything else takes `fast`. Link ranking and schedule allocation ask for
    * neither, because they never call a model at all.
+   *
+   * A list is tried in order. Google returns 503 UNAVAILABLE on a busy model with no warning and
+   * no Retry-After — `gemini-flash-latest` failed three consecutive runs while
+   * `gemini-flash-lite-latest` answered in under a second — and failing a whole case because one
+   * pool is hot, when another model is sitting right there, is not a degradation ladder. The
+   * fallback fires only for "this model is unavailable"; a malformed request or an exhausted
+   * quota still fails, because a second model would fail the same way.
    */
-  models: Record<LlmTier, string>;
+  models: Record<LlmTier, string | readonly string[]>;
   requestsPerMinute?: number;
   tokensPerMinute?: number;
   maxAttempts?: number;
@@ -101,9 +109,13 @@ export class LlmGateway implements LlmProvider {
   }
 
   async #run<T>(request: LlmRequest<T>, span: SpanHandle): Promise<LlmResult<T>> {
-    const model = this.options.models[request.tier ?? "fast"];
-    const hash = promptHash(model, request.prompt);
+    const configured = this.options.models[request.tier ?? "fast"];
+    const candidates = typeof configured === "string" ? [configured] : [...configured];
+    const preferred = candidates[0] as string;
+    const hash = promptHash(preferred, request.prompt);
     const inputTokens = estimateTokens(request.prompt);
+    // Set to whichever model actually answered, which may not be the preferred one.
+    let model = preferred;
 
     span.setAll({
       model,
@@ -148,10 +160,13 @@ export class LlmGateway implements LlmProvider {
       queuedMs += (await this.#rpm.acquire(1)) + (await this.#tpm.acquire(promptTokens));
       span.set("queued_ms", queuedMs);
 
-      const response = await this.#send(
-        { model, prompt, ...(request.maxOutputTokens !== undefined ? { maxOutputTokens: request.maxOutputTokens } : {}) },
+      const attempt = await this.#sendPreferring(
+        round === 0 ? candidates : [model],
+        { prompt, ...(request.maxOutputTokens !== undefined ? { maxOutputTokens: request.maxOutputTokens } : {}) },
         span,
       );
+      const response = attempt.response;
+      model = attempt.model;
       const usage = response.usage ?? { inputTokens: promptTokens, outputTokens: estimateTokens(response.text) };
       span.set("output_tokens", usage.outputTokens);
 
@@ -188,6 +203,41 @@ export class LlmGateway implements LlmProvider {
     throw new KitError("INTERNAL", "unreachable: repair loop fell through");
   }
 
+  /**
+   * Try each model in turn, moving on only when one is unavailable rather than wrong.
+   *
+   * Each candidate is a real request and reserves its own budget — a fallback is not free, and
+   * pretending otherwise would let a hot primary model quietly double a run's spend.
+   */
+  async #sendPreferring(
+    candidates: readonly string[],
+    request: { prompt: string; maxOutputTokens?: number },
+    span: SpanHandle,
+  ): Promise<{ response: Awaited<ReturnType<LlmGateway["_send"]>>; model: string }> {
+    let lastError: unknown;
+
+    for (const [index, model] of candidates.entries()) {
+      if (index > 0) {
+        // A second model is a second request. Reserve for it, and say so in the trace.
+        this.options.budget.spend(estimateTokens(request.prompt) + (request.maxOutputTokens ?? DEFAULT_OUTPUT_RESERVE));
+        span.setAll({ model, fell_back_from: candidates[index - 1] as string });
+      }
+
+      try {
+        return { response: await this.#send({ model, ...request }, span), model };
+      } catch (error) {
+        lastError = error;
+        const unavailable = isKitError(error) && error.details["model_unavailable"] === true;
+        if (!unavailable || index === candidates.length - 1) throw error;
+      }
+    }
+
+    throw lastError;
+  }
+
+  /** Exposed only so the return type above can be named. Never called. */
+  declare _send: (request: { model: string; prompt: string; maxOutputTokens?: number }, span: SpanHandle) => Promise<ModelTransportResponse>;
+
   async #send(request: { model: string; prompt: string; maxOutputTokens?: number }, span: SpanHandle) {
     let lastError: unknown;
 
@@ -208,10 +258,17 @@ export class LlmGateway implements LlmProvider {
       }
     }
 
+    // 503 UNAVAILABLE and 404 "no longer available" both mean *this model*, not the provider.
+    // Flagged so a caller with another model configured can move on rather than fail the case.
+    const status = lastError instanceof ProviderError ? lastError.status : undefined;
     throw new KitError("LLM_UNAVAILABLE", describe(lastError), {
       retryable: true,
       cause: lastError,
-      details: { attempts: this.#maxAttempts },
+      details: {
+        attempts: this.#maxAttempts,
+        ...(status !== undefined ? { status } : {}),
+        model_unavailable: status === 503 || status === 404,
+      },
     });
   }
 

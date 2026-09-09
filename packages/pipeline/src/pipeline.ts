@@ -276,6 +276,7 @@ async function run(
       company,
       hiringProcess: hiringPage?.text ?? brief.hiringProcess,
       companySummary: brief.summary,
+      responsibilities: extraction.role.responsibilities,
       llm: deps.llm,
       ids: deps.ids,
       // The category spans are emitted by generation, around the calls they describe.

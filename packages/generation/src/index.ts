@@ -17,6 +17,7 @@ export {
   DEFAULT_QUESTIONS_PER_CATEGORY,
   generateQuestions,
   requirementsFor,
+  responsibilitiesFor,
   type CategoryReport,
   type QuestionGenerationInput,
   type QuestionGenerationResult,
