@@ -63,12 +63,28 @@ function buildPrompt(request: {
     `An interview study kit for a ${request.roleTitle || "role"} is missing a question about`,
     single ? "this requirement:" : "these closely related requirements:",
     "",
-    ...request.requirements.map((r) => `- ${r.text}`),
+    // Kind and source sentence, not just the phrase. "Drive" alone is ambiguous enough that a
+    // model returned a question about personal motivation for it; the sentence it came from says
+    // which Drive, and the kind says what shape of question is wanted.
+    ...request.requirements.map((r) => {
+      const span = r.sourceSpan !== undefined && r.sourceSpan.trim() !== r.text.trim() ? r.sourceSpan.trim() : "";
+      return [
+        `- ${r.text}`,
+        `    kind: ${r.kind}`,
+        ...(span !== "" ? [`    stated in the posting as: "${span}"`] : []),
+      ].join("\n");
+    }),
+    "",
+    ...(request.requirements.some((r) => r.kind === "behavioural")
+      ? ["This is a behavioural requirement: ask for a specific story about working with people,", "not about tools."]
+      : request.requirements.every((r) => r.kind === "domain")
+        ? ["This is a domain requirement: ask about industry or subject-matter background."]
+        : ["This is a technical requirement: ask about a decision, a failure, or a trade-off they lived with."]),
     "",
     "Write ONE interview question that genuinely covers " + (single ? "it" : "them") + ".",
-    "It must use the vocabulary of the requirement above — a question about something adjacent",
-    "does not close this gap. Include an `answer_outline` of three or four points and a",
-    "`difficulty` of 1, 2 or 3.",
+    "It must use the vocabulary of the requirement above, in the sense the posting used it — a",
+    "question about something that merely shares a word does not close this gap. Include an",
+    "`answer_outline` of three or four points and a `difficulty` of 1, 2 or 3.",
     "",
     ...((request.hiringProcess ?? "").trim().length > 0
       ? [untrustedBlock("hiring_process", truncateForPrompt(request.hiringProcess as string, 1_000)), ""]

@@ -308,6 +308,15 @@ async function run(
       }
 
       s.setAll({ passes: result.passes, fallbacks: result.fallbackCount, uncovered: result.uncoveredRequirementIds });
+      // Tags trimmed before the first check. A requirement returning to the gap list because its
+      // only question name-dropped it is the most surprising thing this step does; the trace says
+      // so rather than leaving a reader to wonder why pass 1 found gaps the model had "covered".
+      if (result.retagged.length > 0) {
+        s.setAll({
+          retagged_questions: result.retagged.length,
+          tags_dropped: result.retagged.flatMap((r) => r.dropped.map((d) => `${r.questionId}:${d.id}=${d.reason}`)),
+        });
+      }
       return result;
     } catch (error) {
       // Budget exhausted mid-coverage: ship what we have with the gaps listed, rather than
@@ -318,6 +327,7 @@ async function run(
         passes: 1,
         uncoveredRequirementIds: uncoveredIds(requirements, generated.questions),
         fallbackCount: 0,
+        retagged: [],
       };
     }
   });
