@@ -136,7 +136,9 @@ async function run(
 
   // ── 1. extract_requirements ────────────────────────────────────────────────────────────
   const extraction = await deps.tracer.span("extract_requirements", async (s) => {
-    s.set("jd_chars", input.jd.length);
+    // Trimmed, because that is the length extraction itself measures and reports back in
+    // `suspicious_reasons`. Two different character counts on one span line read as a bug.
+    s.set("jd_chars", input.jd.trim().length);
     const result = await extractRequirements({ jd: input.jd, llm: deps.llm, ids: deps.ids });
     s.setAll({
       requirement_count: result.requirements.length,
