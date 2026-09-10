@@ -115,14 +115,54 @@ export interface QuestionGenerationResult {
   reports: CategoryReport[];
 }
 
+/**
+ * The four calls run concurrently.
+ *
+ * They were sequential, which cost the sum of four round trips — twelve to fifteen seconds of a
+ * ninety-second run spent waiting for one answer before asking the next question. Nothing about
+ * them is ordered: each is seeded with its own requirements and none reads another's output.
+ *
+ * Rate limiting is unaffected. The gateway's RPM and TPM buckets serialise the requests
+ * themselves, so concurrency here removes the stacking of round trips without letting four
+ * requests leave at once.
+ *
+ * Ids are assigned AFTER all four settle, in category order, so a fake run still produces a
+ * byte-identical kit. Assigning them inside the concurrent callbacks would make q1..qn depend on
+ * which provider answered first.
+ */
 export async function generateQuestions(input: QuestionGenerationInput): Promise<QuestionGenerationResult> {
-  const questions: InternalQuestion[] = [];
-  const reports: CategoryReport[] = [];
   const span = input.span ?? NOOP_SPAN;
 
-  for (const category of ["technical", "behavioural", "system-design", "company-fit"] as const) {
+  const settled = await Promise.all(
+    (["technical", "behavioural", "system-design", "company-fit"] as const).map((category) =>
+      runCategory(category, input, span),
+    ),
+  );
+
+  const questions: InternalQuestion[] = [];
+  const reports: CategoryReport[] = [];
+
+  for (const outcome of settled) {
+    reports.push(outcome.report);
+    for (const draft of outcome.drafts) {
+      questions.push({ ...draft, id: input.ids.next("q") });
+    }
+  }
+
+  return { questions, reports };
+}
+
+type QuestionDraft = Omit<InternalQuestion, "id">;
+
+async function runCategory(
+  category: QuestionCategory,
+  input: QuestionGenerationInput,
+  span: SpanHandle,
+): Promise<{ report: CategoryReport; drafts: QuestionDraft[] }> {
+  {
     const seed = requirementsFor(category, input.requirements);
     const context = responsibilitiesFor(category, input.responsibilities ?? []);
+    const drafts: QuestionDraft[] = [];
 
     const report = await span.child(`category:${category}`, async (c): Promise<CategoryReport> => {
       c.set("requirements_in", seed.length);
@@ -166,8 +206,7 @@ export async function generateQuestions(input: QuestionGenerationInput): Promise
         // With a single-requirement seed there is no ambiguity about what it was answering.
         if (requirementIds.length === 0 && seed.length === 1) requirementIds = [seed[0]?.id as string];
 
-        questions.push({
-          id: input.ids.next("q"),
+        drafts.push({
           category,
           prompt: candidate.prompt.trim(),
           answerOutline: candidate.answer_outline.trim(),
@@ -192,10 +231,8 @@ export async function generateQuestions(input: QuestionGenerationInput): Promise
     }
     });
 
-    reports.push(report);
+    return { report, drafts };
   }
-
-  return { questions, reports };
 }
 
 /**

@@ -49,12 +49,23 @@ export function useJobStream(jobId: string): JobStreamState {
     let source: EventSource | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let attempts = 0;
-    const seen = new Set<string>();
 
+    /**
+     * Upsert, not append.
+     *
+     * The same span arrives twice or more: once when it opens, with no duration and no
+     * attributes, and again as it changes. Ignoring the repeat — which this did — left every
+     * step stuck on "running" for the life of the run. Order is by first sight, so a step does
+     * not jump position when it finishes.
+     */
     const addSpan = (span: Span) => {
-      if (seen.has(span.id)) return;
-      seen.add(span.id);
-      setSpans((previous) => [...previous, span]);
+      setSpans((previous) => {
+        const index = previous.findIndex((existing) => existing.id === span.id);
+        if (index === -1) return [...previous, span];
+        const next = [...previous];
+        next[index] = span;
+        return next;
+      });
     };
 
     const settled = (record: JobRecord) => record.status === "done" || record.status === "failed";

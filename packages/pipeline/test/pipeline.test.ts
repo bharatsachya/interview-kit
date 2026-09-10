@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -70,9 +71,17 @@ class StubLlm implements LlmProvider {
   }
 }
 
+/**
+ * Parents spans through AsyncLocalStorage, exactly as `InMemoryTracer` does.
+ *
+ * It used a depth stack, which is correct only while spans nest strictly. The moment the four
+ * question categories began running concurrently, their pushes and pops interleaved and three of
+ * the four were attributed to the wrong parent — the test failed while the code was right. A
+ * double that models concurrency differently from the real thing tests the double.
+ */
 class TestTracer implements Tracer {
   readonly spans: Span[] = [];
-  #depth: string[] = [];
+  readonly #currentSpanId = new AsyncLocalStorage<string>();
   /** Monotonic, so "this span started before that one" is a real assertion. */
   #tick = 0;
 
@@ -82,7 +91,7 @@ class TestTracer implements Tracer {
     const startedAt = (this.#tick += 1);
     const span: Span = {
       id,
-      parentId: this.#depth.at(-1) ?? null,
+      parentId: this.#currentSpanId.getStore() ?? null,
       step,
       startedAt,
       endedAt: startedAt,
@@ -91,7 +100,6 @@ class TestTracer implements Tracer {
       attrs,
     };
     this.spans.push(span);
-    this.#depth.push(id);
 
     const handle: SpanHandle = {
       id,
@@ -105,14 +113,13 @@ class TestTracer implements Tracer {
     };
 
     try {
-      return await fn(handle);
+      return await this.#currentSpanId.run(id, () => fn(handle));
     } catch (error) {
       span.status = "failed";
       throw error;
     } finally {
       span.endedAt = (this.#tick += 1);
       span.durationMs = span.endedAt - span.startedAt;
-      this.#depth.pop();
     }
   }
 

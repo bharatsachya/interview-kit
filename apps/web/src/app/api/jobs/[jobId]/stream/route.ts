@@ -1,4 +1,4 @@
-import type { JobRecord, Span } from "@trao/contracts";
+import type { JobRecord } from "@trao/contracts";
 import type { JobView } from "@trao/api-contract";
 import { Unauthenticated, UpstreamUnreachable, callApi, unauthenticated, unreachable } from "@/lib/api/upstream";
 
@@ -19,9 +19,16 @@ import { Unauthenticated, UpstreamUnreachable, callApi, unauthenticated, unreach
  * protocol for nothing. The client falls back to the polling endpoint if the stream drops, which
  * is what makes this safe to deploy on a host that buffers or kills long responses.
  *
- * Four event types: `progress` when a step begins, `span` when it finishes, `done` when the job
- * settles, and `error` if the job cannot be found. Every payload is the same shape the polling
- * endpoint returns, so the two transports produce identical state and neither is the "real" one.
+ * Four event types: `progress` when a step begins, `span` when one starts AND again when it
+ * changes, `done` when the job settles, and `error` if the job cannot be found. Every payload is
+ * the same shape the polling endpoint returns, so the two transports produce identical state and
+ * neither is the "real" one.
+ *
+ * The re-send matters more than it sounds. The tracer records a span the moment it opens, so an
+ * in-flight step arrives with `durationMs: 0` and no attributes. Sending each span once — which
+ * this did — meant every step appeared as "running" and then never moved: on a fast fake run
+ * nothing looked wrong, and on a ninety-second real run the screen froze after the first tick.
+ * A step has to be able to finish on screen.
  */
 export const dynamic = "force-dynamic";
 
@@ -69,7 +76,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ jobI
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      let sent = 0;
+      /** Last-sent fingerprint per span id, so an unchanged span is not re-sent every second. */
+      const sentSpans = new Map<string, string>();
       let lastProgress = -1;
       let closed = false;
       let errors = 0;
@@ -102,12 +110,14 @@ export async function GET(request: Request, { params }: { params: Promise<{ jobI
           send("progress", progress);
         }
 
-        // Spans are append-only, so "everything since last time" is a suffix. A reconnecting
-        // client replays from zero, which is why the payloads carry ids the client dedupes on.
-        while (sent < view.spans.length) {
-          const span: Span | undefined = view.spans[sent];
-          sent += 1;
-          if (span) send("span", span);
+        // A span is sent when it first appears and again whenever it changes — which is what
+        // turns "extract_requirements, running" into "extract_requirements, 15.9s, 8 found".
+        // The fingerprint keeps an unchanged span off the wire on every tick.
+        for (const span of view.spans) {
+          const fingerprint = `${span.status}:${span.endedAt}:${Object.keys(span.attrs).length}`;
+          if (sentSpans.get(span.id) === fingerprint) continue;
+          sentSpans.set(span.id, fingerprint);
+          send("span", span);
         }
 
         if (settled(view.job)) {

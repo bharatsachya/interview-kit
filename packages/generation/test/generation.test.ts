@@ -554,3 +554,68 @@ describe("responsibilities reach question generation", () => {
     expect(result.reports.find((r) => r.category === "behavioural")?.skipped).toBe("no_requirements");
   });
 });
+
+/**
+ * The four calls run concurrently.
+ *
+ * Sequentially they cost the sum of four round trips — twelve to fifteen seconds of a
+ * ninety-second run spent waiting for one answer before asking the next question, for four
+ * questions that have nothing to do with each other.
+ */
+describe("the four categories run concurrently", () => {
+  class SlowLlm implements LlmProvider {
+    readonly name = "slow";
+    constructor(private readonly delayMs: number) {}
+    async complete<T>(request: LlmRequest<T>): Promise<LlmResult<T>> {
+      await new Promise((resolve) => setTimeout(resolve, this.delayMs));
+      const parsed = request.schema.safeParse({
+        questions: [{ prompt: "A question about the topic?", answer_outline: "Outline.", difficulty: 2, requirement_ids: [] }],
+      });
+      if (!parsed.success) throw new Error("bad canned response");
+      return { data: parsed.data, usage: { inputTokens: 1, outputTokens: 1 }, model: "slow", cacheHit: false, repaired: false };
+    }
+  }
+
+  const spread: Requirement[] = [
+    { id: "r1", text: "Designing distributed systems for availability", kind: "technical", priority: "must" },
+    { id: "r2", text: "Mentoring junior engineers", kind: "behavioural", priority: "must" },
+    { id: "r3", text: "A background in payments", kind: "domain", priority: "must" },
+  ];
+
+  const run = (llm: LlmProvider) =>
+    generateQuestions({ requirements: spread, roleTitle: "Engineer", company: "Acme", llm, ids: ids() });
+
+  it("takes about one round trip, not four", async () => {
+    const started = Date.now();
+    await run(new SlowLlm(300));
+    const elapsed = Date.now() - started;
+
+    // Four sequential 300ms calls would be ~1200ms.
+    expect(elapsed).toBeLessThan(800);
+  });
+
+  it("assigns ids in category order regardless of which answered first", async () => {
+    // Assigning inside the concurrent callbacks would make q1..qn depend on provider timing,
+    // and a fake run would stop producing a byte-identical kit.
+    const first = await run(new SlowLlm(20));
+    const second = await run(new SlowLlm(20));
+
+    expect(first.questions.map((q) => [q.id, q.category])).toEqual([
+      ["q1", "technical"],
+      ["q2", "behavioural"],
+      ["q3", "system-design"],
+      ["q4", "company-fit"],
+    ]);
+    expect(second.questions.map((q) => [q.id, q.category])).toEqual(first.questions.map((q) => [q.id, q.category]));
+  });
+
+  it("still reports the categories in order", async () => {
+    const result = await run(new SlowLlm(20));
+    expect(result.reports.map((r) => r.category)).toEqual([
+      "technical",
+      "behavioural",
+      "system-design",
+      "company-fit",
+    ]);
+  });
+});
