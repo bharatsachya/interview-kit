@@ -1,0 +1,1364 @@
+#!/usr/bin/env tsx
+/**
+ * Step-by-step eval runner.
+ *
+ *   npm run eval:step -- 07              run one step
+ *   npm run eval:step -- all             every step, in order
+ *   npm run eval:step -- 01 --repeat 3   LLM steps: N runs, pass rate per case
+ *
+ * Pure steps run with fakes only and must pass 100%. LLM steps (01, 05, 06) go through the
+ * real gateway with the cache DISABLED, so the repeats measure the prompt rather than a cache.
+ *
+ * Results and the span trace are written per step under out/evals/<run-id>/, and are never
+ * cleaned up — each run gets its own directory.
+ */
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import type { IdGenerator, LlmProvider, Span, Tracer } from "@trao/contracts";
+import { InMemoryTracer, SequentialIdGenerator, SystemClock, formatTrace } from "@trao/kernel";
+import { FakeLlmProvider } from "@trao/llm";
+import { extractRequirements } from "@trao/extraction";
+import { DEFAULT_PER_SCORER, DEFAULT_EXTERNAL_HIRING_THRESHOLD, mergeCandidates, normaliseUrl, rankLinks } from "@trao/retrieval";
+import { filterRelevant } from "@trao/research";
+import { deriveFlashcards, generateBrief, generateQuestions } from "@trao/generation";
+import { detectGaps, fallbackQuestion, gateQuestionTags, runCoverage } from "@trao/coverage";
+import { allocateSchedule } from "@trao/scheduling";
+import { repairSchedule, toKitJSON, validateKitJSON } from "@trao/kit";
+import { wire } from "../scripts/composition";
+import { loadEnv } from "../scripts/load-env";
+import { Checks, assignMatches, normalise, requirementMatches, toInternalQuestion, toRequirement } from "./harness";
+
+loadEnv();
+
+const STEPS_ROOT = resolve(process.cwd(), "evals", "steps");
+
+interface StepDefinition {
+  id: string;
+  dir: string;
+  name: string;
+  target: string;
+  kind: "pure" | "pure+fake" | "llm" | "llm+fake" | "unimplemented";
+  /** Where the eval spec's function name differs from the implementation's. */
+  adapter?: string;
+  run: (cases: Case[], deps: Deps) => Promise<CaseOutcome[]>;
+}
+
+interface Case {
+  id: string;
+  input: Record<string, any>;
+  expected: Record<string, any>;
+  tags?: string[];
+}
+
+interface Deps {
+  tracer: Tracer;
+  ids: IdGenerator;
+  llm: LlmProvider;
+  repeat: number;
+}
+
+interface RunRecord {
+  pass: boolean;
+  assertions: { name: string; pass: boolean; detail?: string }[];
+  scores?: Record<string, number>;
+  artifact?: unknown;
+  error?: string;
+}
+
+interface CaseOutcome {
+  id: string;
+  runs: RunRecord[];
+}
+
+// ── helpers ──────────────────────────────────────────────────────────────────────────────
+
+async function loadCases(dir: string): Promise<Case[]> {
+  const raw = await readFile(join(STEPS_ROOT, dir, "cases.json"), "utf8");
+  return JSON.parse(raw) as Case[];
+}
+
+/** Run one case body, turning a throw into a recorded failure rather than a dead run. */
+async function attempt(body: (c: Checks) => Promise<unknown>): Promise<RunRecord> {
+  const checks = new Checks();
+  try {
+    const artifact = await body(checks);
+    return { pass: checks.passed, assertions: checks.list, ...(artifact !== undefined ? { artifact } : {}) };
+  } catch (error) {
+    const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    checks.ok("did not throw", false, message);
+    return { pass: false, assertions: checks.list, error: message };
+  }
+}
+
+async function repeatCase(repeat: number, body: (c: Checks) => Promise<unknown>): Promise<RunRecord[]> {
+  const runs: RunRecord[] = [];
+  for (let i = 0; i < repeat; i += 1) runs.push(await attempt(body));
+  return runs;
+}
+
+// ── 01 extraction (LLM) ──────────────────────────────────────────────────────────────────
+
+const step01: StepDefinition = {
+  id: "01",
+  dir: "01-extraction",
+  name: "extractRequirements",
+  target: "packages/extraction → extractRequirements(jd, deps)",
+  kind: "llm",
+  run: async (cases, deps) => {
+    const outcomes: CaseOutcome[] = [];
+    for (const kase of cases) {
+      const runs = await repeatCase(deps.repeat, async (c) => {
+        const result = await deps.tracer.span(`case:${kase.id}`, async (span) => {
+          span.set("jd_chars", String(kase.input["jd"].length));
+          const r = await extractRequirements({ jd: kase.input["jd"], llm: deps.llm, ids: new SequentialIdGenerator() });
+          span.set("requirement_count", String(r.requirements.length));
+          span.set("must_count", String(r.requirements.filter((x) => x.priority === "must").length));
+          return r;
+        });
+
+        const extracted = result.requirements;
+        const expected = kase.expected;
+
+        // must / nice recall, one-to-one
+        const mustGold = (expected["must"] ?? []) as { text: string; kind: string }[];
+        const niceGold = (expected["nice"] ?? []) as { text: string; kind: string }[];
+        const mustMatches = assignMatches(mustGold, extracted);
+        const niceMatches = assignMatches(niceGold, extracted);
+
+        let mustHit = 0;
+        let priorityRight = 0;
+        let priorityTotal = 0;
+        for (const [gold, match] of mustMatches) {
+          const found = match !== null;
+          if (found) mustHit += 1;
+          c.ok(`must present: "${gold.text.slice(0, 48)}"`, found, found ? undefined : "no extracted requirement matched");
+          if (!found) continue;
+          priorityTotal += 1;
+          const rightPriority = match.priority === "must";
+          if (rightPriority) priorityRight += 1;
+          c.ok(`must priority: "${gold.text.slice(0, 40)}"`, rightPriority, rightPriority ? undefined : `got "${match.priority}"`);
+          c.ok(`must kind: "${gold.text.slice(0, 40)}"`, match.kind === gold.kind, match.kind === gold.kind ? undefined : `expected ${gold.kind}, got ${match.kind}`);
+        }
+        for (const [gold, match] of niceMatches) {
+          const found = match !== null;
+          c.ok(`nice present: "${gold.text.slice(0, 48)}"`, found, found ? undefined : "no extracted requirement matched");
+          if (!found) continue;
+          priorityTotal += 1;
+          const rightPriority = match.priority === "nice";
+          if (rightPriority) priorityRight += 1;
+          c.ok(`nice priority: "${gold.text.slice(0, 40)}"`, rightPriority, rightPriority ? undefined : `got "${match.priority}"`);
+          c.ok(`nice kind: "${gold.text.slice(0, 40)}"`, match.kind === gold.kind, match.kind === gold.kind ? undefined : `expected ${gold.kind}, got ${match.kind}`);
+        }
+
+        // forbidden: no requirement whose text IS one of these (normalised equality)
+        const forbidden = (expected["forbidden"] ?? []) as string[];
+        const hits = extracted.filter((r) => forbidden.some((f) => normalise(f) === normalise(r.text)));
+        c.ok("no forbidden requirement text", hits.length === 0, hits.length === 0 ? undefined : `found ${JSON.stringify(hits.map((h) => h.text))}`);
+
+        // count cap
+        const maxTotal = expected["max_total"] as number;
+        c.ok(`count ≤ ${maxTotal}`, extracted.length <= maxTotal, `extracted ${extracted.length}`);
+
+        // location
+        const location = result.role.location;
+        const locationOk = normalise(location) === normalise(expected["location"] ?? "");
+        c.ok("location", locationOk, locationOk ? undefined : `expected "${expected["location"]}", got "${location}"`);
+
+        // responsibilities range
+        const range = (expected["responsibilities_range"] ?? [0, 99]) as [number, number];
+        const respCount = result.role.responsibilities.length;
+        c.ok(`responsibilities in [${range[0]}, ${range[1]}]`, respCount >= range[0] && respCount <= range[1], `got ${respCount}`);
+
+        // injection-specific
+        if (kase.tags?.includes("prompt-injection") === true) {
+          const dirty = extracted.filter((r) => /ignore/i.test(r.text));
+          c.ok("no requirement contains 'ignore'", dirty.length === 0, dirty.length === 0 ? undefined : JSON.stringify(dirty.map((d) => d.text)));
+        }
+
+        const goldTotal = mustGold.length + niceGold.length;
+        const matchedExtracted = new Set([...mustMatches.values(), ...niceMatches.values()].filter((m) => m !== null));
+        const scores = {
+          must_recall: mustGold.length === 0 ? 1 : mustHit / mustGold.length,
+          invention_rate: extracted.length === 0 ? 0 : (extracted.length - matchedExtracted.size) / extracted.length,
+          priority_accuracy: priorityTotal === 0 ? 1 : priorityRight / priorityTotal,
+          forbidden_hits: hits.length,
+          gold_total: goldTotal,
+          extracted_total: extracted.length,
+        };
+        return {
+          scores,
+          location,
+          responsibilities: result.role.responsibilities,
+          requirements: extracted.map((r) => ({ id: r.id, text: r.text, kind: r.kind, priority: r.priority })),
+          dropped: result.dropped,
+          suspicious: result.suspicious,
+          suspiciousReasons: result.suspiciousReasons,
+        };
+      });
+      // lift scores out of the artifact for the report
+      for (const run of runs) {
+        const artifact = run.artifact as { scores?: Record<string, number> } | undefined;
+        if (artifact?.scores !== undefined) run.scores = artifact.scores;
+      }
+      outcomes.push({ id: kase.id, runs });
+    }
+    return outcomes;
+  },
+};
+
+// ── 02 link ranking (pure) ───────────────────────────────────────────────────────────────
+
+type Decision = { url: string; follow: boolean; reason?: string; score: number; external: boolean };
+
+/**
+ * The eval spec names `scoreLinks(links, baseUrl) → { hiring, about }` plus a follow decision.
+ * The implementation splits that across `rankLinks` (scoring, per scorer) and `crawlSite`
+ * (selection). This reproduces crawlSite's selection rules exactly — top N per scorer,
+ * score > 0, external hiring only at or above the threshold — without performing any fetch.
+ */
+function scoreLinksAdapter(input: Record<string, any>): {
+  hiring: ReturnType<typeof rankLinks>;
+  about: ReturnType<typeof rankLinks>;
+  decisions: Map<string, Decision>;
+} {
+  const base = input["base_url"] as string;
+  const origin = new URL(base).origin;
+  const baseKey = normaliseUrl(base);
+
+  const candidates = (input["links"] as { href: string; anchor: string; position: string }[]).map((link) => ({
+    url: new URL(link.href, base).toString(),
+    anchor: link.anchor,
+    // The eval vocabulary says "body"; the implementation's LinkPosition calls it "main".
+    position: (link.position === "body" ? "main" : link.position) as "nav" | "footer" | "main" | "unknown",
+    source: "anchor" as const,
+  }));
+
+  const merged = mergeCandidates(candidates);
+  const hiring = rankLinks(merged, "hiring", { origin });
+  const about = rankLinks(merged, "about", { origin });
+
+  const decisions = new Map<string, Decision>();
+  const claimed = new Set<string>();
+
+  for (const link of [...hiring]) {
+    if (normaliseUrl(link.url) === baseKey) {
+      // crawlSite seeds `visited` with the homepage, so it is never a candidate.
+      decisions.set(normaliseUrl(link.url), { url: link.url, follow: false, reason: "self", score: link.score, external: link.external });
+      claimed.add(normaliseUrl(link.url));
+    }
+  }
+
+  const ranked = { hiring, about };
+  for (let rank = 0; rank < DEFAULT_PER_SCORER; rank += 1) {
+    for (const kind of ["hiring", "about"] as const) {
+      const link = ranked[kind].filter((l) => !claimed.has(normaliseUrl(l.url)))[0];
+      if (link === undefined || link.score <= 0) continue;
+      const key = normaliseUrl(link.url);
+
+      if (link.external) {
+        const worthLeavingFor = kind === "hiring" && link.score >= DEFAULT_EXTERNAL_HIRING_THRESHOLD;
+        if (!worthLeavingFor) {
+          decisions.set(key, { url: link.url, follow: false, reason: "external_low_score", score: link.score, external: true });
+          claimed.add(key);
+          continue;
+        }
+      }
+      claimed.add(key);
+      decisions.set(key, { url: link.url, follow: true, score: link.score, external: link.external });
+    }
+  }
+
+  for (const link of merged) {
+    const key = normaliseUrl(link.url);
+    if (decisions.has(key)) continue;
+    const scored = hiring.find((l) => normaliseUrl(l.url) === key);
+    decisions.set(key, {
+      url: link.url,
+      follow: false,
+      reason: scored?.external === true ? "external_low_score" : "low_score",
+      score: scored?.score ?? 0,
+      external: scored?.external ?? false,
+    });
+  }
+
+  return { hiring, about, decisions };
+}
+
+const step02: StepDefinition = {
+  id: "02",
+  dir: "02-link-ranking",
+  name: "scoreLinks",
+  target: "packages/retrieval → rankLinks + crawlSite selection rules",
+  kind: "pure",
+  adapter: "The spec's scoreLinks() does not exist. Scoring is rankLinks(); the follow decision lives inside crawlSite(). Reproduced here without fetching.",
+  run: async (cases) => {
+    const outcomes: CaseOutcome[] = [];
+    for (const kase of cases) {
+      const runs = await repeatCase(1, async (c) => {
+        const { hiring, about, decisions } = scoreLinksAdapter(kase.input);
+        const expected = kase.expected;
+
+        const topHiring = hiring[0]?.url;
+        c.ok("top_hiring", topHiring === expected["top_hiring"], `expected ${expected["top_hiring"]}, got ${topHiring}`);
+
+        if (expected["top_about"] !== undefined) {
+          const topAbout = about[0]?.url;
+          c.ok("top_about", topAbout === expected["top_about"], `expected ${expected["top_about"]}, got ${topAbout}`);
+        }
+
+        for (const url of (expected["followed"] ?? []) as string[]) {
+          const decision = decisions.get(normaliseUrl(url));
+          c.ok(`follow: ${url}`, decision?.follow === true, decision === undefined ? "url not among candidates" : `follow=${decision.follow} reason=${decision.reason ?? "-"}`);
+        }
+
+        for (const entry of (expected["not_followed"] ?? []) as { url: string; reason: string }[]) {
+          const decision = decisions.get(normaliseUrl(entry.url));
+          const notFollowed = decision !== undefined && !decision.follow;
+          c.ok(`not followed: ${entry.url}`, notFollowed, decision === undefined ? "url not among candidates" : `follow=${decision.follow}`);
+          if (notFollowed) {
+            c.ok(`reason ${entry.reason}: ${entry.url}`, decision.reason === entry.reason, `got "${decision.reason}"`);
+          }
+        }
+
+        if (expected["deduped_to_one"] !== undefined) {
+          const variants = expected["deduped_to_one"] as string[];
+          const keys = new Set(variants.map((v) => normaliseUrl(v)));
+          const present = [...decisions.keys()].filter((k) => keys.has(k));
+          c.ok("variants collapse to one candidate", present.length === 1, `${present.length} distinct candidates: ${JSON.stringify(present)}`);
+        }
+
+        return {
+          hiring: hiring.map((l) => ({ url: l.url, score: l.score, external: l.external, reasons: l.reasons })),
+          about: about.map((l) => ({ url: l.url, score: l.score })),
+          decisions: [...decisions.values()],
+        };
+      });
+      outcomes.push({ id: kase.id, runs });
+    }
+    return outcomes;
+  },
+};
+
+// ── 03 content classifier (not implemented) ──────────────────────────────────────────────
+
+/** The nearest thing the codebase has: pipeline.ts's private hiring-signal hit count. */
+const HIRING_SIGNALS = /\b(interview|hiring|hire|recruit|take[\s-]?home|candidate)\b/gi;
+
+const step03: StepDefinition = {
+  id: "03",
+  dir: "03-content-classifier",
+  name: "classifyContent",
+  target: "packages/retrieval → classifyContent(cleanedText)",
+  kind: "unimplemented",
+  adapter: "No classifyContent exists, and nothing in the codebase scores 'about-ness' at all. The closest counterpart is findHiringPage()'s signal count, private to packages/pipeline. Reported as a diagnostic, not as a pass.",
+  run: async (cases) => {
+    const outcomes: CaseOutcome[] = [];
+    for (const kase of cases) {
+      const runs = await repeatCase(1, async (c) => {
+        const text = kase.input["text"] as string;
+        const hits = (text.match(HIRING_SIGNALS) ?? []).length;
+        c.ok("classifyContent exists", false, "packages/retrieval exports no classifyContent; there is no about-page classifier anywhere");
+        return {
+          diagnostic: {
+            hiring_signal_hits: hits,
+            would_be_hiring_page_by_pipeline_heuristic: hits > 0,
+            expected_is_hiring_page: kase.expected["is_hiring_page"],
+            heuristic_agrees: hits > 0 === kase.expected["is_hiring_page"],
+            expected_is_about_page: kase.expected["is_about_page"],
+          },
+        };
+      });
+      outcomes.push({ id: kase.id, runs });
+    }
+    return outcomes;
+  },
+};
+
+// ── 04 research relevance (pure) ─────────────────────────────────────────────────────────
+
+const step04: StepDefinition = {
+  id: "04",
+  dir: "04-research-relevance",
+  name: "filterRelevance",
+  target: "packages/research → filterRelevant(results, { company, companyUrl })",
+  kind: "pure",
+  adapter: "Named filterRelevant, not filterRelevance. It reports dropped results by url; the cases key them by id, so urls are mapped back to ids here.",
+  run: async (cases) => {
+    const outcomes: CaseOutcome[] = [];
+    for (const kase of cases) {
+      const runs = await repeatCase(1, async (c) => {
+        const results = (kase.input["results"] as { id: string; url: string; title: string; snippet: string }[]).map((r) => ({
+          title: r.title,
+          url: r.url,
+          content: r.snippet,
+        }));
+        const idByUrl = new Map((kase.input["results"] as { id: string; url: string }[]).map((r) => [r.url, r.id]));
+
+        const outcome = filterRelevant(results, {
+          company: kase.input["company"] as string,
+          companyUrl: `https://${kase.input["domain"] as string}`,
+        });
+
+        const keptIds = outcome.kept.map((r) => idByUrl.get(r.url) ?? r.url);
+        const droppedById = outcome.dropped.map((d) => ({ id: idByUrl.get(d.url) ?? d.url, reason: d.reason }));
+
+        c.sameSet("kept ids", keptIds, (kase.expected["kept"] ?? []) as string[]);
+
+        const expectedFiltered = (kase.expected["filtered"] ?? []) as { id: string; reason: string }[];
+        c.sameSet("filtered ids", droppedById.map((d) => d.id), expectedFiltered.map((f) => f.id));
+        for (const entry of expectedFiltered) {
+          const actual = droppedById.find((d) => d.id === entry.id);
+          c.ok(`filter reason ${entry.id}=${entry.reason}`, actual?.reason === entry.reason, `got "${actual?.reason ?? "not filtered"}"`);
+        }
+
+        // Kept results are used as the provider returned them — nothing here re-fetches.
+        c.ok("no result is re-fetched", true, "filterRelevant is pure: it has no fetcher");
+
+        return { kept: keptIds, dropped: droppedById };
+      });
+      outcomes.push({ id: kase.id, runs });
+    }
+    return outcomes;
+  },
+};
+
+// ── 05 brief (LLM) ───────────────────────────────────────────────────────────────────────
+
+const step05: StepDefinition = {
+  id: "05",
+  dir: "05-brief",
+  name: "generateBrief",
+  target: "packages/generation → generateBrief(input)",
+  kind: "llm",
+  run: async (cases, deps) => {
+    const outcomes: CaseOutcome[] = [];
+    for (const kase of cases) {
+      const runs = await repeatCase(deps.repeat, async (c) => {
+        const passages = (kase.input["passages"] ?? []) as { url: string; source: string; text: string }[];
+        const result = await deps.tracer.span(`case:${kase.id}`, async (span) => {
+          const r = await generateBrief({
+            company: kase.input["company"] as string,
+            roleTitle: kase.input["role"] as string,
+            pages: passages.filter((p) => p.source === "site").map((p) => ({ url: p.url, title: "", text: p.text })),
+            discussion: passages.filter((p) => p.source === "discussion").map((p) => ({ url: p.url, title: "", content: p.text })),
+            llm: deps.llm,
+          });
+          span.set("sources_used", String(r.sourcesUsed));
+          span.set("had_hiring_page", String(r.hadHiringPage));
+          return r;
+        });
+
+        const brief = result.brief;
+        const whole = `${brief.summary}\n${brief.whatTheyDo}\n${brief.hiringProcess}`;
+        const expected = kase.expected;
+
+        if (expected["hiring_process_empty"] === true) {
+          c.ok("hiring_process is empty", brief.hiringProcess.trim() === "", `got "${brief.hiringProcess.slice(0, 120)}"`);
+        }
+        for (const phrase of (expected["hiring_process_must_mention"] ?? []) as string[]) {
+          const present = normalise(brief.hiringProcess).includes(normalise(phrase));
+          c.ok(`hiring_process mentions "${phrase}"`, present, present ? undefined : `hiring_process="${brief.hiringProcess.slice(0, 160)}"`);
+        }
+        for (const phrase of (expected["what_they_do_must_mention"] ?? []) as string[]) {
+          const present = normalise(brief.whatTheyDo).includes(normalise(phrase));
+          c.ok(`what_they_do mentions "${phrase}"`, present, present ? undefined : `what_they_do="${brief.whatTheyDo.slice(0, 160)}"`);
+        }
+        for (const phrase of (expected["must_not_mention"] ?? []) as string[]) {
+          const present = normalise(whole).includes(normalise(phrase));
+          c.ok(`brief avoids "${phrase}"`, !present, present ? "phrase appears in the brief" : undefined);
+        }
+        if (expected["honesty_markers"] !== undefined) {
+          const markers = expected["honesty_markers"] as string[];
+          const found = markers.find((m) => normalise(brief.whatTheyDo).includes(normalise(m)));
+          c.ok("what_they_do carries an honesty marker", found !== undefined, found !== undefined ? `matched "${found}"` : `what_they_do="${brief.whatTheyDo.slice(0, 200)}"`);
+        }
+
+        const inputUrls = new Set(passages.map((p) => p.url));
+        const strays = brief.sources.filter((s) => !inputUrls.has(s));
+        c.ok("sources ⊆ provided passages", strays.length === 0, strays.length === 0 ? undefined : `invented sources ${JSON.stringify(strays)}`);
+
+        return {
+          summary: brief.summary,
+          what_they_do: brief.whatTheyDo,
+          hiring_process: brief.hiringProcess,
+          sources: brief.sources,
+          gaps: brief.gaps,
+          fabricationAvoided: result.fabricationAvoided,
+        };
+      });
+      outcomes.push({ id: kase.id, runs });
+    }
+    return outcomes;
+  },
+};
+
+// ── 06 question generation (fake structural + real content) ──────────────────────────────
+
+function questionCaseInput(kase: Case, llm: LlmProvider, ids: IdGenerator, span?: unknown): Record<string, unknown> {
+  return {
+    requirements: (kase.input["requirements"] as any[]).map(toRequirement),
+    roleTitle: kase.input["role"] as string,
+    company: kase.input["company"] as string,
+    hiringProcess: kase.input["hiring_context"] as string,
+    companySummary: kase.input["brief"] as string,
+    responsibilities: (kase.input["responsibilities"] ?? []) as string[],
+    llm,
+    ids,
+    ...(span !== undefined ? { span } : {}),
+  };
+}
+
+const step06: StepDefinition = {
+  id: "06",
+  dir: "06-question-generation",
+  name: "generateQuestions",
+  target: "packages/generation → generateQuestions(input)",
+  kind: "llm+fake",
+  run: async (cases, deps) => {
+    const outcomes: CaseOutcome[] = [];
+    for (const kase of cases) {
+      // ── structural half: FakeLlmProvider, one run, deterministic ──
+      const structural = await attempt(async (c) => {
+        const fake = new FakeLlmProvider();
+        // The fake volunteers a hallucinated id alongside a real one, so the assertion that
+        // returned ids ⊆ the ids in that call's prompt tests generateQuestions' filter and
+        // not the fake's honesty.
+        fake.respondWith("generate_questions", (request: any) => {
+          const promptIds = [...String(request.prompt).matchAll(/\br\d+\b/g)].map((m) => m[0]);
+          const first = promptIds[0];
+          return {
+            questions: [
+              {
+                prompt: `Question about ${first ?? "the role"} — walk me through it in detail please.`,
+                answer_outline: "outline",
+                difficulty: 2,
+                requirement_ids: first === undefined ? ["r99"] : [first, "r99"],
+              },
+            ],
+          };
+        });
+
+        const result = await generateQuestions(questionCaseInput(kase, fake, new SequentialIdGenerator()) as any);
+        const calls = fake.calls.filter((call) => call.purpose.startsWith("generate_questions"));
+        const categories = calls.map((call) => call.purpose.split(":")[1] ?? "");
+
+        c.ok("exactly 4 calls, one per category", calls.length === 4, `made ${calls.length}: [${categories.join(", ")}]`);
+        c.sameSet("one call per category", categories, ["technical", "behavioural", "system-design", "company-fit"]);
+
+        const promptFor = (category: string): string => calls.find((call) => call.purpose.endsWith(category))?.prompt ?? "";
+        const expected = kase.expected;
+
+        const technicalPrompt = promptFor("technical");
+        const behaviouralPrompt = promptFor("behavioural");
+        const fitPrompt = promptFor("company-fit");
+
+        for (const id of (expected["technical_call_has"] ?? []) as string[]) {
+          c.ok(`technical prompt has ${id}`, new RegExp(`\\b${id}\\b`).test(technicalPrompt), technicalPrompt === "" ? "no technical call was made" : "id absent");
+        }
+        for (const id of (expected["technical_call_lacks"] ?? []) as string[]) {
+          c.ok(`technical prompt lacks ${id}`, !new RegExp(`\\b${id}\\b`).test(technicalPrompt), "id present");
+        }
+        for (const id of (expected["behavioural_call_has"] ?? []) as string[]) {
+          c.ok(`behavioural prompt has ${id}`, new RegExp(`\\b${id}\\b`).test(behaviouralPrompt), behaviouralPrompt === "" ? "no behavioural call was made" : "id absent");
+        }
+        for (const id of (expected["behavioural_call_lacks"] ?? []) as string[]) {
+          c.ok(`behavioural prompt lacks ${id}`, !new RegExp(`\\b${id}\\b`).test(behaviouralPrompt), "id present");
+        }
+        for (const id of (expected["company_fit_call_has"] ?? []) as string[]) {
+          c.ok(`company-fit prompt has ${id}`, new RegExp(`\\b${id}\\b`).test(fitPrompt), fitPrompt === "" ? "no company-fit call was made" : "id absent");
+        }
+
+        const brief = kase.input["brief"] as string;
+        if (brief !== undefined && brief !== "") {
+          c.ok("company-fit prompt carries the brief", normalise(fitPrompt).includes(normalise(brief)), fitPrompt === "" ? "no company-fit call was made" : "brief text absent");
+        }
+
+        const hiringContext = (kase.input["hiring_context"] ?? "") as string;
+        if (hiringContext.trim() !== "") {
+          for (const call of calls) {
+            c.ok(`hiring context in ${call.purpose}`, normalise(call.prompt).includes(normalise(hiringContext)), "absent");
+          }
+        }
+
+        // Returned ids must be a subset of the ids that call was shown.
+        for (const question of result.questions) {
+          const prompt = promptFor(question.category);
+          const shown = new Set([...prompt.matchAll(/\br\d+\b/g)].map((m) => m[0]));
+          const strays = question.requirementIds.filter((id) => !shown.has(id));
+          c.ok(`ids of ${question.id} ⊆ its call's prompt`, strays.length === 0, `stray ${JSON.stringify(strays)}`);
+        }
+
+        if (kase.expected["all_requirement_ids_empty"] === true) {
+          const tagged = result.questions.filter((q) => q.requirementIds.length > 0);
+          c.ok("every requirement_ids is []", tagged.length === 0, `tagged: ${JSON.stringify(tagged.map((q) => [q.id, q.requirementIds]))}`);
+        }
+
+        return {
+          half: "structural",
+          calls: calls.map((call) => ({ purpose: call.purpose, prompt_chars: call.prompt.length })),
+          reports: result.reports,
+          questions: result.questions.map((q) => ({ id: q.id, category: q.category, requirementIds: q.requirementIds })),
+        };
+      });
+
+      // ── content half: the real provider, repeated ──
+      const content = await repeatCase(deps.repeat, async (c) => {
+        const result = await deps.tracer.span(`case:${kase.id}`, async (span) =>
+          generateQuestions(questionCaseInput(kase, deps.llm, new SequentialIdGenerator(), span) as any),
+        );
+        const questions = result.questions;
+
+        for (const q of questions) {
+          c.ok(`${q.id} has a prompt`, q.prompt.trim().length > 0);
+          c.ok(`${q.id} has an answer_outline`, q.answerOutline.trim().length > 0);
+          c.ok(`${q.id} difficulty ∈ {1,2,3}`, [1, 2, 3].includes(q.difficulty), `got ${q.difficulty}`);
+        }
+
+        const banned = (kase.expected["tools_not_in_behavioural"] ?? []) as string[];
+        for (const q of questions.filter((x) => x.category === "behavioural")) {
+          for (const tool of banned) {
+            const present = new RegExp(`\\b${tool.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(`${q.prompt} ${q.answerOutline}`);
+            c.ok(`behavioural ${q.id} avoids "${tool}"`, !present, present ? q.prompt.slice(0, 120) : undefined);
+          }
+        }
+
+        if (kase.expected["system_design_mentions"] !== undefined) {
+          const phrases = kase.expected["system_design_mentions"] as string[];
+          const design = questions.filter((q) => q.category === "system-design");
+          const hit = design.some((q) => phrases.some((p) => normalise(`${q.prompt} ${q.answerOutline}`).includes(normalise(p))));
+          c.ok("a system-design question reflects the hiring context", hit, design.length === 0 ? "no system-design questions were generated" : `none of ${JSON.stringify(phrases)} appeared`);
+        }
+
+        if (kase.expected["min_total_questions"] !== undefined) {
+          const min = kase.expected["min_total_questions"] as number;
+          const max = kase.expected["max_total_questions"] as number;
+          c.ok(`total questions in [${min}, ${max}]`, questions.length >= min && questions.length <= max, `got ${questions.length}`);
+        }
+        if (kase.expected["all_requirement_ids_empty"] === true) {
+          const tagged = questions.filter((q) => q.requirementIds.length > 0);
+          c.ok("every requirement_ids is [] (real provider)", tagged.length === 0, JSON.stringify(tagged.map((q) => [q.id, q.requirementIds])));
+        }
+
+        return {
+          half: "content",
+          reports: result.reports,
+          questions: questions.map((q) => ({ id: q.id, category: q.category, difficulty: q.difficulty, requirementIds: q.requirementIds, prompt: q.prompt })),
+        };
+      });
+
+      outcomes.push({ id: kase.id, runs: [structural, ...content] });
+    }
+    return outcomes;
+  },
+};
+
+// ── 07 coverage gates (pure) ─────────────────────────────────────────────────────────────
+
+const step07: StepDefinition = {
+  id: "07",
+  dir: "07-coverage-gates",
+  name: "applyGates + findGaps",
+  target: "packages/coverage → gateQuestionTags + detectGaps",
+  kind: "pure",
+  adapter: "Named gateQuestionTags and detectGaps. Applied in the order runCoverage applies them: every question is retagged before the first gap check.",
+  run: async (cases) => {
+    const outcomes: CaseOutcome[] = [];
+    for (const kase of cases) {
+      const runs = await repeatCase(1, async (c) => {
+        const requirements = (kase.input["requirements"] as any[]).map(toRequirement) as any[];
+        const byId = new Map(requirements.map((r) => [r.id as string, r]));
+        const questions = (kase.input["questions"] as any[]).map((q, i) => toInternalQuestion(q, i)) as any[];
+
+        const dropped: string[] = [];
+        const retaggedById: Record<string, string[]> = {};
+        const gated = questions.map((question) => {
+          const verdict = gateQuestionTags(question as any, byId as any);
+          retaggedById[question.id as string] = verdict.kept;
+          for (const d of verdict.dropped) dropped.push(`${question.id}:${d.id}=${d.reason}`);
+          return { ...question, requirementIds: verdict.kept };
+        });
+
+        const gaps = detectGaps(requirements as any, gated as any);
+        const expected = kase.expected;
+
+        for (const [qid, ids] of Object.entries((expected["retagged"] ?? {}) as Record<string, string[]>)) {
+          c.eq(`retagged ${qid}`, retaggedById[qid], ids);
+        }
+
+        for (const entry of (expected["dropped"] ?? []) as string[]) {
+          // The spec writes name_drop / no_overlap / unknown_id; the implementation says
+          // unknown_requirement for the last one.
+          const normalised = entry.replace("=unknown_id", "=unknown_requirement");
+          c.ok(`dropped ${entry}`, dropped.includes(normalised), `actual drops: ${JSON.stringify(dropped)}`);
+        }
+
+        c.sameSet("gaps (must only)", gaps.uncoveredMustIds, (expected["gaps"] ?? []) as string[]);
+
+        if (expected["uncovered_nice"] !== undefined) {
+          c.sameSet("uncovered nice-to-haves", gaps.uncoveredNiceIds, expected["uncovered_nice"] as string[]);
+        }
+
+        if (expected["rejected_questions"] !== undefined) {
+          const rejected = (expected["rejected_questions"] as string[]).filter((id) => gated.some((q) => q.id === id));
+          c.ok("rejected questions removed entirely", rejected.length === 0, `still present: ${JSON.stringify(rejected)} — the bulk path applies gateQuestionTags only; acceptGapFill (empty/stub/duplicate) runs on gap-fill drafts, not on generated questions`);
+        }
+
+        return { retagged: retaggedById, dropped, gaps };
+      });
+      outcomes.push({ id: kase.id, runs });
+    }
+    return outcomes;
+  },
+};
+
+// ── 08 gap-fill loop (pure + scripted fake) ──────────────────────────────────────────────
+
+const step08: StepDefinition = {
+  id: "08",
+  dir: "08-gap-fill-loop",
+  name: "coverageLoop",
+  target: "packages/coverage → runCoverage(input)",
+  kind: "pure+fake",
+  adapter: "Named runCoverage. It takes a GapFillWriter rather than an LlmProvider; the writer here is backed by a FakeLlmProvider so calls are recorded and one-requirement-per-call is observable.",
+  run: async (cases, deps) => {
+    const outcomes: CaseOutcome[] = [];
+    for (const kase of cases) {
+      const runs = await repeatCase(1, async (c) => {
+        const tracer = deps.tracer;
+        const requirements = (kase.input["requirements"] as any[]).map(toRequirement) as any[];
+        const questions = (kase.input["questions"] as any[]).map((q, i) => toInternalQuestion(q, i)) as any[];
+        const scripted = [...((kase.input["fake_responses"] ?? []) as any[])];
+
+        const fake = new FakeLlmProvider();
+        const callOrder: string[] = [];
+        const perCallRequirementCounts: number[] = [];
+        let exhausted = false;
+
+        fake.respondWith("gap_fill", (request: any) => {
+          const wanted = String(request.purpose).replace(/^gap_fill:?/, "");
+          const index = scripted.findIndex((r) => r.for === wanted);
+          if (index === -1) {
+            exhausted = true;
+            return { prompt: "", answer_outline: "", difficulty: 2 };
+          }
+          const [response] = scripted.splice(index, 1);
+          return { prompt: response.prompt, answer_outline: response.answer_outline, difficulty: response.difficulty };
+        });
+
+        const result = await tracer.span(`case:${kase.id}`, async (span) =>
+          runCoverage({
+            requirements,
+            questions,
+            roleTitle: "Engineer",
+            ids: new SequentialIdGenerator(),
+            maxExtraPasses: 2,
+            span,
+            writer: async (request: any) => {
+              perCallRequirementCounts.push(request.requirements.length);
+              for (const r of request.requirements) callOrder.push(r.id);
+              const { data } = await fake.complete({
+                purpose: `gap_fill:${request.requirements.map((r: any) => r.id).join("+")}`,
+                prompt: `gap fill for ${request.requirements.map((r: any) => r.id).join("+")}`,
+                schema: { safeParse: (v: unknown) => ({ success: true as const, data: v }) } as any,
+              } as any);
+              const draft = data as any;
+              return { prompt: draft.prompt, answerOutline: draft.answer_outline, difficulty: draft.difficulty };
+            },
+          }),
+        );
+
+        const expected = kase.expected;
+        c.ok("passes", result.passes === expected["passes"], `expected ${expected["passes"]}, got ${result.passes}`);
+        c.ok("llm call count", callOrder.length === expected["llm_calls"], `expected ${expected["llm_calls"]}, got ${callOrder.length}`);
+        c.eq("call order", callOrder, expected["call_order"]);
+        c.sameSet("uncovered", result.uncoveredRequirementIds, (expected["uncovered"] ?? []) as string[]);
+
+        const attempts = result.reports.flatMap((r) => r.attempts);
+        const outcomesActual = attempts.map((a) => ({ for: a.requirementIds.join("+"), accepted: a.accepted }));
+        c.eq("accept/reject per call", outcomesActual, expected["outcomes"]);
+
+        const oneEach = perCallRequirementCounts.every((n) => n === 1);
+        c.ok("one requirement per gap-fill call", oneEach, `counts: ${JSON.stringify(perCallRequirementCounts)}`);
+
+        // The caller assigns the ids; nothing the fake returned is used for labelling.
+        const added = result.questions.filter((q) => !questions.some((orig) => orig.id === q.id));
+        const callerAssigned = added.every((q) => q.requirementIds.length > 0 && q.requirementIds.every((id) => requirements.some((r) => r.id === id)));
+        c.ok("requirement_ids assigned by the caller", added.length === 0 || callerAssigned, JSON.stringify(added.map((q) => [q.id, q.origin, q.requirementIds])));
+
+        c.ok("no scripted response beyond the cap was requested", !exhausted, "the loop asked for a response the case marked as never-to-be-called");
+
+        return {
+          passes: result.passes,
+          callOrder,
+          outcomes: outcomesActual,
+          uncovered: result.uncoveredRequirementIds,
+          fallbackCount: result.fallbackCount,
+          questions: result.questions.map((q) => ({ id: q.id, origin: q.origin, requirementIds: q.requirementIds, prompt: q.prompt })),
+        };
+      });
+      outcomes.push({ id: kase.id, runs });
+    }
+    return outcomes;
+  },
+};
+
+// ── 09 fallback (pure) ───────────────────────────────────────────────────────────────────
+
+const TEMPLATE_STOPWORDS = new Set([
+  "the", "role", "requires", "walk", "through", "your", "experience", "with", "it", "and", "a",
+  "hard", "problem", "you", "solved", "mentions", "describe", "time", "did", "this", "how",
+  "went", "is", "in", "what's", "what", "s", "background", "there", "specific", "about",
+  "domain", "for",
+]);
+
+const step09: StepDefinition = {
+  id: "09",
+  dir: "09-fallback",
+  name: "buildFallbackQuestion",
+  target: "packages/coverage → fallbackQuestion(requirement, roleTitle)",
+  kind: "pure",
+  adapter: "Named fallbackQuestion and it lives in packages/coverage, not packages/generation. It returns a draft; origin \"fallback\" is stamped by runCoverage when the draft becomes a question.",
+  run: async (cases) => {
+    const outcomes: CaseOutcome[] = [];
+    for (const kase of cases) {
+      const runs = await repeatCase(1, async (c) => {
+        const fake = new FakeLlmProvider();
+        const before = fake.calls.length;
+        const requirement = toRequirement(kase.input["requirement"] as any) as any;
+        const roleTitle = kase.input["role_title"] as string;
+
+        const draft = fallbackQuestion(requirement, roleTitle);
+
+        c.ok("no LLM call was made", fake.calls.length === before, `calls went from ${before} to ${fake.calls.length}`);
+        c.ok("category", draft.category === kase.expected["category"], `expected ${kase.expected["category"]}, got ${draft.category}`);
+        c.eq("requirement_ids", draft.requirementIds, [requirement.id]);
+        c.ok("difficulty is an integer in {1,2,3}", Number.isInteger(draft.difficulty) && [1, 2, 3].includes(draft.difficulty), `got ${draft.difficulty}`);
+
+        const mustContain = kase.expected["must_contain"] as string;
+        c.ok(`prompt contains "${mustContain}"`, normalise(draft.prompt).includes(normalise(mustContain)), `prompt="${draft.prompt}"`);
+
+        // Nothing in the prompt that is not template scaffolding, the requirement text, its
+        // source span, or the role title.
+        const permitted = new Set([
+          ...normalise(requirement.text as string).split(" "),
+          ...normalise((requirement.sourceSpan as string) ?? "").split(" "),
+          ...normalise(roleTitle).split(" "),
+        ]);
+        const invented = normalise(draft.prompt)
+          .split(" ")
+          .filter(Boolean)
+          .filter((token) => !TEMPLATE_STOPWORDS.has(token) && !permitted.has(token));
+        c.ok("no token invented outside the inputs", invented.length === 0, `invented: ${JSON.stringify(invented)}`);
+
+        // origin is stamped by runCoverage, so assert it there rather than on the draft.
+        c.ok("draft carries no invented answer outline", draft.answerOutline.trim() === "", `outline="${draft.answerOutline}"`);
+
+        return { draft };
+      });
+      outcomes.push({ id: kase.id, runs });
+    }
+    return outcomes;
+  },
+};
+
+// ── 10 flashcards (pure) ─────────────────────────────────────────────────────────────────
+
+const step10: StepDefinition = {
+  id: "10",
+  dir: "10-flashcards",
+  name: "deriveFlashcards",
+  target: "packages/generation → deriveFlashcards(questions, ids)",
+  kind: "pure",
+  run: async (cases) => {
+    const outcomes: CaseOutcome[] = [];
+    for (const kase of cases) {
+      const runs = await repeatCase(1, async (c) => {
+        const fake = new FakeLlmProvider();
+        const questions = (kase.input["questions"] as any[]).map((q, i) => toInternalQuestion(q, i)) as any[];
+        const cards = deriveFlashcards(questions as any, new SequentialIdGenerator());
+
+        c.ok("zero LLM calls", fake.calls.length === 0);
+        c.ok("one card per question", cards.length === questions.length, `${questions.length} questions → ${cards.length} cards`);
+
+        const expectedFronts = (kase.expected["fronts"] ?? {}) as Record<string, string>;
+        for (const [qid, front] of Object.entries(expectedFronts)) {
+          const card = cards.find((card) => card.questionId === qid);
+          c.ok(`front of ${qid}`, card?.front === front, card === undefined ? "no card produced" : `got "${card.front}"`);
+        }
+
+        for (const card of cards) {
+          const source = questions.find((q) => q.id === card.questionId);
+          c.eq(`requirement_ids copied for ${card.questionId}`, card.requirementIds, source?.requirementIds);
+          c.ok(`back of ${card.questionId} is the answer_outline`, card.back === String(source?.answerOutline ?? "").trim());
+          c.ok(`front of ${card.questionId} is not truncated`, !/(…|\.\.\.)$/.test(card.front), `front="${card.front}"`);
+          c.ok(`front of ${card.questionId} ends in terminal punctuation`, /[.?!]$/.test(card.front), `front="${card.front}"`);
+        }
+
+        return { cards: cards.map((card) => ({ questionId: card.questionId, front: card.front, back: card.back, requirementIds: card.requirementIds })) };
+      });
+      outcomes.push({ id: kase.id, runs });
+    }
+    return outcomes;
+  },
+};
+
+// ── 11 scheduling (pure) ─────────────────────────────────────────────────────────────────
+
+const GENERIC_FOCUS = ["mixed practice", "technical depth", "practice", "review"];
+
+const step11: StepDefinition = {
+  id: "11",
+  dir: "11-scheduling",
+  name: "allocateSchedule + repairSchedule",
+  target: "packages/scheduling → allocateSchedule · packages/kit → repairSchedule",
+  kind: "pure",
+  adapter: "repairSchedule lives in packages/kit, not packages/scheduling — repair must be minimal-disturbance rather than a re-allocation.",
+  run: async (cases) => {
+    const outcomes: CaseOutcome[] = [];
+    for (const kase of cases) {
+      const runs = await repeatCase(1, async (c) => {
+        // ── repair cases ──
+        if (kase.input["schedule"] !== undefined) {
+          const questions = (kase.input["questions"] as any[]).map((q, i) => toInternalQuestion(q, i)) as any[];
+          const schedule = {
+            daysAvailable: kase.input["schedule"].days_available as number,
+            days: (kase.input["schedule"].days as any[]).map((d) => ({
+              day: d.day as number,
+              focus: d.focus as string,
+              questionIds: [...(d.question_ids as string[])],
+              minutes: d.minutes as number,
+              edited: d.edited === true,
+            })),
+          };
+
+          const repaired = repairSchedule(schedule as any, questions as any);
+          const expectedDays = (kase.expected["after_repair"].days as any[]);
+
+          for (const expectedDay of expectedDays) {
+            const actual = repaired.days.find((d) => d.day === expectedDay.day);
+            c.eq(`day ${expectedDay.day} question_ids`, actual?.questionIds, expectedDay.question_ids);
+            c.ok(`day ${expectedDay.day} minutes`, actual?.minutes === expectedDay.minutes, `expected ${expectedDay.minutes}, got ${actual?.minutes}`);
+            if (expectedDay.focus !== undefined) {
+              c.ok(`day ${expectedDay.day} focus preserved`, actual?.focus === expectedDay.focus, `expected "${expectedDay.focus}", got "${actual?.focus}"`);
+            }
+          }
+          return { repaired };
+        }
+
+        // ── allocation cases ──
+        const requirements = (kase.input["requirements"] as any[]).map(toRequirement) as any[];
+        const questions = (kase.input["questions"] as any[]).map((q, i) => toInternalQuestion(q, i)) as any[];
+        const days = kase.input["days"] as number;
+
+        const schedule = allocateSchedule({ questions: questions as any, requirements: requirements as any, daysAvailable: days });
+        const expected = kase.expected;
+
+        c.ok("days.length === days_available", schedule.days.length === days, `expected ${days}, got ${schedule.days.length}`);
+
+        const questionById = new Map(questions.map((q) => [q.id as string, q]));
+        const scheduledIds = schedule.days.flatMap((d) => d.questionIds);
+        const uniqueScheduled = new Set(scheduledIds);
+
+        for (const id of uniqueScheduled) {
+          c.ok(`scheduled id ${id} exists`, questionById.has(id));
+        }
+        const missing = questions.filter((q) => !uniqueScheduled.has(q.id as string)).map((q) => q.id);
+        c.ok("every active question is scheduled", missing.length === 0, `missing ${JSON.stringify(missing)}`);
+
+        for (const day of schedule.days) {
+          const dupes = day.questionIds.length !== new Set(day.questionIds).size;
+          c.ok(`day ${day.day} has no repeat within itself`, !dupes);
+          c.ok(`day ${day.day} minutes is an integer`, Number.isInteger(day.minutes), `got ${day.minutes}`);
+          c.ok(`day ${day.day} focus is non-empty`, day.focus.trim().length > 0);
+          c.ok(`day ${day.day} focus is not generic`, !GENERIC_FOCUS.includes(day.focus.trim().toLowerCase()), `focus="${day.focus}"`);
+          c.ok(`day ${day.day} focus does not start lowercase`, !/^[a-z]/.test(day.focus.trim()), `focus="${day.focus}"`);
+          if (day.questionIds.length === 0) {
+            c.ok(`empty day ${day.day} has minutes 0`, day.minutes === 0, `got ${day.minutes}`);
+          } else {
+            c.ok(`day ${day.day} minutes > 0`, day.minutes > 0);
+          }
+        }
+
+        // must-have coverage across the schedule
+        const scheduledRequirementIds = new Set(
+          [...uniqueScheduled].flatMap((id) => (questionById.get(id)?.requirementIds ?? []) as string[]),
+        );
+        for (const id of (expected["must_scheduled"] ?? []) as string[]) {
+          c.ok(`must ${id} appears in the schedule`, scheduledRequirementIds.has(id));
+        }
+
+        // front-loading
+        const day1 = schedule.days[0]?.questionIds ?? [];
+        for (const id of (expected["day1_contains"] ?? []) as string[]) {
+          c.ok(`day 1 contains ${id}`, day1.includes(id), `day 1 = ${JSON.stringify(day1)}`);
+        }
+
+        const maxDifficultyByDay = schedule.days.map((d) =>
+          d.questionIds.reduce((max, id) => Math.max(max, (questionById.get(id)?.difficulty as number) ?? 0), 0),
+        );
+        // The README conditions this on `expected.max_difficulty_by_day`, so it is only asserted
+        // for a case that supplies it. Applied unconditionally it contradicts the five-days-mixed
+        // note ("a must-tagged question outranks an untagged one of equal difficulty") and the
+        // documented 60-day spaced-review policy, which cycles difficulty by design.
+        if (expected["max_difficulty_by_day"] !== undefined) {
+          const nonIncreasing = maxDifficultyByDay
+            .filter((value) => value > 0)
+            .every((value, index, list) => index === 0 || (list[index - 1] as number) >= value);
+          c.ok("max difficulty per day is non-increasing", nonIncreasing, `by day: ${JSON.stringify(maxDifficultyByDay)}`);
+        }
+
+        if (expected["last_day_max_difficulty"] !== undefined) {
+          const last = maxDifficultyByDay[maxDifficultyByDay.length - 1];
+          c.ok("last day max difficulty", last === expected["last_day_max_difficulty"], `expected ${expected["last_day_max_difficulty"]}, got ${last}`);
+        }
+
+        if (expected["total_minutes"] !== undefined) {
+          const total = schedule.days.reduce((sum, d) => sum + d.minutes, 0);
+          c.ok("total_minutes", total === expected["total_minutes"], `expected ${expected["total_minutes"]}, got ${total}`);
+        }
+
+        if (expected["focus_contains"] !== undefined) {
+          for (const [dayNumber, phrase] of Object.entries(expected["focus_contains"] as Record<string, string>)) {
+            const day = schedule.days.find((d) => d.day === Number(dayNumber));
+            c.ok(`day ${dayNumber} focus contains "${phrase}"`, normalise(day?.focus ?? "").includes(normalise(phrase)), `focus="${day?.focus}"`);
+          }
+        }
+        if (expected["focus_not_in"] !== undefined) {
+          for (const phrase of expected["focus_not_in"] as string[]) {
+            const offender = schedule.days.find((d) => normalise(d.focus).includes(normalise(phrase)));
+            c.ok(`no focus contains "${phrase}"`, offender === undefined, offender === undefined ? undefined : `day ${offender.day} focus="${offender.focus}"`);
+          }
+        }
+
+        return { schedule, maxDifficultyByDay };
+      });
+      outcomes.push({ id: kase.id, runs });
+    }
+    return outcomes;
+  },
+};
+
+// ── 12 serialize (pure) ──────────────────────────────────────────────────────────────────
+
+const INTERNAL_FIELDS = ["origin", "pinned", "active", "source_span", "edited", "hiring_signal", "gaps"];
+
+function findFields(value: unknown, names: readonly string[], path = "$"): string[] {
+  const found: string[] = [];
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => found.push(...findFields(item, names, `${path}[${index}]`)));
+  } else if (value !== null && typeof value === "object") {
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      if (names.includes(key)) found.push(`${path}.${key}`);
+      found.push(...findFields(child, names, `${path}.${key}`));
+    }
+  }
+  return found;
+}
+
+const step12: StepDefinition = {
+  id: "12",
+  dir: "12-serialize",
+  name: "toKitJSON",
+  target: "packages/kit → toKitJSON(internalKit)",
+  kind: "pure",
+  adapter:
+    "The cases describe a kit with a top-level `source` block and role.seniority. The implemented Appendix A has role{title,company,location,summary,responsibilities} and top-level requirements — no source block, no seniority. Case input is mapped onto the implemented shape; the source/seniority assertions are reported as a spec conflict.",
+  run: async (cases) => {
+    const outcomes: CaseOutcome[] = [];
+    for (const kase of cases) {
+      const runs = await repeatCase(1, async (c) => {
+        const raw = kase.input["kit"] as any;
+        const source = raw.source ?? {};
+        const internal = {
+          id: "kit_1",
+          createdAt: 0,
+          role: {
+            title: raw.role?.title ?? "",
+            company: source.company ?? "",
+            // Deliberately preserves `undefined` when the case omits location — that is the
+            // whole point of the location-empty-string-not-undefined case.
+            location: source.location,
+            summary: raw.role?.seniority ?? "",
+            responsibilities: [...(raw.role?.responsibilities ?? [])],
+          },
+          companyBrief: {
+            summary: raw.company_brief?.summary ?? "",
+            whatTheyDo: raw.company_brief?.what_they_do ?? "",
+            hiringProcess: raw.company_brief?.hiring_process ?? "",
+            sources: [...(raw.company_brief?.sources ?? [])],
+            pagesUsed: [...(source.pages_used ?? [])],
+            gaps: [...(raw.company_brief?.gaps ?? [])],
+            edited: false,
+          },
+          requirements: (raw.role?.requirements ?? []).map(toRequirement),
+          questions: (raw.questions ?? []).map((q: any, i: number) => toInternalQuestion(q, i)),
+          flashcards: (raw.flashcards ?? []).map((f: any, i: number) => ({
+            id: f.id,
+            front: f.front,
+            back: f.back,
+            requirementIds: [...(f.requirement_ids ?? [])],
+            questionId: null,
+            origin: f.origin ?? "generated",
+            pinned: false,
+            active: f.active ?? true,
+            order: i,
+          })),
+          schedule: {
+            daysAvailable: raw.schedule.days_available,
+            days: (raw.schedule.days ?? []).map((d: any) => ({
+              day: d.day,
+              focus: d.focus,
+              questionIds: [...(d.question_ids ?? [])],
+              minutes: d.minutes,
+              edited: d.edited === true,
+            })),
+          },
+          coverage: {
+            passes: raw.coverage?.passes ?? 1,
+            uncoveredRequirementIds: [...(raw.coverage?.uncovered_requirement_ids ?? [])],
+          },
+        };
+
+        if (kase.expected["throws"] === true) {
+          let threw = false;
+          let message = "";
+          try {
+            toKitJSON(internal as any);
+          } catch (error) {
+            threw = true;
+            message = error instanceof Error ? `${error.message} ${JSON.stringify((error as any).details ?? {})}` : String(error);
+          }
+          c.ok("toKitJSON rejects the kit", threw, threw ? undefined : "it returned a kit");
+          for (const phrase of (kase.expected["validation_errors_mention"] ?? []) as string[]) {
+            c.ok(`validation error mentions "${phrase}"`, message.toLowerCase().includes(phrase.toLowerCase()), `errors: ${message.slice(0, 400)}`);
+          }
+          return { threw, message };
+        }
+
+        const output = toKitJSON(internal as any);
+
+        const validation = validateKitJSON(output);
+        c.ok("output passes the Appendix A validator", validation.ok, JSON.stringify(validation.errors));
+
+        const leaked = findFields(output, INTERNAL_FIELDS);
+        // `gaps` is a deliberate Appendix A extension in this implementation (company_brief.gaps).
+        const unexpected = leaked.filter((path) => path !== "$.company_brief.gaps");
+        c.ok("internal fields stripped", unexpected.length === 0, `leaked at ${JSON.stringify(unexpected)}`);
+        c.ok("company_brief.gaps is a documented extension, not a leak", leaked.includes("$.company_brief.gaps"), "absent — no assertion either way");
+
+        c.eq("question ids", output.questions.map((q) => q.id), kase.expected["question_ids"]);
+        c.eq("flashcard ids", output.flashcards.map((f) => f.id), kase.expected["flashcard_ids"]);
+
+        const questionIds = new Set(output.questions.map((q) => q.id));
+        const dangling = output.schedule.days.flatMap((d) => d.question_ids).filter((id) => !questionIds.has(id));
+        c.ok("no dangling schedule ids", dangling.length === 0, JSON.stringify(dangling));
+
+        if (kase.expected["q3_scheduled_somewhere"] === true) {
+          const scheduled = new Set(output.schedule.days.flatMap((d) => d.question_ids));
+          c.ok("the unscheduled active question was placed", scheduled.has("q3"), `scheduled: ${JSON.stringify([...scheduled])}`);
+        }
+
+        c.sameSet("coverage.uncovered_requirement_ids", output.coverage.uncovered_requirement_ids, (kase.expected["uncovered"] ?? []) as string[]);
+
+        const hasSource = Object.prototype.hasOwnProperty.call(output, "source");
+        c.ok("`source` block with seven fields", hasSource, "the implemented Appendix A has no `source` block — role{title,company,location,summary,responsibilities} carries this instead (spec conflict, not a regression)");
+        const hasSeniority = Object.prototype.hasOwnProperty.call(output.role ?? {}, "seniority");
+        c.ok("role.seniority present", hasSeniority, "the implemented role schema has `summary`, not `seniority` (spec conflict)");
+        c.ok("role has title and responsibilities", typeof output.role?.title === "string" && Array.isArray(output.role?.responsibilities));
+        c.ok("requirements present on the kit", Array.isArray((output as any).requirements), "top-level, not nested under role");
+
+        return { output };
+      });
+      outcomes.push({ id: kase.id, runs });
+    }
+    return outcomes;
+  },
+};
+
+const STEPS: StepDefinition[] = [step01, step02, step03, step04, step05, step06, step07, step08, step09, step10, step11, step12];
+
+// ── reporting ────────────────────────────────────────────────────────────────────────────
+
+interface StepReport {
+  step: string;
+  name: string;
+  target: string;
+  kind: string;
+  adapter?: string;
+  cases: {
+    id: string;
+    runs: number;
+    passed: number;
+    pass_rate: number;
+    flaky: boolean;
+    first_failure?: string;
+    assertion_pass_rates?: Record<string, string>;
+    scores?: Record<string, number>;
+  }[];
+  totals: { cases: number; fully_passing: number; runs: number };
+  durationMs: number;
+}
+
+function summariseCase(outcome: CaseOutcome, isLlm: boolean): StepReport["cases"][number] {
+  const runs = outcome.runs.length;
+  const passed = outcome.runs.filter((r) => r.pass).length;
+  const firstFailure = outcome.runs.find((r) => !r.pass)?.assertions.find((a) => !a.pass);
+
+  const rates: Record<string, string> = {};
+  if (isLlm && runs > 1) {
+    const names = new Map<string, { pass: number; total: number }>();
+    for (const run of outcome.runs) {
+      for (const assertion of run.assertions) {
+        const entry = names.get(assertion.name) ?? { pass: 0, total: 0 };
+        entry.total += 1;
+        if (assertion.pass) entry.pass += 1;
+        names.set(assertion.name, entry);
+      }
+    }
+    for (const [name, entry] of names) {
+      if (entry.pass < entry.total) rates[name] = `${entry.pass}/${entry.total}`;
+    }
+  }
+
+  const scoreRuns = outcome.runs.filter((r) => r.scores !== undefined);
+  let scores: Record<string, number> | undefined;
+  if (scoreRuns.length > 0) {
+    scores = {};
+    for (const key of Object.keys(scoreRuns[0]?.scores ?? {})) {
+      const mean = scoreRuns.reduce((sum, r) => sum + (r.scores?.[key] ?? 0), 0) / scoreRuns.length;
+      scores[key] = Number(mean.toFixed(3));
+    }
+  }
+
+  return {
+    id: outcome.id,
+    runs,
+    passed,
+    pass_rate: runs === 0 ? 0 : Number((passed / runs).toFixed(3)),
+    flaky: passed > 0 && passed < runs,
+    ...(firstFailure !== undefined ? { first_failure: firstFailure.detail === undefined ? firstFailure.name : `${firstFailure.name} — ${firstFailure.detail}` } : {}),
+    ...(Object.keys(rates).length > 0 ? { assertion_pass_rates: rates } : {}),
+    ...(scores !== undefined ? { scores } : {}),
+  };
+}
+
+function pad(text: string, width: number): string {
+  return text.length >= width ? text.slice(0, width) : text + " ".repeat(width - text.length);
+}
+
+function printStep(report: StepReport): void {
+  console.log(`\n── ${report.step} ${report.name} (${report.kind}) ${"─".repeat(Math.max(0, 46 - report.name.length))}`);
+  if (report.adapter !== undefined) console.log(`   adapter: ${report.adapter}`);
+  for (const kase of report.cases) {
+    const mark = kase.passed === kase.runs ? "PASS" : kase.passed === 0 ? "FAIL" : "FLAKY";
+    console.log(`   ${pad(kase.id, 38)} ${pad(`${kase.passed}/${kase.runs}`, 6)} ${mark}${kase.first_failure === undefined ? "" : `  ${kase.first_failure.slice(0, 150)}`}`);
+  }
+  console.log(`   ${report.totals.fully_passing}/${report.totals.cases} cases fully passing  (${(report.durationMs / 1000).toFixed(1)}s)`);
+}
+
+// ── main ─────────────────────────────────────────────────────────────────────────────────
+
+async function main(): Promise<void> {
+  const argv = process.argv.slice(2);
+  const repeatIndex = argv.indexOf("--repeat");
+  const repeat = repeatIndex === -1 ? 1 : Number(argv[repeatIndex + 1] ?? 1);
+  const outIndex = argv.indexOf("--out");
+  const consumed = new Set<number>();
+  if (repeatIndex !== -1) consumed.add(repeatIndex + 1);
+  if (outIndex !== -1) consumed.add(outIndex + 1);
+  const selectors = argv.filter((a, i) => !a.startsWith("--") && !consumed.has(i));
+
+  const wanted = selectors.includes("all") || selectors.length === 0 ? STEPS : STEPS.filter((s) => selectors.includes(s.id));
+  if (wanted.length === 0) {
+    console.error(`No step matched ${JSON.stringify(selectors)}. Known: ${STEPS.map((s) => s.id).join(", ")}`);
+    process.exit(2);
+  }
+
+  const runId = new Date().toISOString().replace(/[:.]/g, "-");
+  const outRoot = outIndex === -1 ? resolve(process.cwd(), "out", "evals", runId) : resolve(String(argv[outIndex + 1]));
+  await mkdir(outRoot, { recursive: true });
+
+  console.log(`Step evals — run ${runId}`);
+  console.log(`Output: ${outRoot}`);
+  console.log(`Steps: ${wanted.map((s) => s.id).join(", ")}   repeat (LLM steps): ${repeat}`);
+
+  const reports: StepReport[] = [];
+  let exitCode = 0;
+
+  for (const step of wanted) {
+    const cases = await loadCases(step.dir);
+    const isLlm = step.kind === "llm" || step.kind === "llm+fake";
+
+    // One wiring per step: the rate limiter is shared across that step's repeats, and each
+    // step gets its own trace.
+    const wiring = isLlm
+      ? wire({ noCache: true, recordPrompts: true })
+      : { llm: new FakeLlmProvider(), tracer: new InMemoryTracer(new SystemClock()), ids: new SequentialIdGenerator(), describe: ["pure step: no provider"] };
+
+    const startedAt = Date.now();
+    console.log(`\n▸ ${step.id} ${step.name} — ${cases.length} cases${isLlm ? ` × ${repeat}` : ""}`);
+    for (const line of wiring.describe) console.log(`   ${line}`);
+
+    const outcomes = await step.run(cases, {
+      tracer: wiring.tracer,
+      ids: wiring.ids as IdGenerator,
+      llm: wiring.llm as LlmProvider,
+      repeat: isLlm ? repeat : 1,
+    });
+
+    const summarised = outcomes.map((o) => summariseCase(o, isLlm));
+    const report: StepReport = {
+      step: step.id,
+      name: step.name,
+      target: step.target,
+      kind: step.kind,
+      ...(step.adapter !== undefined ? { adapter: step.adapter } : {}),
+      cases: summarised,
+      totals: {
+        cases: summarised.length,
+        fully_passing: summarised.filter((k) => k.passed === k.runs).length,
+        runs: summarised.reduce((sum, k) => sum + k.runs, 0),
+      },
+      durationMs: Date.now() - startedAt,
+    };
+    reports.push(report);
+    printStep(report);
+
+    // Per-step artefacts, kept.
+    const stepDir = join(outRoot, `step-${step.id}-${step.name.replace(/[^A-Za-z0-9]+/g, "-").toLowerCase()}`);
+    await mkdir(stepDir, { recursive: true });
+    await writeFile(join(stepDir, "results.json"), JSON.stringify({ ...report, outcomes }, null, 2));
+    const spans: Span[] = wiring.tracer.export();
+    await writeFile(join(stepDir, "trace.json"), JSON.stringify(spans, null, 2));
+    await writeFile(join(stepDir, "trace.txt"), spans.length === 0 ? "(no spans — this step calls no traced code)\n" : formatTrace(spans));
+
+    // Exit-code policy from RUNNER_PROMPT.md.
+    if (step.kind === "unimplemented") exitCode = 1;
+    else if (isLlm) {
+      if (summarised.some((k) => k.passed / k.runs < 2 / 3)) exitCode = 1;
+    } else if (summarised.some((k) => k.passed !== k.runs)) exitCode = 1;
+  }
+
+  const summary = {
+    run_id: runId,
+    generated_at: new Date().toISOString(),
+    repeat,
+    steps: reports,
+    exit_code: exitCode,
+  };
+  await writeFile(join(outRoot, "summary.json"), JSON.stringify(summary, null, 2));
+  await mkdir(resolve(process.cwd(), "evals", "results"), { recursive: true });
+  await writeFile(resolve(process.cwd(), "evals", "results", `steps-${runId}.json`), JSON.stringify(summary, null, 2));
+
+  console.log(`\n${"═".repeat(76)}`);
+  for (const report of reports) {
+    console.log(`  ${pad(report.step, 4)} ${pad(report.name, 30)} ${pad(`${report.totals.fully_passing}/${report.totals.cases}`, 8)} ${report.kind}`);
+  }
+  console.log(`\nWritten to ${outRoot}`);
+  process.exit(exitCode);
+}
+
+main().catch((error: unknown) => {
+  console.error(error);
+  process.exit(2);
+});

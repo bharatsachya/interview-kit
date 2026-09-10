@@ -1,0 +1,27 @@
+[
+  {
+    "id": "first-sentence-is-question",
+    "input": { "questions": [ { "id": "q1", "prompt": "Describe a Postgres query you had to tune. What did the plan tell you, and what did you change?", "answer_outline": "EXPLAIN output, index choice, rewrite.", "requirement_ids": ["r2"] } ] },
+    "expected": { "fronts": { "q1": "Describe a Postgres query you had to tune. What did the plan tell you, and what did you change?" }, "note": "First sentence ends with '.', not '?'. Rule: only use the first sentence alone when it ends in '?'. Here the question is the second sentence, so keep the whole prompt." }
+  },
+  {
+    "id": "first-sentence-ends-in-question-mark",
+    "input": { "questions": [ { "id": "q2", "prompt": "How did you handle state synchronization failures between parent and child execution contexts? Walk through a specific incident.", "answer_outline": "...", "requirement_ids": ["r1", "r2"] } ] },
+    "expected": { "fronts": { "q2": "How did you handle state synchronization failures between parent and child execution contexts?" } }
+  },
+  {
+    "id": "two-part-setup-then-question",
+    "input": { "questions": [ { "id": "q3", "prompt": "Tell me about a time you designed an orchestration UX where the main agent delegated to a sub-agent with its own state. How did you handle synchronization failures when the user intervened mid-stream?", "answer_outline": "...", "requirement_ids": ["r1"] } ] },
+    "expected": { "fronts": { "q3": "Tell me about a time you designed an orchestration UX where the main agent delegated to a sub-agent with its own state. How did you handle synchronization failures when the user intervened mid-stream?" }, "note": "The old bug: taking only 'How did you handle synchronization failures...' loses what system is being asked about. Keep both sentences." }
+  },
+  {
+    "id": "long-design-prompt-not-truncated",
+    "input": { "questions": [ { "id": "q4", "prompt": "Design the state synchronization and rendering architecture for a web-based sub-agent orchestration UI. The system must render streaming partial outputs from 20 concurrent agents while keeping UI thread latency under 16ms. Detail how you prevent re-render thrashing and handle out-of-order chunks.", "answer_outline": "...", "requirement_ids": [] } ] },
+    "expected": { "fronts": { "q4": "Design the state synchronization and rendering architecture for a web-based sub-agent orchestration UI. The system must render streaming partial outputs from 20 concurrent agents while keeping UI thread latency under 16ms. Detail how you prevent re-render thrashing and handle out-of-order chunks." }, "note": "Long, no '?', imperative. Whole prompt. Never cut with '…'." }
+  },
+  {
+    "id": "no-terminal-punctuation-gets-one",
+    "input": { "questions": [ { "id": "q5", "prompt": "Walk me through a service you built that integrated three OAuth providers", "answer_outline": "...", "requirement_ids": ["r6"] } ] },
+    "expected": { "fronts": { "q5": "Walk me through a service you built that integrated three OAuth providers." } }
+  }
+]

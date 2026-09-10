@@ -1,0 +1,498 @@
+{
+  "run_id": "2026-09-09T15-49-17-444Z",
+  "generated_at": "2026-09-09T15:49:17.496Z",
+  "repeat": 1,
+  "steps": [
+    {
+      "step": "02",
+      "name": "scoreLinks",
+      "target": "packages/retrieval → rankLinks + crawlSite selection rules",
+      "kind": "pure",
+      "adapter": "The spec's scoreLinks() does not exist. Scoring is rankLinks(); the follow decision lives inside crawlSite(). Reproduced here without fetching.",
+      "cases": [
+        {
+          "id": "internal-careers-beats-blog",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "handbook-hiring-deep-path",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "external-ats-followed",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "dedupe-variants",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "relative-links-under-subpath",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "not followed: http://localhost:8099/other/ — follow=true"
+        }
+      ],
+      "totals": {
+        "cases": 5,
+        "fully_passing": 4,
+        "runs": 5
+      },
+      "durationMs": 5
+    },
+    {
+      "step": "03",
+      "name": "classifyContent",
+      "target": "packages/retrieval → classifyContent(cleanedText)",
+      "kind": "unimplemented",
+      "adapter": "No classifyContent exists, and nothing in the codebase scores 'about-ness' at all. The closest counterpart is findHiringPage()'s signal count, private to packages/pipeline. Reported as a diagnostic, not as a pass.",
+      "cases": [
+        {
+          "id": "real-hiring-process-page",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "classifyContent exists — packages/retrieval exports no classifyContent; there is no about-page classifier anywhere"
+        },
+        {
+          "id": "careers-page-no-roles",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "classifyContent exists — packages/retrieval exports no classifyContent; there is no about-page classifier anywhere"
+        },
+        {
+          "id": "job-listings-only",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "classifyContent exists — packages/retrieval exports no classifyContent; there is no about-page classifier anywhere"
+        },
+        {
+          "id": "about-page",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "classifyContent exists — packages/retrieval exports no classifyContent; there is no about-page classifier anywhere"
+        },
+        {
+          "id": "engineering-blog-post-about-interviewing",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "classifyContent exists — packages/retrieval exports no classifyContent; there is no about-page classifier anywhere"
+        },
+        {
+          "id": "product-marketing-page",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "classifyContent exists — packages/retrieval exports no classifyContent; there is no about-page classifier anywhere"
+        },
+        {
+          "id": "handbook-values-page",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "classifyContent exists — packages/retrieval exports no classifyContent; there is no about-page classifier anywhere"
+        },
+        {
+          "id": "cookie-banner-and-nav-noise",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "classifyContent exists — packages/retrieval exports no classifyContent; there is no about-page classifier anywhere"
+        }
+      ],
+      "totals": {
+        "cases": 8,
+        "fully_passing": 0,
+        "runs": 8
+      },
+      "durationMs": 0
+    },
+    {
+      "step": "04",
+      "name": "filterRelevance",
+      "target": "packages/research → filterRelevant(results, { company, companyUrl })",
+      "kind": "pure",
+      "adapter": "Named filterRelevant, not filterRelevance. It reports dropped results by url; the cases key them by id, so urls are mapped back to ids here.",
+      "cases": [
+        {
+          "id": "near-miss-company-name",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "kept ids — expected [\"b\",\"c\"], got [\"a\",\"b\"]"
+        },
+        {
+          "id": "generic-advice-dropped",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "ats-board-of-other-company",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "kept ids — expected [\"b\",\"c\"], got [\"a\",\"b\",\"c\"]"
+        },
+        {
+          "id": "nothing-relevant",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "filter reason a=wrong_company — got \"generic_advice\""
+        }
+      ],
+      "totals": {
+        "cases": 4,
+        "fully_passing": 1,
+        "runs": 4
+      },
+      "durationMs": 2
+    },
+    {
+      "step": "07",
+      "name": "applyGates + findGaps",
+      "target": "packages/coverage → gateQuestionTags + detectGaps",
+      "kind": "pure",
+      "adapter": "Named gateQuestionTags and detectGaps. Applied in the order runCoverage applies them: every question is retagged before the first gap check.",
+      "cases": [
+        {
+          "id": "over-tagged-five-ids",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "retagged q2 — expected [\"r3\",\"r5\",\"r13\"], got [\"r3\",\"r13\"]"
+        },
+        {
+          "id": "homonym-drive",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "dropped q11:r8=no_overlap — actual drops: [\"q11:r8=name_drop\"]"
+        },
+        {
+          "id": "hallucinated-id",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "near-duplicate-rejected",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "dropped q2=duplicate_of:q1 — actual drops: []"
+        },
+        {
+          "id": "valid-question-untouched",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "nice-not-a-gap",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "retagged q1 — expected [\"r1\"], got []"
+        },
+        {
+          "id": "empty-prompt-rejected",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "dropped q1=empty — actual drops: [\"q1:r1=no_overlap\",\"q2:r1=name_drop\"]"
+        }
+      ],
+      "totals": {
+        "cases": 7,
+        "fully_passing": 2,
+        "runs": 7
+      },
+      "durationMs": 2
+    },
+    {
+      "step": "08",
+      "name": "coverageLoop",
+      "target": "packages/coverage → runCoverage(input)",
+      "kind": "pure+fake",
+      "adapter": "Named runCoverage. It takes a GapFillWriter rather than an LlmProvider; the writer here is backed by a FakeLlmProvider so calls are recorded and one-requirement-per-call is observable.",
+      "cases": [
+        {
+          "id": "one-gap-closed-first-try",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "accept/reject per call — expected [{\"for\":\"r2\",\"accepted\":true}], got [{\"for\":\"r2\",\"accepted\":false}]"
+        },
+        {
+          "id": "zero-progress-stops-early",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "passes — expected 3, got 2"
+        },
+        {
+          "id": "two-gaps-one-closes-one-does-not",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "passes — expected 3, got 2"
+        },
+        {
+          "id": "no-gaps-no-calls",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        }
+      ],
+      "totals": {
+        "cases": 4,
+        "fully_passing": 1,
+        "runs": 4
+      },
+      "durationMs": 3
+    },
+    {
+      "step": "09",
+      "name": "buildFallbackQuestion",
+      "target": "packages/coverage → fallbackQuestion(requirement, roleTitle)",
+      "kind": "pure",
+      "adapter": "Named fallbackQuestion and it lives in packages/coverage, not packages/generation. It returns a draft; origin \"fallback\" is stamped by runCoverage when the draft becomes a question.",
+      "cases": [
+        {
+          "id": "technical",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "behavioural",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "domain",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "too-thin-uses-role-title",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "prompt contains \"Go\" — prompt=\"The role requires Staff Engineer, Payments. Walk through your experience with it and a hard problem you solved.\""
+        }
+      ],
+      "totals": {
+        "cases": 4,
+        "fully_passing": 3,
+        "runs": 4
+      },
+      "durationMs": 1
+    },
+    {
+      "step": "10",
+      "name": "deriveFlashcards",
+      "target": "packages/generation → deriveFlashcards(questions, ids)",
+      "kind": "pure",
+      "cases": [
+        {
+          "id": "first-sentence-is-question",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "first-sentence-ends-in-question-mark",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "two-part-setup-then-question",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "long-design-prompt-not-truncated",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "no-terminal-punctuation-gets-one",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "front of q5 — got \"Walk me through a service you built that integrated three OAuth providers\""
+        }
+      ],
+      "totals": {
+        "cases": 5,
+        "fully_passing": 4,
+        "runs": 5
+      },
+      "durationMs": 0
+    },
+    {
+      "step": "11",
+      "name": "allocateSchedule + repairSchedule",
+      "target": "packages/scheduling → allocateSchedule · packages/kit → repairSchedule",
+      "kind": "pure",
+      "adapter": "repairSchedule lives in packages/kit, not packages/scheduling — repair must be minimal-disturbance rather than a re-allocation.",
+      "cases": [
+        {
+          "id": "five-days-mixed",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "day 3 focus is non-empty"
+        },
+        {
+          "id": "one-day",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "total_minutes — expected 55, got 50"
+        },
+        {
+          "id": "sixty-days",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "day 2 focus is non-empty"
+        },
+        {
+          "id": "more-days-than-questions",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "day 2 focus is non-empty"
+        },
+        {
+          "id": "focus-labels-derived",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "repair-drops-archived",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "repair-places-orphan-and-keeps-edited-day",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        }
+      ],
+      "totals": {
+        "cases": 7,
+        "fully_passing": 3,
+        "runs": 7
+      },
+      "durationMs": 16
+    },
+    {
+      "step": "12",
+      "name": "toKitJSON",
+      "target": "packages/kit → toKitJSON(internalKit)",
+      "kind": "pure",
+      "adapter": "The cases describe a kit with a top-level `source` block and role.seniority. The implemented Appendix A has role{title,company,location,summary,responsibilities} and top-level requirements — no source block, no seniority. Case input is mapped onto the implemented shape; the source/seniority assertions are reported as a spec conflict.",
+      "cases": [
+        {
+          "id": "archived-stripped-and-schedule-repaired",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "`source` block with seven fields — the implemented Appendix A has no `source` block — role{title,company,location,summary,responsibilities} carries this instead (spec conflict, not a regression)"
+        },
+        {
+          "id": "validation-rejects-bad-difficulty-and-float-minutes",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "location-empty-string-not-undefined",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        }
+      ],
+      "totals": {
+        "cases": 3,
+        "fully_passing": 2,
+        "runs": 3
+      },
+      "durationMs": 4
+    }
+  ],
+  "exit_code": 1
+}

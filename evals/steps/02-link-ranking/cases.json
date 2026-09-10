@@ -1,0 +1,101 @@
+[
+  {
+    "id": "internal-careers-beats-blog",
+    "input": {
+      "base_url": "https://acme.example",
+      "links": [
+        { "href": "/blog/post-42", "anchor": "Why we rewrote our queue", "position": "body" },
+        { "href": "/careers", "anchor": "Careers", "position": "nav" },
+        { "href": "/about", "anchor": "About us", "position": "nav" },
+        { "href": "/pricing", "anchor": "Pricing", "position": "nav" }
+      ]
+    },
+    "expected": {
+      "top_hiring": "https://acme.example/careers",
+      "top_about": "https://acme.example/about",
+      "followed": ["https://acme.example/careers", "https://acme.example/about"],
+      "not_followed": [{ "url": "https://acme.example/pricing", "reason": "low_score" }]
+    }
+  },
+  {
+    "id": "handbook-hiring-deep-path",
+    "input": {
+      "base_url": "https://about.example",
+      "links": [
+        { "href": "/handbook/", "anchor": "Handbook", "position": "nav" },
+        { "href": "/handbook/hiring/", "anchor": "How we hire", "position": "body" },
+        { "href": "/handbook/values/", "anchor": "Values", "position": "body" },
+        { "href": "/jobs/", "anchor": "Open roles", "position": "footer" }
+      ]
+    },
+    "expected": {
+      "top_hiring": "https://about.example/handbook/hiring/",
+      "followed": ["https://about.example/handbook/hiring/", "https://about.example/jobs/"],
+      "not_followed": [],
+      "note": "'How we hire' must outrank 'Open roles' — a process page is worth more to the kit than a listings page."
+    }
+  },
+  {
+    "id": "external-ats-followed",
+    "input": {
+      "base_url": "https://galaxy.example",
+      "links": [
+        { "href": "https://job-boards.greenhouse.io/galaxyexample", "anchor": "Careers", "position": "nav" },
+        { "href": "https://linkedin.com/company/galaxy", "anchor": "LinkedIn", "position": "footer" },
+        { "href": "https://twitter.com/galaxy", "anchor": "Twitter", "position": "footer" },
+        { "href": "/", "anchor": "Home", "position": "nav" }
+      ]
+    },
+    "expected": {
+      "top_hiring": "https://job-boards.greenhouse.io/galaxyexample",
+      "followed": ["https://job-boards.greenhouse.io/galaxyexample"],
+      "not_followed": [
+        { "url": "https://linkedin.com/company/galaxy", "reason": "external_low_score" },
+        { "url": "https://twitter.com/galaxy", "reason": "external_low_score" },
+        { "url": "https://galaxy.example/", "reason": "self" }
+      ],
+      "note": "This is the galaxy.ai case. The Careers anchor points off-domain and must still be followed one hop."
+    }
+  },
+  {
+    "id": "dedupe-variants",
+    "input": {
+      "base_url": "https://acme.example",
+      "links": [
+        { "href": "/careers", "anchor": "Careers", "position": "nav" },
+        { "href": "/careers/", "anchor": "Join us", "position": "footer" },
+        { "href": "/careers?utm_source=nav&ref=home", "anchor": "We're hiring", "position": "body" },
+        { "href": "/careers#open-roles", "anchor": "Open roles", "position": "body" }
+      ]
+    },
+    "expected": {
+      "top_hiring": "https://acme.example/careers",
+      "deduped_to_one": [
+        "https://acme.example/careers",
+        "https://acme.example/careers/",
+        "https://acme.example/careers?utm_source=nav&ref=home",
+        "https://acme.example/careers#open-roles"
+      ],
+      "followed": ["https://acme.example/careers"],
+      "not_followed": []
+    }
+  },
+  {
+    "id": "relative-links-under-subpath",
+    "input": {
+      "base_url": "http://localhost:8099/acme/",
+      "links": [
+        { "href": "careers.html", "anchor": "Careers", "position": "nav" },
+        { "href": "../other/", "anchor": "Other company", "position": "footer" },
+        { "href": "about.html", "anchor": "About", "position": "nav" }
+      ]
+    },
+    "expected": {
+      "top_hiring": "http://localhost:8099/acme/careers.html",
+      "top_about": "http://localhost:8099/acme/about.html",
+      "followed": ["http://localhost:8099/acme/careers.html", "http://localhost:8099/acme/about.html"],
+      "not_followed": [{ "url": "http://localhost:8099/other/", "reason": "outside_base_path" }],
+      "note": "Appendix B serves from a subpath. Relative resolution must respect it, and '../other/' escapes the company's tree."
+    }
+  }
+]

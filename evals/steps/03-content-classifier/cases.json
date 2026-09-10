@@ -1,0 +1,58 @@
+[
+  {
+    "id": "real-hiring-process-page",
+    "input": {
+      "text": "## How we hire\n\nEvery engineering candidate goes through the same four steps.\n\n## 1. Intro call\n\n30 minutes with a recruiter. We talk about the role and what you're looking for.\n\n## 2. Take-home\n\nA small project, scoped to about four hours. We pay for your time.\n\n## 3. System design\n\n60 minutes with two engineers. You'll design something close to what the team actually builds.\n\n## 4. Values interview\n\nWe want to know how you work with others. Expect to talk through a disagreement you've had.\n\nWe aim to get back to you within a week of each step."
+    },
+    "expected": { "is_hiring_page": true, "is_about_page": false, "headings_preserved": ["## How we hire", "## 2. Take-home", "## 3. System design"] }
+  },
+  {
+    "id": "careers-page-no-roles",
+    "input": {
+      "text": "## Careers\n\nWe're not hiring right now. Check back later or follow us on LinkedIn."
+    },
+    "expected": { "is_hiring_page": false, "is_about_page": false, "note": "A /careers URL with nothing in it. URL says hiring, content says no." }
+  },
+  {
+    "id": "job-listings-only",
+    "input": {
+      "text": "## Open positions\n\nSenior Backend Engineer — Berlin\nProduct Designer — Remote\nAccount Executive — London\n\nApply through the links above."
+    },
+    "expected": { "is_hiring_page": true, "is_about_page": false, "note": "Listings are hiring content, but weaker than a process page. Should pass threshold with a lower score than real-hiring-process-page." }
+  },
+  {
+    "id": "about-page",
+    "input": {
+      "text": "## About Northwind\n\nFounded in 2019, Northwind builds routing software for parcel networks across Europe. We're a team of 40 based in Berlin and Lisbon. Our mission is to make last-mile delivery boring.\n\n## Our team\n\nWe're engineers, operators and former couriers."
+    },
+    "expected": { "is_hiring_page": false, "is_about_page": true }
+  },
+  {
+    "id": "engineering-blog-post-about-interviewing",
+    "input": {
+      "text": "## Why we dropped the whiteboard interview\n\nFor years our loop had a whiteboard algorithms round. We looked at the data: it predicted nothing. So we replaced it with a paid take-home and a pairing session on real code. Here's what changed in our process and what we learned."
+    },
+    "expected": { "is_hiring_page": true, "is_about_page": false, "note": "A blog post that describes the interview process is hiring content regardless of URL." }
+  },
+  {
+    "id": "product-marketing-page",
+    "input": {
+      "text": "## Ship faster with Acme\n\nAcme is the all-in-one platform for teams that move quickly. Start free. No credit card required.\n\n## Features\n\nReal-time collaboration. Unlimited projects. Integrations with everything you already use."
+    },
+    "expected": { "is_hiring_page": false, "is_about_page": false }
+  },
+  {
+    "id": "handbook-values-page",
+    "input": {
+      "text": "## Our values\n\nWe default to transparency. We write things down. We disagree and commit. We assume good intent."
+    },
+    "expected": { "is_hiring_page": false, "is_about_page": true, "note": "Values are about-content. Useful for company-fit questions, not for the hiring section." }
+  },
+  {
+    "id": "cookie-banner-and-nav-noise",
+    "input": {
+      "text": "Accept all cookies Reject Manage preferences Home Product Pricing Docs Blog Careers Login Sign up © 2026 Acme Inc. Privacy Terms"
+    },
+    "expected": { "is_hiring_page": false, "is_about_page": false, "note": "The word 'Careers' appears once as nav text. This must NOT score as a hiring page. If it does, the extractor is leaking nav into content." }
+  }
+]

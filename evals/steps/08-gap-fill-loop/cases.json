@@ -1,0 +1,94 @@
+[
+  {
+    "id": "one-gap-closed-first-try",
+    "input": {
+      "requirements": [
+        { "id": "r1", "text": "Python", "kind": "technical", "priority": "must", "source_span": "Python and Postgres" },
+        { "id": "r2", "text": "Postgres", "kind": "technical", "priority": "must", "source_span": "Python and Postgres" }
+      ],
+      "questions": [
+        { "id": "q1", "category": "technical", "prompt": "Walk through a Python service you own.", "requirement_ids": ["r1"] }
+      ],
+      "fake_responses": [
+        { "for": "r2", "prompt": "Describe a Postgres query you had to tune and what the plan told you.", "answer_outline": "EXPLAIN, index choice, rewrite.", "difficulty": 2 }
+      ]
+    },
+    "expected": {
+      "passes": 2,
+      "llm_calls": 1,
+      "call_order": ["r2"],
+      "outcomes": [{ "for": "r2", "accepted": true }],
+      "uncovered": [],
+      "assigned_ids_by_caller": true
+    }
+  },
+  {
+    "id": "zero-progress-stops-early",
+    "input": {
+      "requirements": [
+        { "id": "r8", "text": "Drive", "kind": "technical", "priority": "must", "source_span": "plug Gmail, Drive, Slack into the product" }
+      ],
+      "questions": [],
+      "fake_responses": [
+        { "for": "r8", "prompt": "How do you maintain your drive on long projects?", "answer_outline": "...", "difficulty": 1 },
+        { "for": "r8", "prompt": "What drives you as an engineer?", "answer_outline": "...", "difficulty": 1 },
+        { "for": "r8", "prompt": "SHOULD NOT BE CALLED", "answer_outline": "...", "difficulty": 1 }
+      ]
+    },
+    "expected": {
+      "passes": 3,
+      "llm_calls": 2,
+      "call_order": ["r8", "r8"],
+      "outcomes": [{ "for": "r8", "accepted": false }, { "for": "r8", "accepted": false }],
+      "uncovered": ["r8"],
+      "note": "Two extra passes, both rejected on no_overlap. Cap reached; the third fake response must never be requested. r8 goes to fallback (step 09), not to a third pass."
+    }
+  },
+  {
+    "id": "two-gaps-one-closes-one-does-not",
+    "input": {
+      "requirements": [
+        { "id": "r1", "text": "Kubernetes", "kind": "technical", "priority": "must", "source_span": "Experience running services on Kubernetes" },
+        { "id": "r2", "text": "written communication", "kind": "behavioural", "priority": "must", "source_span": "Strong written communication; most design work happens in RFCs" }
+      ],
+      "questions": [],
+      "fake_responses": [
+        { "for": "r1", "prompt": "Describe a Kubernetes incident where a pod kept restarting. How did you find the cause?", "answer_outline": "...", "difficulty": 2 },
+        { "for": "r2", "prompt": "Tell me about yourself.", "answer_outline": "...", "difficulty": 1 },
+        { "for": "r2", "prompt": "Describe an RFC you wrote that changed a decision. What made the writing land?", "answer_outline": "...", "difficulty": 2 }
+      ]
+    },
+    "expected": {
+      "passes": 3,
+      "llm_calls": 3,
+      "call_order": ["r1", "r2", "r2"],
+      "outcomes": [
+        { "for": "r1", "accepted": true },
+        { "for": "r2", "accepted": false },
+        { "for": "r2", "accepted": true }
+      ],
+      "uncovered": [],
+      "note": "Pass 2 closes r1 and rejects r2's first attempt ('Tell me about yourself' has no overlap). Pass 3 retries only r2, not r1."
+    }
+  },
+  {
+    "id": "no-gaps-no-calls",
+    "input": {
+      "requirements": [
+        { "id": "r1", "text": "Python", "kind": "technical", "priority": "must", "source_span": "Python" }
+      ],
+      "questions": [
+        { "id": "q1", "category": "technical", "prompt": "Walk through a Python service you own.", "requirement_ids": ["r1"] }
+      ],
+      "fake_responses": []
+    },
+    "expected": {
+      "passes": 1,
+      "llm_calls": 0,
+      "call_order": [],
+      "outcomes": [],
+      "uncovered": [],
+      "note": "Nothing to fill. Zero calls, one pass, and the trace still shows coverage_check pass=1."
+    }
+  }
+]

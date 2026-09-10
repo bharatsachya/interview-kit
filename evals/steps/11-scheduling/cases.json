@@ -1,0 +1,134 @@
+[
+  {
+    "id": "five-days-mixed",
+    "input": {
+      "days": 5,
+      "requirements": [
+        { "id": "r1", "priority": "must", "text": "Go or Java" },
+        { "id": "r2", "priority": "must", "text": "PostgreSQL" },
+        { "id": "r3", "priority": "must", "text": "written communication" },
+        { "id": "r4", "priority": "nice", "text": "Kafka" }
+      ],
+      "questions": [
+        { "id": "q1", "difficulty": 3, "requirement_ids": ["r1"] },
+        { "id": "q2", "difficulty": 2, "requirement_ids": ["r2"] },
+        { "id": "q3", "difficulty": 2, "requirement_ids": ["r3"] },
+        { "id": "q4", "difficulty": 1, "requirement_ids": ["r4"] },
+        { "id": "q5", "difficulty": 3, "requirement_ids": [] },
+        { "id": "q6", "difficulty": 1, "requirement_ids": [] }
+      ]
+    },
+    "expected": {
+      "days_count": 5,
+      "day1_contains": ["q1"],
+      "must_scheduled": ["r1", "r2", "r3"],
+      "total_minutes": 120,
+      "last_day_max_difficulty": 1,
+      "note": "q1 (must, diff 3) must be day 1. q4 (nice, diff 1) and q6 should land last. A must-tagged question outranks an untagged one of equal difficulty."
+    }
+  },
+  {
+    "id": "one-day",
+    "input": {
+      "days": 1,
+      "requirements": [ { "id": "r1", "priority": "must", "text": "Python" }, { "id": "r2", "priority": "must", "text": "Postgres" } ],
+      "questions": [ { "id": "q1", "difficulty": 2, "requirement_ids": ["r1"] }, { "id": "q2", "difficulty": 2, "requirement_ids": ["r2"] }, { "id": "q3", "difficulty": 1, "requirement_ids": [] } ]
+    },
+    "expected": {
+      "days_count": 1,
+      "day1_contains": ["q1", "q2", "q3"],
+      "must_scheduled": ["r1", "r2"],
+      "total_minutes": 55
+    }
+  },
+  {
+    "id": "sixty-days",
+    "input": {
+      "days": 60,
+      "requirements": [ { "id": "r1", "priority": "must", "text": "Python" } ],
+      "questions": [ { "id": "q1", "difficulty": 3, "requirement_ids": ["r1"] }, { "id": "q2", "difficulty": 2, "requirement_ids": [] }, { "id": "q3", "difficulty": 1, "requirement_ids": [] } ]
+    },
+    "expected": {
+      "days_count": 60,
+      "day1_contains": ["q1"],
+      "must_scheduled": ["r1"],
+      "no_day_structurally_broken": true,
+      "note": "Three questions, sixty days. Whichever policy you chose — review days repeating material, or thin days — every one of the 60 days must have a focus and an integer minutes value, and question_ids must reference existing questions. If a day has zero questions, minutes must be 0 and focus must say so ('Rest' is fine; empty string is not)."
+    }
+  },
+  {
+    "id": "more-days-than-questions",
+    "input": {
+      "days": 7,
+      "requirements": [ { "id": "r1", "priority": "must", "text": "Python" } ],
+      "questions": [ { "id": "q1", "difficulty": 3, "requirement_ids": ["r1"] }, { "id": "q2", "difficulty": 2, "requirement_ids": [] } ]
+    },
+    "expected": {
+      "days_count": 7,
+      "day1_contains": ["q1"],
+      "must_scheduled": ["r1"],
+      "no_day_structurally_broken": true
+    }
+  },
+  {
+    "id": "focus-labels-derived",
+    "input": {
+      "days": 2,
+      "requirements": [
+        { "id": "r1", "priority": "must", "text": "Experience running services on Kubernetes" },
+        { "id": "r2", "priority": "must", "text": "Strong written communication" }
+      ],
+      "questions": [
+        { "id": "q1", "difficulty": 3, "requirement_ids": ["r1"], "prompt": "Describe a Kubernetes incident where a pod kept restarting." },
+        { "id": "q2", "difficulty": 2, "requirement_ids": ["r2"], "prompt": "Describe an RFC you wrote that changed a decision." }
+      ]
+    },
+    "expected": {
+      "days_count": 2,
+      "focus_contains": { "1": "Kubernetes", "2": "written communication" },
+      "focus_not_in": ["Mixed practice", "Technical depth", "N interrupt", "Describe a", "Describe an"],
+      "note": "Focus comes from requirement text, not from the question prompt's opening verb. The old bug produced 'N interrupt and approval feedback loop' from 'An interrupt...' and 'Share an experience where you built a monitoring' from a prompt."
+    }
+  },
+  {
+    "id": "repair-drops-archived",
+    "input": {
+      "schedule": { "days_available": 2, "days": [
+        { "day": 1, "focus": "Kubernetes", "question_ids": ["q1", "q2"], "minutes": 50, "edited": false },
+        { "day": 2, "focus": "Communication", "question_ids": ["q3"], "minutes": 20, "edited": false }
+      ] },
+      "questions": [
+        { "id": "q1", "difficulty": 3, "requirement_ids": ["r1"], "active": true },
+        { "id": "q2", "difficulty": 2, "requirement_ids": ["r1"], "active": false },
+        { "id": "q3", "difficulty": 2, "requirement_ids": ["r2"], "active": true }
+      ]
+    },
+    "expected": {
+      "after_repair": { "days": [
+        { "day": 1, "question_ids": ["q1"], "minutes": 30 },
+        { "day": 2, "question_ids": ["q3"], "minutes": 20 }
+      ] }
+    }
+  },
+  {
+    "id": "repair-places-orphan-and-keeps-edited-day",
+    "input": {
+      "schedule": { "days_available": 2, "days": [
+        { "day": 1, "focus": "My own focus text", "question_ids": ["q1"], "minutes": 30, "edited": true },
+        { "day": 2, "focus": "Communication", "question_ids": ["q3"], "minutes": 20, "edited": false }
+      ] },
+      "questions": [
+        { "id": "q1", "difficulty": 3, "requirement_ids": ["r1"], "active": true },
+        { "id": "q3", "difficulty": 2, "requirement_ids": ["r2"], "active": true },
+        { "id": "q9", "difficulty": 2, "requirement_ids": ["r1"], "active": true }
+      ]
+    },
+    "expected": {
+      "after_repair": { "days": [
+        { "day": 1, "focus": "My own focus text", "question_ids": ["q1"], "minutes": 30 },
+        { "day": 2, "question_ids": ["q3", "q9"], "minutes": 40 }
+      ] },
+      "note": "q9 is new and unscheduled. It must be placed on an UNEDITED day. Day 1 was edited by the user — its focus and contents survive untouched."
+    }
+  }
+]

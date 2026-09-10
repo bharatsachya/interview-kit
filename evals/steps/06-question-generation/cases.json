@@ -1,0 +1,61 @@
+[
+  {
+    "id": "routing-by-kind",
+    "input": {
+      "company": "Northwind",
+      "role": "Senior Backend Engineer",
+      "brief": "Northwind builds routing software for parcel networks across Europe.",
+      "hiring_context": "",
+      "responsibilities": ["Own on-call for the dispatch platform"],
+      "requirements": [
+        { "id": "r1", "text": "5+ years building backend services in Go or Java", "kind": "technical", "priority": "must" },
+        { "id": "r2", "text": "Production experience with PostgreSQL", "kind": "technical", "priority": "must" },
+        { "id": "r3", "text": "Strong written communication", "kind": "behavioural", "priority": "must" },
+        { "id": "r4", "text": "Experience in logistics software", "kind": "domain", "priority": "nice" }
+      ]
+    },
+    "expected": {
+      "technical_call_has": ["r1", "r2"],
+      "technical_call_lacks": ["r3"],
+      "behavioural_call_has": ["r3"],
+      "behavioural_call_lacks": ["r1", "r2"],
+      "company_fit_call_has": ["r4"],
+      "tools_not_in_behavioural": ["PostgreSQL", "Go", "Java", "Kubernetes"]
+    }
+  },
+  {
+    "id": "hiring-context-changes-output",
+    "input": {
+      "company": "Northwind",
+      "role": "Senior Backend Engineer",
+      "brief": "Northwind builds routing software.",
+      "hiring_context": "Their loop includes a paid take-home followed by a 60-minute system design round where candidates design something close to what the team builds.",
+      "responsibilities": [],
+      "requirements": [
+        { "id": "r1", "text": "5+ years building backend services in Go", "kind": "technical", "priority": "must" }
+      ]
+    },
+    "expected": {
+      "every_call_contains_hiring_context": true,
+      "system_design_mentions": ["take-home", "60", "routing", "parcel"],
+      "note": "The brief says a company that publishes a take-home + system design round must produce a different kit from one that says nothing. Compare against routing-by-kind: the system-design section here should reference the known round."
+    }
+  },
+  {
+    "id": "no-requirements-only-responsibilities",
+    "input": {
+      "company": "Ferrous",
+      "role": "Growth Engineer",
+      "brief": "Ferrous makes inventory software for metal fabricators.",
+      "hiring_context": "",
+      "responsibilities": ["Instrument the signup funnel", "Run A/B tests on onboarding", "Maintain Segment and Amplitude integrations"],
+      "requirements": []
+    },
+    "expected": {
+      "all_requirement_ids_empty": true,
+      "min_total_questions": 2,
+      "max_total_questions": 8,
+      "note": "With zero requirements, questions may still be asked about responsibilities, but every requirement_ids must be []. A non-empty id here is a hallucinated id."
+    }
+  }
+]

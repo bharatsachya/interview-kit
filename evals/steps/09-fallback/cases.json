@@ -1,0 +1,51 @@
+[
+  {
+    "id": "technical",
+    "input": {
+      "role_title": "Senior Backend Engineer",
+      "requirement": { "id": "r3", "text": "Experience running services on Kubernetes", "kind": "technical", "priority": "must", "source_span": "Experience running services on Kubernetes" }
+    },
+    "expected": {
+      "category": "technical",
+      "must_contain": "running services on Kubernetes",
+      "template_words_allowed": ["the", "role", "requires", "walk", "through", "your", "experience", "with", "it", "and", "a", "hard", "problem", "you", "solved"]
+    }
+  },
+  {
+    "id": "behavioural",
+    "input": {
+      "role_title": "Senior Backend Engineer",
+      "requirement": { "id": "r4", "text": "Strong written communication", "kind": "behavioural", "priority": "must", "source_span": "Strong written communication; most of our design work happens in RFCs" }
+    },
+    "expected": {
+      "category": "behavioural",
+      "must_contain": "written communication",
+      "template_words_allowed": ["the", "role", "mentions", "describe", "a", "time", "you", "did", "this", "and", "how", "it", "went"]
+    }
+  },
+  {
+    "id": "domain",
+    "input": {
+      "role_title": "Data Engineer",
+      "requirement": { "id": "r7", "text": "Experience in the energy sector", "kind": "domain", "priority": "must", "source_span": "Experience in the energy sector" }
+    },
+    "expected": {
+      "category": "company-fit",
+      "must_contain": "energy sector",
+      "template_words_allowed": ["this", "role", "is", "in", "what's", "your", "background", "there", "and", "specific", "about", "the", "domain"]
+    }
+  },
+  {
+    "id": "too-thin-uses-role-title",
+    "input": {
+      "role_title": "Staff Engineer, Payments",
+      "requirement": { "id": "r2", "text": "Go", "kind": "technical", "priority": "must", "source_span": "Fluent in Go or Rust" }
+    },
+    "expected": {
+      "category": "technical",
+      "must_contain": "Go",
+      "may_contain_role_title": true,
+      "note": "'Go' alone is too thin for the technical template to read well. Using the source span ('Fluent in Go or Rust') or the role title is allowed. Inventing 'goroutines' or 'channels' is not — those words appear nowhere in the inputs."
+    }
+  }
+]

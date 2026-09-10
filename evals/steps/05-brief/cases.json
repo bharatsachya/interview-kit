@@ -1,0 +1,66 @@
+[
+  {
+    "id": "site-has-hiring-process",
+    "input": {
+      "company": "Northwind",
+      "role": "Senior Backend Engineer",
+      "passages": [
+        { "url": "https://northwind.example/", "source": "site", "text": "Northwind builds routing software for parcel networks across Europe. Founded 2019, 40 people, Berlin and Lisbon." },
+        { "url": "https://northwind.example/handbook/hiring", "source": "site", "text": "## How we hire\nEvery engineer goes through: a 30-minute intro call, a paid four-hour take-home, a 60-minute system design session, and a values interview." }
+      ]
+    },
+    "expected": {
+      "hiring_process_empty": false,
+      "hiring_process_must_mention": ["take-home", "system design"],
+      "what_they_do_must_mention": ["routing"],
+      "sources_subset_of_input": true
+    }
+  },
+  {
+    "id": "site-only-no-hiring-info",
+    "input": {
+      "company": "Ferrous",
+      "role": "Growth Engineer",
+      "passages": [
+        { "url": "https://ferrous.example/", "source": "site", "text": "Ferrous makes inventory software for metal fabricators. 400 customers. Based in Pittsburgh." }
+      ]
+    },
+    "expected": {
+      "hiring_process_empty": true,
+      "what_they_do_must_mention": ["inventory"],
+      "must_not_mention": ["typically", "usually involves", "standard process", "phone screen", "onsite"],
+      "note": "The failure this catches: the model writing 'The process typically involves a phone screen and an onsite' from nothing."
+    }
+  },
+  {
+    "id": "discussion-only-no-site-content",
+    "input": {
+      "company": "Pilot",
+      "role": "Software Engineer",
+      "passages": [
+        { "url": "https://news.ycombinator.com/item?id=555", "source": "discussion", "text": "Interviewed at Pilot last month. One recruiter call, then a live pairing session on their actual codebase, then a chat with the founders. No leetcode." }
+      ]
+    },
+    "expected": {
+      "hiring_process_empty": false,
+      "hiring_process_must_mention": ["pairing"],
+      "sources_subset_of_input": true,
+      "note": "hiring_signal should be 'discussion'. The brief may say what they do is not described in the material — that is correct, not a failure."
+    }
+  },
+  {
+    "id": "empty-input",
+    "input": {
+      "company": "Obscura",
+      "role": "Backend Engineer",
+      "passages": []
+    },
+    "expected": {
+      "hiring_process_empty": true,
+      "honesty_markers": ["could not find", "no information", "not available", "nothing was found", "was not found"],
+      "must_not_mention": ["leading", "innovative", "cutting-edge", "fast-growing"],
+      "sources_subset_of_input": true,
+      "note": "Graders test a company they can find nothing about. Zero sources, an honest what_they_do, no marketing adjectives invented from the name."
+    }
+  }
+]

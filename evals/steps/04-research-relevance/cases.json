@@ -1,0 +1,74 @@
+[
+  {
+    "id": "near-miss-company-name",
+    "input": {
+      "company": "GalaxyAI",
+      "domain": "galaxy.ai",
+      "results": [
+        { "id": "a", "url": "https://www.interviewquery.com/interview-guides/galaxy-i-technologies--software-engineer", "title": "Galaxy I Technologies Software Engineer Interview Guide", "snippet": "The interview process at Galaxy I Technologies..." },
+        { "id": "b", "url": "https://galaxy.ai/blog/how-we-interview", "title": "How we interview at GalaxyAI", "snippet": "Our loop has three rounds..." },
+        { "id": "c", "url": "https://www.reddit.com/r/cscareerquestions/comments/xyz/galaxyai_interview_experience/", "title": "GalaxyAI interview experience", "snippet": "Had my onsite with GalaxyAI last week. Take-home then system design..." }
+      ]
+    },
+    "expected": {
+      "kept": ["b", "c"],
+      "filtered": [{ "id": "a", "reason": "wrong_company" }],
+      "note": "'Galaxy I Technologies' shares a prefix with 'GalaxyAI'. Substring matching lets it through; token-sequence matching does not."
+    }
+  },
+  {
+    "id": "generic-advice-dropped",
+    "input": {
+      "company": "Northwind",
+      "domain": "northwind.example",
+      "results": [
+        { "id": "a", "url": "https://www.indeed.com/career-advice/interviewing/software-engineer-interview", "title": "How to prepare for a software engineer interview", "snippet": "General tips for any software interview..." },
+        { "id": "b", "url": "https://www.linkedin.com/pulse/10-tips-nail-your-next-interview", "title": "10 tips to nail your next interview", "snippet": "..." },
+        { "id": "c", "url": "https://news.ycombinator.com/item?id=123", "title": "Ask HN: Anyone interviewed at Northwind?", "snippet": "Northwind's process is a take-home then a pairing round..." }
+      ]
+    },
+    "expected": {
+      "kept": ["c"],
+      "filtered": [
+        { "id": "a", "reason": "generic_advice" },
+        { "id": "b", "reason": "generic_advice" }
+      ]
+    }
+  },
+  {
+    "id": "ats-board-of-other-company",
+    "input": {
+      "company": "Pilot",
+      "domain": "pilot.example",
+      "results": [
+        { "id": "a", "url": "https://job-boards.greenhouse.io/pilotfreight", "title": "Pilot Freight Services — Jobs", "snippet": "Open roles at Pilot Freight Services" },
+        { "id": "b", "url": "https://job-boards.greenhouse.io/pilotexample", "title": "Pilot — Careers", "snippet": "Join Pilot. We build AI assistants that run inside your tools." },
+        { "id": "c", "url": "https://pilot.example/careers", "title": "Careers at Pilot", "snippet": "..." }
+      ]
+    },
+    "expected": {
+      "kept": ["b", "c"],
+      "filtered": [{ "id": "a", "reason": "wrong_company" }],
+      "note": "Two Greenhouse boards, one for a different 'Pilot'. Accept b because its snippet matches the company's own description; reject a. If the filter can't tell them apart, it must reject BOTH — a wrong-company source is worse than none."
+    }
+  },
+  {
+    "id": "nothing-relevant",
+    "input": {
+      "company": "Ferrous",
+      "domain": "ferrous.example",
+      "results": [
+        { "id": "a", "url": "https://en.wikipedia.org/wiki/Ferrous", "title": "Ferrous — Wikipedia", "snippet": "In chemistry, ferrous refers to iron in the +2 oxidation state..." },
+        { "id": "b", "url": "https://www.glassdoor.com/Reviews/Ferrous-Metals-Reviews", "title": "Ferrous Metals Ltd Reviews", "snippet": "..." }
+      ]
+    },
+    "expected": {
+      "kept": [],
+      "filtered": [
+        { "id": "a", "reason": "wrong_company" },
+        { "id": "b", "reason": "wrong_company" }
+      ],
+      "note": "Correct answer is an empty list. The brief for this company should then say public discussion turned up nothing."
+    }
+  }
+]

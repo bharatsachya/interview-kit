@@ -1,0 +1,76 @@
+{
+  "run_id": "2026-09-09T15-51-53-237Z",
+  "generated_at": "2026-09-09T15:51:53.258Z",
+  "repeat": 1,
+  "steps": [
+    {
+      "step": "11",
+      "name": "allocateSchedule + repairSchedule",
+      "target": "packages/scheduling → allocateSchedule · packages/kit → repairSchedule",
+      "kind": "pure",
+      "adapter": "repairSchedule lives in packages/kit, not packages/scheduling — repair must be minimal-disturbance rather than a re-allocation.",
+      "cases": [
+        {
+          "id": "five-days-mixed",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "day 3 focus is non-empty"
+        },
+        {
+          "id": "one-day",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "total_minutes — expected 55, got 50"
+        },
+        {
+          "id": "sixty-days",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "day 2 focus is non-empty"
+        },
+        {
+          "id": "more-days-than-questions",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "day 2 focus is non-empty"
+        },
+        {
+          "id": "focus-labels-derived",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "repair-drops-archived",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "repair-places-orphan-and-keeps-edited-day",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        }
+      ],
+      "totals": {
+        "cases": 7,
+        "fully_passing": 3,
+        "runs": 7
+      },
+      "durationMs": 16
+    }
+  ],
+  "exit_code": 1
+}

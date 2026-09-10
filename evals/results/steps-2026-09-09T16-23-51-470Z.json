@@ -1,0 +1,132 @@
+{
+  "run_id": "2026-09-09T16-23-51-470Z",
+  "generated_at": "2026-09-09T16:33:06.296Z",
+  "repeat": 3,
+  "steps": [
+    {
+      "step": "01",
+      "name": "extractRequirements",
+      "target": "packages/extraction → extractRequirements(jd, deps)",
+      "kind": "llm",
+      "cases": [
+        {
+          "id": "rich-structured",
+          "runs": 3,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "did not throw — KitError: Gemini responded 429: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota ex",
+          "assertion_pass_rates": {
+            "did not throw": "0/3"
+          }
+        },
+        {
+          "id": "rich-unstructured",
+          "runs": 3,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "did not throw — KitError: Gemini responded 429: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota ex",
+          "assertion_pass_rates": {
+            "did not throw": "0/3"
+          }
+        },
+        {
+          "id": "bonus-heavy",
+          "runs": 3,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "did not throw — KitError: Gemini responded 429: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota ex",
+          "assertion_pass_rates": {
+            "did not throw": "0/3"
+          }
+        },
+        {
+          "id": "stub",
+          "runs": 3,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "did not throw — KitError: Gemini responded 429: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota ex",
+          "assertion_pass_rates": {
+            "did not throw": "0/3"
+          }
+        },
+        {
+          "id": "or-lists",
+          "runs": 3,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "did not throw — KitError: Gemini responded 429: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota ex",
+          "assertion_pass_rates": {
+            "did not throw": "0/3"
+          }
+        },
+        {
+          "id": "and-lists",
+          "runs": 3,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "did not throw — KitError: Gemini responded 429: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota ex",
+          "assertion_pass_rates": {
+            "did not throw": "0/3"
+          }
+        },
+        {
+          "id": "product-description-trap",
+          "runs": 3,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "did not throw — KitError: Gemini responded 429: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota ex",
+          "assertion_pass_rates": {
+            "did not throw": "0/3"
+          }
+        },
+        {
+          "id": "injection",
+          "runs": 3,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "did not throw — KitError: Gemini responded 429: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota ex",
+          "assertion_pass_rates": {
+            "did not throw": "0/3"
+          }
+        },
+        {
+          "id": "no-requirements-section",
+          "runs": 3,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "did not throw — KitError: Gemini responded 429: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota ex",
+          "assertion_pass_rates": {
+            "did not throw": "0/3"
+          }
+        },
+        {
+          "id": "seniority-and-years",
+          "runs": 3,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "did not throw — KitError: Gemini responded 429: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota ex",
+          "assertion_pass_rates": {
+            "did not throw": "0/3"
+          }
+        }
+      ],
+      "totals": {
+        "cases": 10,
+        "fully_passing": 0,
+        "runs": 30
+      },
+      "durationMs": 554811
+    }
+  ],
+  "exit_code": 1
+}

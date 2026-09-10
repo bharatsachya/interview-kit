@@ -1,0 +1,126 @@
+[
+  {
+    "id": "over-tagged-five-ids",
+    "input": {
+      "requirements": [
+        { "id": "r3", "text": "streaming partial output", "kind": "technical", "priority": "must", "source_span": "Orchestration UX — sub-agent state, streaming partial output, exposing memory" },
+        { "id": "r5", "text": "handling interrupts and approvals", "kind": "technical", "priority": "must", "source_span": "handling interrupts and approvals" },
+        { "id": "r7", "text": "Gmail", "kind": "technical", "priority": "must", "source_span": "plug Gmail, Drive, Slack into the product" },
+        { "id": "r9", "text": "Slack", "kind": "technical", "priority": "must", "source_span": "plug Gmail, Drive, Slack into the product" },
+        { "id": "r13", "text": "designing UI for a system whose behavior is probabilistic and asynchronous", "kind": "technical", "priority": "must", "source_span": "designing UI for a system whose behavior is probabilistic and asynchronous" }
+      ],
+      "questions": [
+        { "id": "q2", "category": "technical", "prompt": "When implementing streaming partial outputs alongside asynchronous tool execution (such as fetching data from Slack or Gmail), how did you handle UI rendering stutter when chunks arrived out of order or were invalidated by an approval interrupt?", "requirement_ids": ["r3", "r5", "r7", "r9", "r13"] }
+      ]
+    },
+    "expected": {
+      "retagged": { "q2": ["r3", "r5", "r13"] },
+      "dropped": ["q2:r7=name_drop", "q2:r9=name_drop"],
+      "gaps": ["r7", "r9"],
+      "note": "Cap is 3, and Gmail/Slack are mentioned in passing. The question is about streaming and interrupts; those three stay."
+    }
+  },
+  {
+    "id": "homonym-drive",
+    "input": {
+      "requirements": [
+        { "id": "r8", "text": "Drive", "kind": "technical", "priority": "must", "source_span": "plug Gmail, Drive, Slack into the product" }
+      ],
+      "questions": [
+        { "id": "q11", "category": "technical", "prompt": "Tell me about a time when you had to drive a complex project from conception to completion largely on your own. How did you maintain your drive when facing unexpected roadblocks?", "requirement_ids": ["r8"] }
+      ]
+    },
+    "expected": {
+      "retagged": { "q11": [] },
+      "dropped": ["q11:r8=no_overlap"],
+      "gaps": ["r8"],
+      "note": "The word 'drive' matches. The source span 'plug Gmail, Drive, Slack into the product' does not. Overlap must be computed against the span."
+    }
+  },
+  {
+    "id": "hallucinated-id",
+    "input": {
+      "requirements": [
+        { "id": "r1", "text": "5+ years with React", "kind": "technical", "priority": "must", "source_span": "5+ years with React" }
+      ],
+      "questions": [
+        { "id": "q1", "category": "technical", "prompt": "Describe a React performance problem you diagnosed in production.", "requirement_ids": ["r1", "r99"] }
+      ]
+    },
+    "expected": {
+      "retagged": { "q1": ["r1"] },
+      "dropped": ["q1:r99=unknown_id"],
+      "gaps": []
+    }
+  },
+  {
+    "id": "near-duplicate-rejected",
+    "input": {
+      "requirements": [
+        { "id": "r1", "text": "5+ years with React", "kind": "technical", "priority": "must", "source_span": "5+ years with React" }
+      ],
+      "questions": [
+        { "id": "q1", "category": "technical", "prompt": "Describe a React performance problem you diagnosed in production and how you fixed it.", "requirement_ids": ["r1"] },
+        { "id": "q2", "category": "technical", "prompt": "Describe a React performance issue you diagnosed in production and how you resolved it.", "requirement_ids": ["r1"] }
+      ]
+    },
+    "expected": {
+      "retagged": { "q1": ["r1"] },
+      "rejected_questions": ["q2"],
+      "dropped": ["q2=duplicate_of:q1"],
+      "gaps": []
+    }
+  },
+  {
+    "id": "valid-question-untouched",
+    "input": {
+      "requirements": [
+        { "id": "r2", "text": "mentoring junior engineers", "kind": "behavioural", "priority": "must", "source_span": "Experience mentoring junior engineers and reviewing their work" }
+      ],
+      "questions": [
+        { "id": "q5", "category": "behavioural", "prompt": "Tell me about a junior engineer you mentored. What did you change about your approach halfway through, and why?", "requirement_ids": ["r2"] }
+      ]
+    },
+    "expected": {
+      "retagged": { "q5": ["r2"] },
+      "dropped": [],
+      "gaps": []
+    }
+  },
+  {
+    "id": "nice-not-a-gap",
+    "input": {
+      "requirements": [
+        { "id": "r1", "text": "Python", "kind": "technical", "priority": "must", "source_span": "Python and Postgres" },
+        { "id": "r2", "text": "Kafka or similar", "kind": "technical", "priority": "nice", "source_span": "Familiarity with Kafka or a similar streaming platform" }
+      ],
+      "questions": [
+        { "id": "q1", "category": "technical", "prompt": "Walk through a Python service you own. What would you change about its structure today?", "requirement_ids": ["r1"] }
+      ]
+    },
+    "expected": {
+      "retagged": { "q1": ["r1"] },
+      "dropped": [],
+      "gaps": [],
+      "uncovered_nice": ["r2"],
+      "note": "r2 is uncovered but nice. Not a gap for the loop; still listed in uncovered_requirement_ids at the end."
+    }
+  },
+  {
+    "id": "empty-prompt-rejected",
+    "input": {
+      "requirements": [
+        { "id": "r1", "text": "Python", "kind": "technical", "priority": "must", "source_span": "Python and Postgres" }
+      ],
+      "questions": [
+        { "id": "q1", "category": "technical", "prompt": "", "requirement_ids": ["r1"] },
+        { "id": "q2", "category": "technical", "prompt": "Python?", "requirement_ids": ["r1"] }
+      ]
+    },
+    "expected": {
+      "rejected_questions": ["q1", "q2"],
+      "dropped": ["q1=empty", "q2=stub"],
+      "gaps": ["r1"]
+    }
+  }
+]

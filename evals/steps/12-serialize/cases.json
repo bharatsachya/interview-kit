@@ -1,0 +1,75 @@
+[
+  {
+    "id": "archived-stripped-and-schedule-repaired",
+    "input": {
+      "kit": {
+        "source": { "company": "Northwind", "company_url": "https://northwind.example", "role": "Senior Backend Engineer", "location": "Berlin", "jd_chars": 1400, "researched_at": "2026-09-09T10:00:00Z", "pages_used": ["https://northwind.example/"] },
+        "company_brief": { "summary": "Northwind builds routing software.", "what_they_do": "Routing software for parcel networks.", "sources": ["https://northwind.example/"], "hiring_signal": "none", "gaps": ["no hiring page"] },
+        "role": { "title": "Senior Backend Engineer", "seniority": "senior", "responsibilities": ["Own routing services"], "requirements": [
+          { "id": "r1", "text": "Go or Java", "kind": "technical", "priority": "must", "source_span": "5+ years in Go or Java" },
+          { "id": "r2", "text": "Kafka", "kind": "technical", "priority": "nice", "source_span": "Familiarity with Kafka" }
+        ] },
+        "questions": [
+          { "id": "q1", "requirement_ids": ["r1"], "category": "technical", "prompt": "Describe a Go service you own.", "answer_outline": "...", "difficulty": 2, "origin": "generated", "pinned": false, "active": true },
+          { "id": "q2", "requirement_ids": ["r1"], "category": "technical", "prompt": "Old question.", "answer_outline": "...", "difficulty": 2, "origin": "generated", "pinned": false, "active": false },
+          { "id": "q3", "requirement_ids": ["r1"], "category": "technical", "prompt": "My own question.", "answer_outline": "...", "difficulty": 1, "origin": "manual", "pinned": false, "active": true }
+        ],
+        "flashcards": [
+          { "id": "f1", "front": "Describe a Go service you own.", "back": "...", "requirement_ids": ["r1"], "origin": "generated", "active": true },
+          { "id": "f2", "front": "Old question.", "back": "...", "requirement_ids": ["r1"], "origin": "generated", "active": false }
+        ],
+        "schedule": { "days_available": 2, "days": [
+          { "day": 1, "focus": "Go", "question_ids": ["q1", "q2"], "minutes": 40, "edited": false },
+          { "day": 2, "focus": "Go", "question_ids": [], "minutes": 0, "edited": false }
+        ] },
+        "coverage": { "uncovered_requirement_ids": ["r2"], "passes": 2 }
+      }
+    },
+    "expected": {
+      "question_ids": ["q1", "q3"],
+      "flashcard_ids": ["f1"],
+      "schedule_question_ids_all_exist": true,
+      "q3_scheduled_somewhere": true,
+      "uncovered": ["r2"],
+      "stripped_fields_absent": ["origin", "pinned", "active", "source_span", "edited", "hiring_signal", "gaps"],
+      "note": "q2 archived → gone from questions AND from day 1. q3 is active but unscheduled → repair places it. f2 archived → gone."
+    }
+  },
+  {
+    "id": "validation-rejects-bad-difficulty-and-float-minutes",
+    "input": {
+      "kit": {
+        "source": { "company": "X", "company_url": "https://x.example", "role": "Eng", "location": "", "jd_chars": 10, "researched_at": "2026-09-09T10:00:00Z", "pages_used": [] },
+        "company_brief": { "summary": "", "what_they_do": "", "sources": [] },
+        "role": { "title": "Eng", "seniority": "", "responsibilities": [], "requirements": [ { "id": "r1", "text": "Python", "kind": "technical", "priority": "must" } ] },
+        "questions": [ { "id": "q1", "requirement_ids": ["r1"], "category": "technical", "prompt": "Python?", "answer_outline": "", "difficulty": 4, "origin": "generated", "pinned": false, "active": true } ],
+        "flashcards": [],
+        "schedule": { "days_available": 1, "days": [ { "day": 1, "focus": "Python", "question_ids": ["q1"], "minutes": 45.5, "edited": false } ] },
+        "coverage": { "uncovered_requirement_ids": [], "passes": 1 }
+      }
+    },
+    "expected": {
+      "throws": true,
+      "validation_errors_mention": ["difficulty", "minutes"]
+    }
+  },
+  {
+    "id": "location-empty-string-not-undefined",
+    "input": {
+      "kit": {
+        "source": { "company": "X", "company_url": "https://x.example", "role": "Eng", "jd_chars": 10, "researched_at": "2026-09-09T10:00:00Z", "pages_used": [] },
+        "company_brief": { "summary": "", "what_they_do": "", "sources": [] },
+        "role": { "title": "Eng", "seniority": "", "responsibilities": [], "requirements": [] },
+        "questions": [],
+        "flashcards": [],
+        "schedule": { "days_available": 1, "days": [ { "day": 1, "focus": "Rest", "question_ids": [], "minutes": 0, "edited": false } ] },
+        "coverage": { "uncovered_requirement_ids": [], "passes": 1 }
+      }
+    },
+    "expected": {
+      "throws": true,
+      "validation_errors_mention": ["location"],
+      "note": "source.location is missing entirely. Appendix A requires it. The pipeline must always set it — empty string when unknown — and the validator must refuse undefined."
+    }
+  }
+]

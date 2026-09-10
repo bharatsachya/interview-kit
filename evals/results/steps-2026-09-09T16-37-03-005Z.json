@@ -1,0 +1,178 @@
+{
+  "run_id": "2026-09-09T16-37-03-005Z",
+  "generated_at": "2026-09-09T16:40:01.982Z",
+  "repeat": 1,
+  "steps": [
+    {
+      "step": "01",
+      "name": "extractRequirements",
+      "target": "packages/extraction → extractRequirements(jd, deps)",
+      "kind": "llm",
+      "cases": [
+        {
+          "id": "rich-structured",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false,
+          "scores": {
+            "must_recall": 1,
+            "invention_rate": 0,
+            "priority_accuracy": 1,
+            "forbidden_hits": 0,
+            "gold_total": 7,
+            "extracted_total": 7
+          }
+        },
+        {
+          "id": "rich-unstructured",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false,
+          "scores": {
+            "must_recall": 1,
+            "invention_rate": 0,
+            "priority_accuracy": 1,
+            "forbidden_hits": 0,
+            "gold_total": 5,
+            "extracted_total": 5
+          }
+        },
+        {
+          "id": "bonus-heavy",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "nice kind: \"A published blog post or talk about data\" — expected technical, got behavioural",
+          "scores": {
+            "must_recall": 1,
+            "invention_rate": 0,
+            "priority_accuracy": 1,
+            "forbidden_hits": 0,
+            "gold_total": 9,
+            "extracted_total": 9
+          }
+        },
+        {
+          "id": "stub",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "must present: \"Postgres\" — no extracted requirement matched",
+          "scores": {
+            "must_recall": 0.5,
+            "invention_rate": 0,
+            "priority_accuracy": 1,
+            "forbidden_hits": 0,
+            "gold_total": 2,
+            "extracted_total": 1
+          }
+        },
+        {
+          "id": "or-lists",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false,
+          "scores": {
+            "must_recall": 1,
+            "invention_rate": 0,
+            "priority_accuracy": 1,
+            "forbidden_hits": 0,
+            "gold_total": 4,
+            "extracted_total": 4
+          }
+        },
+        {
+          "id": "and-lists",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "must present: \"Kubernetes\" — no extracted requirement matched",
+          "scores": {
+            "must_recall": 0.6,
+            "invention_rate": 0,
+            "priority_accuracy": 1,
+            "forbidden_hits": 0,
+            "gold_total": 5,
+            "extracted_total": 3
+          }
+        },
+        {
+          "id": "product-description-trap",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "must priority: \"A track record of shipping real products\" — got \"nice\"",
+          "scores": {
+            "must_recall": 1,
+            "invention_rate": 0,
+            "priority_accuracy": 0.333,
+            "forbidden_hits": 0,
+            "gold_total": 3,
+            "extracted_total": 3
+          }
+        },
+        {
+          "id": "injection",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "must kind: \"4+ years in application security\" — expected technical, got domain",
+          "scores": {
+            "must_recall": 1,
+            "invention_rate": 0,
+            "priority_accuracy": 1,
+            "forbidden_hits": 0,
+            "gold_total": 4,
+            "extracted_total": 4
+          }
+        },
+        {
+          "id": "no-requirements-section",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false,
+          "scores": {
+            "must_recall": 1,
+            "invention_rate": 0,
+            "priority_accuracy": 1,
+            "forbidden_hits": 0,
+            "gold_total": 0,
+            "extracted_total": 0
+          }
+        },
+        {
+          "id": "seniority-and-years",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "must present: \"led the design of a payments or ledger system at\" — no extracted requirement matched",
+          "scores": {
+            "must_recall": 0.6,
+            "invention_rate": 0,
+            "priority_accuracy": 1,
+            "forbidden_hits": 0,
+            "gold_total": 7,
+            "extracted_total": 5
+          }
+        }
+      ],
+      "totals": {
+        "cases": 10,
+        "fully_passing": 4,
+        "runs": 10
+      },
+      "durationMs": 178962
+    }
+  ],
+  "exit_code": 1
+}

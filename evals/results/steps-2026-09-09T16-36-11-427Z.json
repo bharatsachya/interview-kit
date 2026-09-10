@@ -1,0 +1,102 @@
+{
+  "run_id": "2026-09-09T16-36-11-427Z",
+  "generated_at": "2026-09-09T16:36:52.119Z",
+  "repeat": 1,
+  "steps": [
+    {
+      "step": "01",
+      "name": "extractRequirements",
+      "target": "packages/extraction → extractRequirements(jd, deps)",
+      "kind": "llm",
+      "cases": [
+        {
+          "id": "rich-structured",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "did not throw — KitError: Model \"gemini-2.5-flash\" is not available to this API key. Set GEMINI_MODEL_QUALITY / GEMINI_MODEL_FAST in .env to a model the key can use — the floating aliases gemini-flash-latest and gemini-flash-lite-latest are the safe default. Provider said: {\n  \"error\": {\n    \"code\": 404,\n    \"message\": \"This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.6-flash for the latest features and improvements. We recommend you to use the Interactions API.\",\n    \"status\": \"NOT_FOUND\"\n  }\n}\n"
+        },
+        {
+          "id": "rich-unstructured",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "did not throw — KitError: Model \"gemini-2.5-flash\" is not available to this API key. Set GEMINI_MODEL_QUALITY / GEMINI_MODEL_FAST in .env to a model the key can use — the floating aliases gemini-flash-latest and gemini-flash-lite-latest are the safe default. Provider said: {\n  \"error\": {\n    \"code\": 404,\n    \"message\": \"This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.6-flash for the latest features and improvements. We recommend you to use the Interactions API.\",\n    \"status\": \"NOT_FOUND\"\n  }\n}\n"
+        },
+        {
+          "id": "bonus-heavy",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "did not throw — KitError: Model \"gemini-2.5-flash\" is not available to this API key. Set GEMINI_MODEL_QUALITY / GEMINI_MODEL_FAST in .env to a model the key can use — the floating aliases gemini-flash-latest and gemini-flash-lite-latest are the safe default. Provider said: {\n  \"error\": {\n    \"code\": 404,\n    \"message\": \"This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.6-flash for the latest features and improvements. We recommend you to use the Interactions API.\",\n    \"status\": \"NOT_FOUND\"\n  }\n}\n"
+        },
+        {
+          "id": "stub",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "did not throw — KitError: Model \"gemini-2.5-flash\" is not available to this API key. Set GEMINI_MODEL_QUALITY / GEMINI_MODEL_FAST in .env to a model the key can use — the floating aliases gemini-flash-latest and gemini-flash-lite-latest are the safe default. Provider said: {\n  \"error\": {\n    \"code\": 404,\n    \"message\": \"This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.6-flash for the latest features and improvements. We recommend you to use the Interactions API.\",\n    \"status\": \"NOT_FOUND\"\n  }\n}\n"
+        },
+        {
+          "id": "or-lists",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "did not throw — KitError: Model \"gemini-2.5-flash\" is not available to this API key. Set GEMINI_MODEL_QUALITY / GEMINI_MODEL_FAST in .env to a model the key can use — the floating aliases gemini-flash-latest and gemini-flash-lite-latest are the safe default. Provider said: {\n  \"error\": {\n    \"code\": 404,\n    \"message\": \"This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.6-flash for the latest features and improvements. We recommend you to use the Interactions API.\",\n    \"status\": \"NOT_FOUND\"\n  }\n}\n"
+        },
+        {
+          "id": "and-lists",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "did not throw — KitError: Model \"gemini-2.5-flash\" is not available to this API key. Set GEMINI_MODEL_QUALITY / GEMINI_MODEL_FAST in .env to a model the key can use — the floating aliases gemini-flash-latest and gemini-flash-lite-latest are the safe default. Provider said: {\n  \"error\": {\n    \"code\": 404,\n    \"message\": \"This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.6-flash for the latest features and improvements. We recommend you to use the Interactions API.\",\n    \"status\": \"NOT_FOUND\"\n  }\n}\n"
+        },
+        {
+          "id": "product-description-trap",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "did not throw — KitError: Model \"gemini-2.5-flash\" is not available to this API key. Set GEMINI_MODEL_QUALITY / GEMINI_MODEL_FAST in .env to a model the key can use — the floating aliases gemini-flash-latest and gemini-flash-lite-latest are the safe default. Provider said: {\n  \"error\": {\n    \"code\": 404,\n    \"message\": \"This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.6-flash for the latest features and improvements. We recommend you to use the Interactions API.\",\n    \"status\": \"NOT_FOUND\"\n  }\n}\n"
+        },
+        {
+          "id": "injection",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "did not throw — KitError: Model \"gemini-2.5-flash\" is not available to this API key. Set GEMINI_MODEL_QUALITY / GEMINI_MODEL_FAST in .env to a model the key can use — the floating aliases gemini-flash-latest and gemini-flash-lite-latest are the safe default. Provider said: {\n  \"error\": {\n    \"code\": 404,\n    \"message\": \"This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.6-flash for the latest features and improvements. We recommend you to use the Interactions API.\",\n    \"status\": \"NOT_FOUND\"\n  }\n}\n"
+        },
+        {
+          "id": "no-requirements-section",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "did not throw — KitError: Model \"gemini-2.5-flash\" is not available to this API key. Set GEMINI_MODEL_QUALITY / GEMINI_MODEL_FAST in .env to a model the key can use — the floating aliases gemini-flash-latest and gemini-flash-lite-latest are the safe default. Provider said: {\n  \"error\": {\n    \"code\": 404,\n    \"message\": \"This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.6-flash for the latest features and improvements. We recommend you to use the Interactions API.\",\n    \"status\": \"NOT_FOUND\"\n  }\n}\n"
+        },
+        {
+          "id": "seniority-and-years",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "did not throw — KitError: Model \"gemini-2.5-flash\" is not available to this API key. Set GEMINI_MODEL_QUALITY / GEMINI_MODEL_FAST in .env to a model the key can use — the floating aliases gemini-flash-latest and gemini-flash-lite-latest are the safe default. Provider said: {\n  \"error\": {\n    \"code\": 404,\n    \"message\": \"This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.6-flash for the latest features and improvements. We recommend you to use the Interactions API.\",\n    \"status\": \"NOT_FOUND\"\n  }\n}\n"
+        }
+      ],
+      "totals": {
+        "cases": 10,
+        "fully_passing": 0,
+        "runs": 10
+      },
+      "durationMs": 40677
+    }
+  ],
+  "exit_code": 1
+}

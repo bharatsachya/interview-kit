@@ -12,16 +12,20 @@
     "apps/*"
   ],
   "scripts": {
-    "build": "npm run typecheck",
-    "typecheck": "node scripts/typecheck.mjs",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "dev": "node scripts/dev-all.mjs",
+    "dev:real": "node scripts/dev-all.mjs --real",
+    "api": "tsx watch apps/api/src/main.ts",
+    "api:fake": "FAKE_LLM=true FAKE_FETCH=true tsx apps/api/src/main.ts",
     "dev:kit": "tsx scripts/dev.ts",
     "evaluate": "tsx scripts/evaluate.ts",
     "smoke": "tsx scripts/smoke.ts",
-    "api": "tsx apps/api/src/main.ts",
-    "api:fake": "FAKE_LLM=true FAKE_FETCH=true tsx apps/api/src/main.ts",
-    "trace": "tsx scripts/trace-view.ts"
+    "trace": "tsx scripts/trace-view.ts",
+    "eval:step": "tsx evals/run-step.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "node scripts/typecheck.mjs",
+    "build": "npm run typecheck",
+    "api:once": "tsx apps/api/src/main.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

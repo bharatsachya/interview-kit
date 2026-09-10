@@ -1,0 +1,54 @@
+{
+  "run_id": "2026-09-09T16-24-38-408Z",
+  "generated_at": "2026-09-09T16:24:38.419Z",
+  "repeat": 1,
+  "steps": [
+    {
+      "step": "08",
+      "name": "coverageLoop",
+      "target": "packages/coverage → runCoverage(input)",
+      "kind": "pure+fake",
+      "adapter": "Named runCoverage. It takes a GapFillWriter rather than an LlmProvider; the writer here is backed by a FakeLlmProvider so calls are recorded and one-requirement-per-call is observable.",
+      "cases": [
+        {
+          "id": "one-gap-closed-first-try",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "accept/reject per call — expected [{\"for\":\"r2\",\"accepted\":true}], got [{\"for\":\"r2\",\"accepted\":false}]"
+        },
+        {
+          "id": "zero-progress-stops-early",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "passes — expected 3, got 2"
+        },
+        {
+          "id": "two-gaps-one-closes-one-does-not",
+          "runs": 1,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "passes — expected 3, got 2"
+        },
+        {
+          "id": "no-gaps-no-calls",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        }
+      ],
+      "totals": {
+        "cases": 4,
+        "fully_passing": 1,
+        "runs": 4
+      },
+      "durationMs": 6
+    }
+  ],
+  "exit_code": 1
+}

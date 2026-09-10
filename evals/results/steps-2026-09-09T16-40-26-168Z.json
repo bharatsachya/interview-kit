@@ -1,0 +1,205 @@
+{
+  "run_id": "2026-09-09T16-40-26-168Z",
+  "generated_at": "2026-09-09T16:44:06.790Z",
+  "repeat": 2,
+  "steps": [
+    {
+      "step": "01",
+      "name": "extractRequirements",
+      "target": "packages/extraction → extractRequirements(jd, deps)",
+      "kind": "llm",
+      "cases": [
+        {
+          "id": "rich-structured",
+          "runs": 2,
+          "passed": 2,
+          "pass_rate": 1,
+          "flaky": false,
+          "scores": {
+            "must_recall": 1,
+            "invention_rate": 0,
+            "priority_accuracy": 1,
+            "forbidden_hits": 0,
+            "gold_total": 7,
+            "extracted_total": 7
+          }
+        },
+        {
+          "id": "rich-unstructured",
+          "runs": 2,
+          "passed": 2,
+          "pass_rate": 1,
+          "flaky": false,
+          "scores": {
+            "must_recall": 1,
+            "invention_rate": 0.167,
+            "priority_accuracy": 1,
+            "forbidden_hits": 0,
+            "gold_total": 5,
+            "extracted_total": 6
+          }
+        },
+        {
+          "id": "bonus-heavy",
+          "runs": 2,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "nice kind: \"A published blog post or talk about data\" — expected technical, got behavioural",
+          "assertion_pass_rates": {
+            "nice kind: \"A published blog post or talk about data\"": "0/2"
+          },
+          "scores": {
+            "must_recall": 1,
+            "invention_rate": 0,
+            "priority_accuracy": 1,
+            "forbidden_hits": 0,
+            "gold_total": 9,
+            "extracted_total": 9
+          }
+        },
+        {
+          "id": "stub",
+          "runs": 2,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "must present: \"Postgres\" — no extracted requirement matched",
+          "assertion_pass_rates": {
+            "must present: \"Postgres\"": "0/2"
+          },
+          "scores": {
+            "must_recall": 0.5,
+            "invention_rate": 0,
+            "priority_accuracy": 1,
+            "forbidden_hits": 0,
+            "gold_total": 2,
+            "extracted_total": 1
+          }
+        },
+        {
+          "id": "or-lists",
+          "runs": 2,
+          "passed": 2,
+          "pass_rate": 1,
+          "flaky": false,
+          "scores": {
+            "must_recall": 1,
+            "invention_rate": 0,
+            "priority_accuracy": 1,
+            "forbidden_hits": 0,
+            "gold_total": 4,
+            "extracted_total": 4
+          }
+        },
+        {
+          "id": "and-lists",
+          "runs": 2,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "must present: \"Kubernetes\" — no extracted requirement matched",
+          "assertion_pass_rates": {
+            "must present: \"Kubernetes\"": "0/2",
+            "must present: \"networking fundamentals\"": "1/2"
+          },
+          "scores": {
+            "must_recall": 0.7,
+            "invention_rate": 0,
+            "priority_accuracy": 1,
+            "forbidden_hits": 0,
+            "gold_total": 5,
+            "extracted_total": 3.5
+          }
+        },
+        {
+          "id": "product-description-trap",
+          "runs": 2,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "must priority: \"A track record of shipping real products\" — got \"nice\"",
+          "assertion_pass_rates": {
+            "must priority: \"A track record of shipping real products\"": "0/2",
+            "must priority: \"take a vague brief and turn it into some\"": "0/2",
+            "nice kind: \"Experience with agent or LLM products\"": "0/2",
+            "responsibilities in [4, 8]": "0/2"
+          },
+          "scores": {
+            "must_recall": 1,
+            "invention_rate": 0,
+            "priority_accuracy": 0.333,
+            "forbidden_hits": 0,
+            "gold_total": 3,
+            "extracted_total": 3
+          }
+        },
+        {
+          "id": "injection",
+          "runs": 2,
+          "passed": 1,
+          "pass_rate": 0.5,
+          "flaky": true,
+          "first_failure": "nice kind: \"CISSP or OSCP\" — expected technical, got domain",
+          "assertion_pass_rates": {
+            "nice kind: \"CISSP or OSCP\"": "1/2",
+            "responsibilities in [0, 1]": "1/2"
+          },
+          "scores": {
+            "must_recall": 1,
+            "invention_rate": 0,
+            "priority_accuracy": 1,
+            "forbidden_hits": 0,
+            "gold_total": 4,
+            "extracted_total": 4
+          }
+        },
+        {
+          "id": "no-requirements-section",
+          "runs": 2,
+          "passed": 2,
+          "pass_rate": 1,
+          "flaky": false,
+          "scores": {
+            "must_recall": 1,
+            "invention_rate": 0,
+            "priority_accuracy": 1,
+            "forbidden_hits": 0,
+            "gold_total": 0,
+            "extracted_total": 0
+          }
+        },
+        {
+          "id": "seniority-and-years",
+          "runs": 2,
+          "passed": 0,
+          "pass_rate": 0,
+          "flaky": false,
+          "first_failure": "must present: \"led the design of a payments or ledger system at\" — no extracted requirement matched",
+          "assertion_pass_rates": {
+            "must present: \"led the design of a payments or ledger system at\"": "0/2",
+            "must kind: \"8+ years of experience, at least 3 at a \"": "0/2",
+            "must kind: \"Deep knowledge of idempotency, reconcili\"": "0/2",
+            "must present: \"comfortable disagreeing with a room\"": "1/2",
+            "nice kind: \"experience with card networks or open ba\"": "0/2"
+          },
+          "scores": {
+            "must_recall": 0.7,
+            "invention_rate": 0.071,
+            "priority_accuracy": 1,
+            "forbidden_hits": 0,
+            "gold_total": 7,
+            "extracted_total": 6
+          }
+        }
+      ],
+      "totals": {
+        "cases": 10,
+        "fully_passing": 4,
+        "runs": 20
+      },
+      "durationMs": 220604
+    }
+  ],
+  "exit_code": 1
+}
