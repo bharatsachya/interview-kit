@@ -52,6 +52,13 @@ export interface JobRecord {
   id: string;
   userId: string | null;
   kitId: string | null;
+  /**
+   * A human-readable name for the run, taken from the posting's first line.
+   *
+   * Stored rather than held in the running process: a job has to be nameable in a list before
+   * its kit exists, and after a restart the process that started it may be gone.
+   */
+  label: string;
   status: JobStatus;
   progress: JobProgress | null;
   error: { code: string; message: string } | null;
@@ -62,6 +69,14 @@ export interface JobRecord {
 export interface JobStore {
   create(job: JobRecord): Promise<void>;
   findById(id: string): Promise<JobRecord | null>;
+  /**
+   * A user's runs, newest first.
+   *
+   * The history list is built from kits, and a kit does not exist until its job finishes — so a
+   * run in flight was invisible the moment you navigated away from the screen watching it. This
+   * is what lets a queued or running job hold its place in the list.
+   */
+  listByUser(userId: string, limit?: number): Promise<JobRecord[]>;
   updateProgress(id: string, progress: JobProgress): Promise<void>;
   complete(id: string, kitId: string): Promise<void>;
   fail(id: string, error: { code: string; message: string }): Promise<void>;

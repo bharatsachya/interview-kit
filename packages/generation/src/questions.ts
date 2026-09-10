@@ -108,6 +108,8 @@ export interface CategoryReport {
   /** Set when the call was not made, and why. Recorded honestly rather than faked. */
   skipped?: "no_requirements" | "no_context";
   failed?: string;
+  /** True when this category's answer was recalled rather than generated. */
+  cacheHit?: boolean;
 }
 
 export interface QuestionGenerationResult {
@@ -190,7 +192,7 @@ async function runCategory(
       }
 
       try {
-        const { data } = await input.llm.complete({
+        const { data, cacheHit } = await input.llm.complete({
         // A distinct purpose per category: a distinct span in the trace and a distinct cache key.
         purpose: `generate_questions:${category}`,
         prompt: buildPrompt(category, seed, context, input),
@@ -219,8 +221,8 @@ async function runCategory(
         });
       }
 
-      c.set("questions_out", data.questions.length);
-      return { category, requirementsIn: seed.length, questionsOut: data.questions.length };
+      c.setAll({ questions_out: data.questions.length, cache_hit: cacheHit });
+      return { category, requirementsIn: seed.length, questionsOut: data.questions.length, cacheHit };
     } catch (error) {
       // One category failing is a thinner kit, not a failed run. Recorded on the span rather
       // than thrown, so the sibling categories still run.

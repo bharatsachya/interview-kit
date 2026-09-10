@@ -50,6 +50,9 @@ export const OPENROUTER_FREE_MODELS = [
   "google/gemma-3-27b-it:free",
 ] as const;
 
+/** See the note in gemini.ts: sixty seconds is far too long to wait for a free model. */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
 export class OpenRouterTransport implements ModelTransport {
   readonly name = "openrouter";
 
@@ -80,7 +83,7 @@ export class OpenRouterTransport implements ModelTransport {
           temperature: 0.2,
           ...(request.maxOutputTokens !== undefined ? { max_tokens: request.maxOutputTokens } : {}),
         }),
-        signal: AbortSignal.timeout(this.options.timeoutMs ?? 60_000),
+        signal: AbortSignal.timeout(request.timeoutMs ?? this.options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS),
       });
     } catch (error) {
       // A timeout or a socket error has no status. Worth one more try, so retryable.

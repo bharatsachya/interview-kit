@@ -1,5 +1,6 @@
 import {
   ApiError,
+  type JobListView,
   type CreateBatchRequest,
   type CreateJobsResponse,
   type CreateKitRequest,
@@ -66,6 +67,16 @@ export const api = {
 
   async listKits(signal?: AbortSignal): Promise<KitListView> {
     return request<KitListView>("/kits", { signal });
+  },
+
+  /**
+   * Every run, including the ones still going.
+   *
+   * `listKits` only ever returns finished work, so a run in flight is invisible to it. This is
+   * what keeps a queued or running job in the history list while the user is somewhere else.
+   */
+  async listJobs(signal?: AbortSignal): Promise<JobListView> {
+    return request<JobListView>("/jobs", { signal });
   },
 
   async getKit(kitId: string, signal?: AbortSignal): Promise<KitView> {

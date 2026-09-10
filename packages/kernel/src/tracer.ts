@@ -46,7 +46,9 @@ export class InMemoryTracer implements Tracer {
       startedAt,
       endedAt: startedAt,
       durationMs: 0,
-      status: "ok",
+      // Settles to ok, skipped or failed when the step returns. Until then a watcher can tell
+      // "this is taking ninety seconds" from "this took no time at all".
+      status: "running",
       attrs: {},
     };
     this.#spans.push(span);

@@ -45,6 +45,8 @@ export interface BriefResult {
   sourcesUsed: number;
   /** True when the brief was written in code because there was nothing to summarise. */
   fabricationAvoided: boolean;
+  /** True when an identical request had already been answered and the model was not called. */
+  cacheHit: boolean;
 }
 
 const briefSchema = z.object({
@@ -75,10 +77,11 @@ export async function generateBrief(input: BriefInput): Promise<BriefResult> {
       hadHiringPage: false,
       sourcesUsed: 0,
       fabricationAvoided: true,
+      cacheHit: false,
     };
   }
 
-  const { data } = await input.llm.complete({
+  const { data, cacheHit } = await input.llm.complete({
     purpose: "generate_brief",
     prompt: buildPrompt(input),
     schema: briefSchema,
@@ -107,6 +110,7 @@ export async function generateBrief(input: BriefInput): Promise<BriefResult> {
     hadHiringPage,
     sourcesUsed: sources.length,
     fabricationAvoided: false,
+    cacheHit,
   };
 }
 

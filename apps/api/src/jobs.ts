@@ -1,4 +1,5 @@
 import {
+  KitError,
   toErrorShape,
   type Clock,
   type IdGenerator,
@@ -31,7 +32,20 @@ export interface JobRunnerOptions {
   /** A fresh tracer and pipeline wiring per job — concurrent jobs must not share a trace. */
   makeDeps: () => Omit<PipelineDeps, "tracer"> & { tracer: Tracer };
   concurrency?: number;
+  /**
+   * A hard ceiling on one run, after which the job is failed.
+   *
+   * The gateway already stops retrying at the run's budget deadline, and that is the mechanism
+   * that should normally end a slow run. This is the backstop for everything it cannot see: a
+   * socket that never closes, a crawl on a site that dribbles bytes, a bug in our own code. A
+   * job that hangs is worse than a job that fails — a failure tells the user something, and the
+   * screen watching it can stop.
+   */
+  timeoutMs?: number;
 }
+
+/** Longer than a healthy run by a wide margin, shorter than a person's patience. */
+export const DEFAULT_JOB_TIMEOUT_MS = 3 * 60_000;
 
 /** The nine steps, for turning a span count into a percentage the UI can show. */
 const PIPELINE_STEPS = [
@@ -74,6 +88,7 @@ export class JobRunner {
       await this.options.jobs.create({
         id: jobId,
         userId,
+        label: labelFor(testCase),
         kitId: existing.id,
         status: "done",
         progress: { step: "serialize_kit", stepIndex: PIPELINE_STEPS.length, stepCount: PIPELINE_STEPS.length },
@@ -88,7 +103,10 @@ export class JobRunner {
     await this.options.jobs.create({
       id: jobId,
       userId,
+      label: labelFor(testCase),
       kitId: null,
+      // Queued, not invisible. The history list reads jobs as well as kits, so a run holds its
+      // place from the moment it is accepted rather than appearing only once it has a kit.
       status: "queued",
       progress: null,
       error: null,
@@ -106,6 +124,7 @@ export class JobRunner {
     return this.#running.get(jobId)?.tracer.export() ?? [];
   }
 
+  /** In-process label for a running job; the stored one on the record is the durable answer. */
   labelFor(jobId: string): string {
     return this.#running.get(jobId)?.label ?? "";
   }
@@ -132,10 +151,16 @@ export class JobRunner {
       void this.#reportProgress(entry.jobId, deps.tracer);
     }, 500);
 
+    const timeoutMs = this.options.timeoutMs ?? DEFAULT_JOB_TIMEOUT_MS;
+
     try {
-      const result = await generateKit(
-        { jd: entry.testCase.jd, companyUrl: entry.testCase.company_url, days: entry.testCase.days },
-        deps,
+      const result = await withTimeout(
+        generateKit(
+          { jd: entry.testCase.jd, companyUrl: entry.testCase.company_url, days: entry.testCase.days },
+          deps,
+        ),
+        timeoutMs,
+        this.options.clock,
       );
 
       if (result.status === "failed" || result.kit === null) {
@@ -171,6 +196,37 @@ export class JobRunner {
       stepIndex: done.length,
       stepCount: PIPELINE_STEPS.length,
     });
+  }
+}
+
+/**
+ * Reject when the work outlasts its ceiling.
+ *
+ * The pipeline keeps running in the background after this rejects — there is no way to abort a
+ * fetch already in flight from out here — but the job is marked failed and the screen watching
+ * it stops. A run nobody is waiting for finishing quietly is a much smaller problem than a
+ * screen that never changes.
+ */
+async function withTimeout<T>(work: Promise<T>, ms: number, clock: Clock): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new KitError("TIMEOUT", `The run passed its ${Math.round(ms / 1000)}s limit and was stopped.`, {
+                details: { timeoutMs: ms },
+              }),
+            ),
+          ms,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    void clock;
   }
 }
 

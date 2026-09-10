@@ -42,6 +42,9 @@ export function formatTrace(spans: Span[], options: { indentWidth?: number } = {
 }
 
 const STATUS_LABEL: Record<SpanStatus, string> = {
+  // Only ever seen when a trace is printed mid-run, which the dev runner does not do — but a
+  // missing key here would render `undefined` rather than fail, so it is spelled out.
+  running: "…",
   ok: "ok",
   skipped: "skip",
   failed: "fail",

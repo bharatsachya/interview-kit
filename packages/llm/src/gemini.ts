@@ -26,6 +26,14 @@ interface GeminiResponse {
   error?: { message?: string; status?: string };
 }
 
+/**
+ * A free-tier model that has not answered in this long is not about to.
+ *
+ * Was sixty seconds, which combined with four retries and a three-model fallback list gave a
+ * twelve-minute worst case for one step — a run that looked hung because it effectively was.
+ */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
 export class GeminiTransport implements ModelTransport {
   readonly name = "gemini";
 
@@ -55,7 +63,7 @@ export class GeminiTransport implements ModelTransport {
             ...(request.maxOutputTokens !== undefined ? { maxOutputTokens: request.maxOutputTokens } : {}),
           },
         }),
-        signal: AbortSignal.timeout(this.options.timeoutMs ?? 60_000),
+        signal: AbortSignal.timeout(request.timeoutMs ?? this.options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS),
       });
     } catch (error) {
       // A timeout or a socket error has no status. Worth one more try, so retryable.

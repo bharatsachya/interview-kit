@@ -17,7 +17,7 @@ import { MemoryJobStore, MemoryKitStore, connectMongo } from "@trao/persistence"
 import { NullSearchProvider, TavilySearchProvider } from "@trao/research";
 import { FakeFetcher, LiveHttpFetcher, fixtureMounts } from "@trao/retrieval";
 import { createApp } from "./app";
-import { JobRunner } from "./jobs";
+import { DEFAULT_JOB_TIMEOUT_MS, JobRunner } from "./jobs";
 import { fakeLlmResponses, gapFillResponse } from "../../../fixtures/fake-llm-responses";
 import { loadEnv } from "../../../scripts/load-env";
 
@@ -133,14 +133,17 @@ async function main(): Promise<void> {
   const allowPrivateHosts = flag("ALLOW_PRIVATE_HOSTS");
   const provider = fakeLlm ? null : chooseProvider();
 
+  const jobTimeoutMs = Number(env("JOB_TIMEOUT_MS", String(DEFAULT_JOB_TIMEOUT_MS)));
   const cache = new MemoryCacheStore(clock);
 
   const makeDeps = () => {
     // A fresh tracer and id generator per job: two concurrent jobs must not interleave their
     // spans or their requirement ids.
     const tracer = new InMemoryTracer(clock);
+    // Comfortably inside the job ceiling, so the gateway gives up on its own terms — with a
+    // step recorded and a reason — before the backstop fires and reports only "timed out".
     const budget: Budget = new RunBudget(
-      { maxCalls: 40, maxTokens: 500_000, deadlineAt: clock.now() + 5 * 60_000 },
+      { maxCalls: 40, maxTokens: 500_000, deadlineAt: clock.now() + jobTimeoutMs * 0.8 },
       clock,
     );
 
@@ -181,7 +184,7 @@ async function main(): Promise<void> {
     };
   };
 
-  const runner = new JobRunner({ jobs, kits, ids: new RandomIdGenerator(), clock, makeDeps });
+  const runner = new JobRunner({ jobs, kits, ids: new RandomIdGenerator(), clock, makeDeps, timeoutMs: jobTimeoutMs });
 
   const app = createApp({
     auth,

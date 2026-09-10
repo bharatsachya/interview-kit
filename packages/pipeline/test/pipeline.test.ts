@@ -96,7 +96,7 @@ class TestTracer implements Tracer {
       startedAt,
       endedAt: startedAt,
       durationMs: 0,
-      status: "ok",
+      status: "running",
       attrs,
     };
     this.spans.push(span);
@@ -113,7 +113,9 @@ class TestTracer implements Tracer {
     };
 
     try {
-      return await this.#currentSpanId.run(id, () => fn(handle));
+      const result = await this.#currentSpanId.run(id, () => fn(handle));
+      if (span.status === "running") span.status = "ok";
+      return result;
     } catch (error) {
       span.status = "failed";
       throw error;

@@ -63,6 +63,27 @@ export interface KitListView {
   kits: KitSummary[];
 }
 
+/**
+ * A run, listable before it has a kit.
+ *
+ * The history sidebar was built from kits alone, and a kit exists only once its job has
+ * finished — so navigating away from the progress screen lost the run entirely. A job carries
+ * enough to hold a row: what it was for, how far it got, and where its kit is once there is one.
+ */
+export interface JobSummary {
+  id: string;
+  label: string;
+  status: JobRecord["status"];
+  kitId: string | null;
+  createdAt: number;
+  progress: JobRecord["progress"];
+  error: JobRecord["error"];
+}
+
+export interface JobListView {
+  jobs: JobSummary[];
+}
+
 /** The error body every failing endpoint returns. One shape, so the client has one branch. */
 export interface ApiErrorBody {
   code: string;

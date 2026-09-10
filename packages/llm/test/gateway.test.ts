@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Budget, Clock, LlmRequest } from "@trao/contracts";
 import { RunBudget, unlimitedBudget } from "../src/budget";
 import { FakeTransport, rateLimited, type ScriptedStep } from "../src/fake";
-import { LlmGateway, promptHash } from "../src/gateway";
+import { DEFAULT_REQUEST_BUDGET_MS, LlmGateway, promptHash } from "../src/gateway";
 import { MemoryCacheStore } from "../src/memory-cache";
 import { ProviderError } from "../src/transport";
 import { greetingSchema, RecordingTracer, type Greeting } from "./helpers";
@@ -586,5 +586,77 @@ describe("falling back to another model", () => {
     const { gateway, transport } = withModels([OK], ["only"]);
     await gateway.complete(ask({ tier: "quality" }));
     expect(transport.requests[0]?.model).toBe("only");
+  });
+});
+
+/**
+ * A run that cannot finish must stop, not grind.
+ *
+ * A 30s request, four attempts and a three-model fallback list is twelve minutes for one step.
+ * A user watched a job sit on "Extracting requirements" for three minutes with no way to tell
+ * whether it had died. The budget deadline existed but was consulted once, before the step
+ * began, and never again.
+ */
+describe("the deadline bounds retries and fallback", () => {
+  const timingOut = () => new ProviderError("timed out", { retryable: true });
+
+  function withDeadline(msFromNow: number, models: string[], script: ScriptedStep[]) {
+    const clock = new TestClock(0);
+    const transport = new FakeTransport(script);
+    const gateway = new LlmGateway({
+      transport,
+      cache: new MemoryCacheStore(clock),
+      clock,
+      tracer: new RecordingTracer(),
+      budget: new RunBudget({ maxCalls: 99, maxTokens: 1e9, deadlineAt: msFromNow }, clock),
+      models: { quality: models, fast: "model-flash" },
+      maxAttempts: 4,
+      backoff: { random: () => 1 },
+    });
+    return { gateway, transport, clock };
+  }
+
+  it("stops retrying once the run is out of time", async () => {
+    // Each backoff advances the clock; the deadline arrives long before four attempts do.
+    const { gateway, transport } = withDeadline(1_200, ["busy"], [timingOut()]);
+
+    await expect(gateway.complete(ask({ tier: "quality" }))).rejects.toMatchObject({ code: "TIMEOUT" });
+    expect(transport.callCount).toBeLessThan(4);
+  });
+
+  it("does not start a backoff that would outlast the deadline", async () => {
+    const { gateway, clock } = withDeadline(600, ["busy"], [timingOut()]);
+
+    await expect(gateway.complete(ask({ tier: "quality" }))).rejects.toThrow(/outlast the run's deadline/);
+    expect(clock.now()).toBeLessThanOrEqual(600);
+  });
+
+  it("does not try a third model with no time left", async () => {
+    const { gateway, transport } = withDeadline(
+      1_000,
+      ["one", "two", "three"],
+      [new ProviderError("503", { status: 503 })],
+    );
+
+    await expect(gateway.complete(ask({ tier: "quality" }))).rejects.toThrow();
+    expect(new Set(transport.requests.map((r) => r.model)).size).toBeLessThan(3);
+  });
+
+  it("caps a single request at the time remaining", async () => {
+    const { gateway, transport } = withDeadline(5_000, ["m"], [OK]);
+
+    await gateway.complete(ask({ tier: "quality" }));
+    // Not the transport's own 30s default: the run only has five seconds.
+    expect(transport.requests[0]?.timeoutMs).toBeLessThanOrEqual(5_000);
+  });
+
+  it("still caps a request when the budget sets no meaningful deadline", async () => {
+    // `unlimitedBudget` uses a far-future sentinel rather than Infinity, so the per-request
+    // ceiling applies rather than the remaining time. That is the intent: no single request
+    // should be allowed to run for half an hour because the run as a whole is unbounded.
+    const { gateway, transport } = harness([OK]);
+
+    await gateway.complete(ask());
+    expect(transport.requests[0]?.timeoutMs).toBe(DEFAULT_REQUEST_BUDGET_MS);
   });
 });

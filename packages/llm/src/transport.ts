@@ -14,6 +14,13 @@ export interface ModelTransportRequest {
   model: string;
   prompt: string;
   maxOutputTokens?: number;
+  /**
+   * Overrides the transport's own timeout for this request.
+   *
+   * The gateway sets it from the time left on the run: a request that cannot finish before the
+   * deadline should not be started with a sixty-second budget it will never be allowed to use.
+   */
+  timeoutMs?: number;
 }
 
 export interface ModelTransportResponse {

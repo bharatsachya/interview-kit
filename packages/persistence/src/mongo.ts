@@ -52,6 +52,8 @@ async function ensureIndexes(db: Db): Promise<void> {
   // the hot path of a page load, so neither is left to a collection scan.
   await db.collection("kits").createIndex({ hash: 1 });
   await db.collection("kits").createIndex({ userId: 1, createdAt: -1 });
+  // The history list reads jobs by user, newest first, on every page load.
+  await db.collection("jobs").createIndex({ userId: 1, createdAt: -1 });
 }
 
 type Stored<T> = T & { _id: string };
@@ -105,6 +107,11 @@ export class MongoJobStore implements JobStore {
 
   async findById(id: string): Promise<JobRecord | null> {
     return strip<JobRecord>(await this.#collection.findOne({ _id: id }));
+  }
+
+  async listByUser(userId: string, limit = 50): Promise<JobRecord[]> {
+    const documents = await this.#collection.find({ userId }).sort({ createdAt: -1 }).limit(limit).toArray();
+    return documents.map((document) => strip<JobRecord>(document)).filter((j): j is JobRecord => j !== null);
   }
 
   async updateProgress(id: string, progress: JobProgress): Promise<void> {

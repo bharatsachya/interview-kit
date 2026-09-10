@@ -82,6 +82,8 @@ export const DEFAULT_MAX_ATTEMPTS = 4;
 export const DEFAULT_CACHE_TTL_SECONDS = 60 * 60 * 24 * 7;
 /** Output allowance reserved when the caller does not cap it. */
 export const DEFAULT_OUTPUT_RESERVE = 1_024;
+/** Ceiling on any single request, however much time the run has left. */
+export const DEFAULT_REQUEST_BUDGET_MS = 30_000;
 
 interface CachedResponse {
   text: string;
@@ -217,6 +219,8 @@ export class LlmGateway implements LlmProvider {
     let lastError: unknown;
 
     for (const [index, model] of candidates.entries()) {
+      // Trying a third model with four seconds left helps nobody.
+      if (index > 0 && this.#remainingMs() <= 0) break;
       if (index > 0) {
         // A second model is a second request. Reserve for it, and say so in the trace.
         this.options.budget.spend(estimateTokens(request.prompt) + (request.maxOutputTokens ?? DEFAULT_OUTPUT_RESERVE));
@@ -238,13 +242,37 @@ export class LlmGateway implements LlmProvider {
   /** Exposed only so the return type above can be named. Never called. */
   declare _send: (request: { model: string; prompt: string; maxOutputTokens?: number }, span: SpanHandle) => Promise<ModelTransportResponse>;
 
+  /** Milliseconds left on the run, or Infinity when the budget sets no deadline. */
+  #remainingMs(): number {
+    const deadline = this.options.budget.limits.deadlineAt;
+    if (!Number.isFinite(deadline)) return Number.POSITIVE_INFINITY;
+    return deadline - this.options.clock.now();
+  }
+
   async #send(request: { model: string; prompt: string; maxOutputTokens?: number }, span: SpanHandle) {
     let lastError: unknown;
 
     for (let attempt = 1; attempt <= this.#maxAttempts; attempt += 1) {
+      // The deadline is checked before every attempt, not only before the first call.
+      //
+      // It used not to be, and the arithmetic was ugly: a thirty-second request, four attempts,
+      // and a three-model fallback list is twelve minutes for one step. A run that hit a slow
+      // provider looked hung because it effectively was, and the five-minute budget could not
+      // help — it was consulted before the step began and never again.
+      const remaining = this.#remainingMs();
+      if (remaining <= 0) {
+        throw new KitError("TIMEOUT", `Ran out of time on attempt ${attempt} for ${request.model}.`, {
+          details: { model: request.model, attempts: attempt - 1 },
+        });
+      }
+
       span.set("attempt", attempt);
       try {
-        return await this.options.transport.send(request);
+        // Never start a request with more time than the run has left.
+        return await this.options.transport.send({
+          ...request,
+          ...(Number.isFinite(remaining) ? { timeoutMs: Math.max(1_000, Math.min(remaining, DEFAULT_REQUEST_BUDGET_MS)) } : {}),
+        });
       } catch (error) {
         lastError = error;
         const providerError = error instanceof ProviderError ? error : undefined;
@@ -253,6 +281,14 @@ export class LlmGateway implements LlmProvider {
 
         if (providerError?.status === 429) span.set("rate_limited", true);
         const delay = retryDelay(attempt, providerError?.retryAfterMs, this.options.backoff);
+
+        // A backoff that would sleep past the deadline is a backoff that will never be used.
+        if (delay >= this.#remainingMs()) {
+          throw new KitError("TIMEOUT", `Backing off ${delay}ms would outlast the run's deadline.`, {
+            details: { model: request.model, attempts: attempt },
+          });
+        }
+
         span.set("last_retry_delay_ms", delay);
         await this.options.clock.sleep(delay);
       }

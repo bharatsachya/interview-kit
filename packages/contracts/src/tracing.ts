@@ -7,7 +7,16 @@
  * search, the four separate question calls and the second coverage pass actually happened.
  */
 
-export type SpanStatus = "ok" | "skipped" | "failed";
+/**
+ * `running` until the step settles.
+ *
+ * A span is recorded the moment it opens, so a consumer sees it while the work is still going.
+ * Without a distinct status for that, an in-flight step is indistinguishable from one that
+ * finished instantly — both carry `endedAt === startedAt` and `durationMs: 0` — and a screen
+ * watching a ninety-second extraction can only show it as already done. The step then appears
+ * to produce its answer out of nowhere.
+ */
+export type SpanStatus = "running" | "ok" | "skipped" | "failed";
 
 export interface SpanError {
   code: string;
@@ -20,6 +29,7 @@ export interface Span {
   step: string;
   /** Epoch milliseconds, from the injected Clock so tests are deterministic. */
   startedAt: number;
+  /** Equal to `startedAt` while `status` is `running`. */
   endedAt: number;
   durationMs: number;
   status: SpanStatus;

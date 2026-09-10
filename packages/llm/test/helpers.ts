@@ -20,7 +20,7 @@ export class RecordingTracer implements Tracer {
       startedAt: 0,
       endedAt: 0,
       durationMs: 0,
-      status: "ok",
+      status: "running",
       attrs,
     };
     this.spans.push(span);
@@ -39,7 +39,10 @@ export class RecordingTracer implements Tracer {
     };
 
     try {
-      return await fn(handle);
+      const result = await fn(handle);
+      // `skip()` already settled it; anything still running finished cleanly.
+      if (span.status === "running") span.status = "ok";
+      return result;
     } catch (error) {
       span.status = "failed";
       throw error;

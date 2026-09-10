@@ -1,6 +1,6 @@
 import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
-import type { CreateJobsResponse, KitListView, KitView } from "@trao/api-contract";
+import type { CreateJobsResponse, JobListView, KitListView, KitView } from "@trao/api-contract";
 import { isKitError, type JobStore, type KitStore } from "@trao/contracts";
 import type { Authenticator } from "@trao/auth";
 import { getKitForBuilder, parseCases, type EvaluationCase, type InternalKit } from "@trao/kit";
@@ -78,6 +78,26 @@ export function createApp(options: ApiOptions): express.Express {
   );
 
   app.get(
+    "/jobs",
+    guarded(options, async (_req, res, userId) => {
+      // Everything the user has run, finished or not. A queued job appears here immediately,
+      // which is what lets the history list survive navigating away mid-run.
+      const jobs = await options.jobs.listByUser(userId);
+      res.set("cache-control", "no-store").json({
+        jobs: jobs.map((job) => ({
+          id: job.id,
+          label: job.label,
+          status: job.status,
+          kitId: job.kitId,
+          createdAt: job.createdAt,
+          progress: job.progress,
+          error: job.error,
+        })),
+      } satisfies JobListView);
+    }),
+  );
+
+  app.get(
     "/jobs/:jobId",
     guarded(options, async (req, res, userId) => {
       const job = await options.jobs.findById(req.params["jobId"] as string);
@@ -90,7 +110,9 @@ export function createApp(options: ApiOptions): express.Express {
       res.set("cache-control", "no-store").json({
         job,
         spans: options.runner.spansFor(job.id),
-        label: options.runner.labelFor(job.id),
+        // The in-process label while the job is running, the stored one otherwise — a job
+        // watched after a restart still has a name, it just no longer has live spans.
+        label: options.runner.labelFor(job.id) || job.label,
       });
     }),
   );

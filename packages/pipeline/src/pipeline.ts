@@ -147,6 +147,9 @@ async function run(
       responsibility_count: result.role.responsibilities.length,
       dropped_as_invented: result.dropped.length,
       priority_corrections: result.priorityCorrections,
+      // An answer that was recalled rather than generated returns in milliseconds. Without this
+      // the step looks skipped, or looks like the kit appeared from nowhere.
+      cache_hit: result.cacheHit,
     });
     if (result.requirements.length === 0) s.set("thin_description", true);
     // An example list the model split into one requirement per name, put back together.
@@ -263,6 +266,7 @@ async function run(
         had_hiring_page: result.hadHiringPage,
         output_chars: result.brief.summary.length + result.brief.whatTheyDo.length,
         wrote_without_model: result.fabricationAvoided,
+        cache_hit: result.cacheHit,
       });
       return result.brief;
     } catch (error) {
@@ -288,7 +292,11 @@ async function run(
       ...(deps.questionsPerCategory !== undefined ? { perCategory: deps.questionsPerCategory } : {}),
     });
 
-    s.set("questions_out", result.questions.length);
+    s.setAll({
+      questions_out: result.questions.length,
+      // True only when every category was recalled; a partial hit is not "this was cached".
+      cache_hit: result.reports.filter((r) => r.skipped === undefined).every((r) => r.cacheHit === true),
+    });
     return result;
   });
 

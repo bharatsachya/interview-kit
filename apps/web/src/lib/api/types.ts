@@ -10,6 +10,8 @@ export type {
   CreateBatchRequest,
   CreateJobsResponse,
   CreateKitRequest,
+  JobListView,
+  JobSummary,
   JobView,
   KitListView,
   KitSummary,

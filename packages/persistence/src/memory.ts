@@ -70,6 +70,14 @@ export class MemoryJobStore implements JobStore {
     return found === undefined ? null : clone(found);
   }
 
+  async listByUser(userId: string, limit = 50): Promise<JobRecord[]> {
+    return [...this.#jobs.values()]
+      .filter((job) => job.userId === userId)
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, limit)
+      .map(clone);
+  }
+
   async updateProgress(id: string, progress: JobProgress): Promise<void> {
     await this.#patch(id, (job) => ({ ...job, status: "running", progress: clone(progress) }));
   }

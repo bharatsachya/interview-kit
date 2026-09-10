@@ -104,6 +104,14 @@ export interface ExtractionResult {
    */
   suspicious: boolean;
   suspiciousReasons: string[];
+  /**
+   * True when the model was not called because an identical request was already answered.
+   *
+   * A recalled extraction returns in milliseconds. Without saying so, the step looks skipped —
+   * or the kit looks invented — because the screen that showed "reading the posting" for fifteen
+   * seconds last run now shows the answer instantly.
+   */
+  cacheHit: boolean;
   jdChars: number;
 }
 
@@ -119,10 +127,11 @@ export async function extractRequirements(input: ExtractionInput): Promise<Extra
       suspicious: false,
       suspiciousReasons: [],
       jdChars: 0,
+      cacheHit: false,
     };
   }
 
-  const { data } = await input.llm.complete({
+  const { data, cacheHit } = await input.llm.complete({
     purpose: "extract_requirements",
     // Worth 20 points, so it gets the better model. Everything else takes the fast one.
     tier: "quality",
@@ -200,6 +209,7 @@ export async function extractRequirements(input: ExtractionInput): Promise<Extra
     suspicious: sanity.suspicious,
     suspiciousReasons: sanity.reasons,
     jdChars: jd.length,
+    cacheHit,
   };
 }
 
