@@ -1,25 +1,14 @@
-import { NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
-import { parseCases } from "@trao/kit";
-import { startJob } from "@/lib/mock/pipeline";
+import { forwardBody, proxyJson } from "@/lib/api/upstream";
 
 /**
  * POST /api/kits/batch — start one job per uploaded role.
  *
- * The payload is the same cases.json shape Appendix B defines, parsed by the same
- * `parseCases`. That is the whole point of accepting that shape in the UI: one parser serves
- * the upload and the batch script, and the demo writes itself.
+ * The payload is the cases.json shape Appendix B defines, and the API parses it with the same
+ * `parseCases` that `scripts/evaluate.ts` uses. One parser serves the upload and the batch
+ * command, so the demo writes itself.
  *
  * Ids come back in input order so the progress screen can label its rows before any kit exists.
  */
 export async function POST(request: Request) {
-  await auth.protect();
-
-  const body = (await request.json().catch(() => null)) as { cases?: unknown } | null;
-  const parsed = parseCases(body?.cases);
-  if (!parsed.ok) {
-    return NextResponse.json({ code: "INVALID_CASES", message: parsed.errors.join("; ") }, { status: 422 });
-  }
-
-  return NextResponse.json({ job_ids: parsed.cases.map(startJob) }, { status: 202 });
+  return proxyJson("/kits/batch", { method: "POST", body: await forwardBody(request) });
 }

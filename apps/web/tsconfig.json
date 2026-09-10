@@ -17,6 +17,7 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
+      "@trao/api-contract": ["../../packages/api-contract/src/index.ts"],
       "@trao/contracts": ["../../packages/contracts/src/index.ts"],
       "@trao/kit": ["../../packages/kit/src/index.ts"],
       "@trao/scheduling": ["../../packages/scheduling/src/index.ts"]
