@@ -9,6 +9,7 @@ tmp/
 .env
 .env.local
 .env.*.local
+.env.deploy
 
 .DS_Store
 *.log

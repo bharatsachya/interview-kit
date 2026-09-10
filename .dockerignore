@@ -1,0 +1,22 @@
+node_modules
+**/node_modules
+.git
+.next
+# The web app is not in this image. Its manifest is, because `npm ci` will not resolve a
+# workspace graph with a member missing.
+apps/web/**
+!apps/web/package.json
+out
+tmp
+coverage
+evals
+docs
+.lavish
+.claude
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+kits.json
+*.log
+.DS_Store
