@@ -50,7 +50,19 @@ export class FakeFetcher implements HttpFetcher {
     }
 
     const mount = this.#mountFor(url);
-    if (mount === null) return notFound(url);
+    if (mount === null) {
+      // A host with no mount is a configuration mismatch, not a 404. Returning a plain 404 here
+      // sent a browser the message "company site returned 404 for https://magica.com/" during a
+      // `--fake-fetch` run, which reads as the site being down rather than as the fetcher not
+      // knowing it. The two need to look different, because the fixes are nothing alike.
+      throw new KitError(
+        "INVALID_INPUT",
+        `FakeFetcher has no fixture mounted for ${new URL(url).host}. ` +
+          `It serves only: ${Object.keys(this.options.mounts).join(", ")}. ` +
+          `Use a real fetcher (npm run dev:real) to reach a live site.`,
+        { details: { fixture_miss: true, host: new URL(url).host } },
+      );
+    }
 
     const filePath = this.#filePathFor(url, mount);
     if (filePath === null) return notFound(url);
@@ -107,14 +119,19 @@ export class FakeFetcher implements HttpFetcher {
   }
 }
 
+/** A mounted site that has no such page. A genuine 404, unlike an unmounted host. */
 function notFound(url: string): FetchResult {
+  const body = "<!doctype html><html><body><h1>404</h1></body></html>";
   return {
     url,
     finalUrl: url,
     status: 404,
     contentType: "text/html; charset=utf-8",
-    body: "<!doctype html><html><body><h1>404</h1></body></html>",
-    bytes: 52,
+    body,
+    // Measured, not asserted. This was hardcoded to 52 while the body is 53 bytes — a small lie,
+    // but `bytes` is the field you check when a page looks truncated, and a constant there is
+    // the one value guaranteed not to tell you anything.
+    bytes: Buffer.byteLength(body),
   };
 }
 

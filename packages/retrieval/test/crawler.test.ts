@@ -637,3 +637,31 @@ describe("the two scorers", () => {
     expect(kinds.has("about")).toBe(true);
   });
 });
+
+describe("a host the fixture fetcher does not serve", () => {
+  it("says so, rather than reporting a 404", async () => {
+    // A `--fake-fetch` run against a real company URL told a browser "company site returned 404
+    // for https://magica.com/", which reads as the site being down. It was the fetcher not
+    // knowing the host. The two failures need different messages, because the fixes differ.
+    const f = fetcher();
+
+    await expect(f.fetch("https://magica.com/")).rejects.toThrow(/no fixture mounted for magica\.com/);
+    await expect(f.fetch("https://magica.com/")).rejects.toMatchObject({
+      details: { fixture_miss: true, host: "magica.com" },
+    });
+  });
+
+  it("names what it does serve, so the fix is obvious", async () => {
+    const f = fetcher();
+    await expect(f.fetch("https://unknown.test/")).rejects.toThrow(/meridian\.test/);
+    await expect(f.fetch("https://unknown.test/")).rejects.toThrow(/dev:real/);
+  });
+
+  it("still returns a real 404 for a missing page on a site it does serve", async () => {
+    const f = fetcher();
+    const result = await f.fetch("https://meridian.test/no-such-page");
+
+    expect(result.status).toBe(404);
+    expect(result.bytes).toBe(Buffer.byteLength(result.body));
+  });
+});
