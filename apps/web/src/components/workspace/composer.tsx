@@ -65,6 +65,18 @@ function withNote(jd: string, note: string): string {
  * than waiting for a click to tell you. Errors that only a submit can find — a posting too thin
  * to work with, a URL that will not parse — still surface after one.
  */
+/**
+ * A word count, formatted the same on the server and in the browser.
+ *
+ * `toLocaleString()` with no locale uses the runtime's own — Node's on the server, the user's in
+ * the browser — so "1,240" and "1.240" can render for the same number and hydration reports a
+ * mismatch. Pinning the locale makes it one answer. The kit's own numbers are pinned the same
+ * way for the same reason.
+ */
+function formatCount(value: number): string {
+  return value.toLocaleString("en-US");
+}
+
 export function Composer({ onStarted }: { onStarted: (jobIds: string[], ask: string) => void }) {
   const [jd, setJd] = useState("");
   const [companyUrl, setCompanyUrl] = useState("");
@@ -293,7 +305,7 @@ export function Composer({ onStarted }: { onStarted: (jobIds: string[], ask: str
                 </span>
                 <span className="text-ink/50 block truncate text-xs">
                   {role.days} {role.days === "1" ? "day" : "days"} ·{" "}
-                  {role.jd.split(/\s+/).length.toLocaleString()} words
+                  {formatCount(role.jd.split(/\s+/).length)} words
                 </span>
               </span>
               <button

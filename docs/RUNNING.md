@@ -155,11 +155,20 @@ What to look for:
 Copy `.env.example` to `.env`. It is read automatically by the dev runner, the batch command and
 the API.
 
-**For a real run, exactly one variable is required:**
+**For a real run you need one model key — either provider:**
 
 ```bash
-GEMINI_API_KEY=...     # https://aistudio.google.com/apikey — free tier, no card
+GEMINI_API_KEY=...        # https://aistudio.google.com/apikey — free tier, no card
+# or
+OPENROUTER_API_KEY=...    # https://openrouter.ai/keys — free tier, no card
 ```
+
+With both set, `LLM_PROVIDER=gemini|openrouter` decides; with one, that one is used.
+
+Worth having both. Gemini's free tier is a **daily wall**, not a rate limit — once it is spent,
+waiting minutes does nothing and the day's testing is over. OpenRouter's `:free` models draw on a
+different bucket, so `LLM_PROVIDER=openrouter` keeps you working. They are alternatives rather
+than a chain: the gateway falls back between *models* within a provider, not between providers.
 
 Everything else has a working default:
 

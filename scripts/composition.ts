@@ -11,7 +11,8 @@ import {
 } from "@trao/llm";
 import { NullSearchProvider, TavilySearchProvider } from "@trao/research";
 import { FakeFetcher, LiveHttpFetcher, fixtureMounts } from "@trao/retrieval";
-import { GeminiTransport } from "@trao/llm";
+import { GeminiTransport, OPENROUTER_FREE_MODELS, OpenRouterTransport } from "@trao/llm";
+import type { ModelTransport } from "@trao/llm";
 import { fakeLlmResponses, gapFillResponse } from "../fixtures/fake-llm-responses";
 
 /**
@@ -59,6 +60,58 @@ export interface Wiring {
 }
 
 export const FIXTURE_ROOT = resolve(process.cwd(), "fixtures", "sites");
+
+/**
+ * Which provider to talk to.
+ *
+ * `LLM_PROVIDER` decides when both keys are present; otherwise whichever key exists wins. Two
+ * providers rather than one because Gemini's free tier is a daily wall — spend it and waiting
+ * minutes does nothing — and OpenRouter's free models draw on a different bucket, so an
+ * exhausted quota stops being the end of the day.
+ *
+ * They are alternatives, not a chain: the gateway falls back between *models* within one
+ * provider, not between providers. Cross-provider fallback would mean two rate-limit budgets and
+ * two caches behind one gateway, which is a bigger change than it looks and is not needed to
+ * keep working.
+ */
+function chooseProvider(): { transport: ModelTransport; quality: string[]; fast: string[]; label: string } {
+  const geminiKey = process.env["GEMINI_API_KEY"] ?? "";
+  const openRouterKey = process.env["OPENROUTER_API_KEY"] ?? "";
+  const requested = (process.env["LLM_PROVIDER"] ?? "").trim().toLowerCase();
+
+  const useOpenRouter =
+    requested === "openrouter" || (requested === "" && geminiKey === "" && openRouterKey !== "");
+
+  if (useOpenRouter) {
+    if (openRouterKey === "") throw new Error("LLM_PROVIDER=openrouter but OPENROUTER_API_KEY is not set.");
+    const free = [...OPENROUTER_FREE_MODELS];
+    return {
+      transport: new OpenRouterTransport({
+        apiKey: openRouterKey,
+        appName: "Trao Interview Prep Kit",
+        ...(process.env["OPENROUTER_APP_URL"] !== undefined ? { appUrl: process.env["OPENROUTER_APP_URL"] } : {}),
+      }),
+      // One list for both tiers: the free models are peers rather than a quality ladder, and
+      // claiming otherwise in the wiring would be a fiction the trace would then repeat.
+      quality: modelList("OPENROUTER_MODELS", free),
+      fast: modelList("OPENROUTER_MODELS", free),
+      label: "OpenRouter (free models)",
+    };
+  }
+
+  if (geminiKey === "") {
+    throw new Error(
+      "No model key. Set GEMINI_API_KEY or OPENROUTER_API_KEY in .env, or use --fake-llm to run without one.",
+    );
+  }
+
+  return {
+    transport: new GeminiTransport({ apiKey: geminiKey }),
+    quality: modelList("GEMINI_MODEL_QUALITY", ["gemini-flash-latest", "gemini-3.6-flash", "gemini-3.5-flash"]),
+    fast: modelList("GEMINI_MODEL_FAST", ["gemini-flash-lite-latest", "gemini-3.5-flash-lite"]),
+    label: "Gemini",
+  };
+}
 
 /** `GEMINI_MODEL_QUALITY=a,b,c` overrides the list; a single name pins one model. */
 function modelList(variable: string, fallback: readonly string[]): string[] {
@@ -109,12 +162,9 @@ export function wire(options: WiringOptions = {}): Wiring {
     llm = fake;
     describe.push("llm: FakeLlmProvider (no network, no quota)");
   } else {
-    const apiKey = process.env["GEMINI_API_KEY"] ?? "";
-    if (apiKey === "") {
-      throw new Error("GEMINI_API_KEY is not set. Use --fake-llm to run without a key, or see .env.example.");
-    }
+    const { transport, quality, fast, label } = chooseProvider();
     llm = new LlmGateway({
-      transport: new GeminiTransport({ apiKey }),
+      transport,
       cache: options.noCache === true ? new NullCacheStore() : new MemoryCacheStore(clock),
       clock,
       tracer,
@@ -128,14 +178,14 @@ export function wire(options: WiringOptions = {}): Wiring {
         // time bomb in a repo someone runs months from now. But `gemini-flash-latest` also
         // returned 503 on three consecutive runs while other models answered in under a second,
         // so an alias alone is a different time bomb. The list survives both.
-        quality: modelList("GEMINI_MODEL_QUALITY", ["gemini-flash-latest", "gemini-3.6-flash", "gemini-3.5-flash"]),
-        fast: modelList("GEMINI_MODEL_FAST", ["gemini-flash-lite-latest", "gemini-3.5-flash-lite"]),
+        quality,
+        fast,
       },
       requestsPerMinute: Number(process.env["GEMINI_RPM"] ?? 10),
       tokensPerMinute: Number(process.env["GEMINI_TPM"] ?? 250_000),
       ...(options.recordPrompts === true ? { recordPrompts: true } : {}),
     });
-    describe.push(`llm: Gemini via gateway${options.noCache === true ? " (cache bypassed)" : ""}`);
+    describe.push(`llm: ${label} via gateway${options.noCache === true ? " (cache bypassed)" : ""}`);
   }
 
   // ── Fetching ───────────────────────────────────────────────────────────────────────────

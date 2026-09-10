@@ -3,7 +3,16 @@ import { ClerkAuthenticator, DevAuthenticator, type Authenticator } from "@trao/
 import type { Budget, JobStore, KitStore } from "@trao/contracts";
 import { InMemoryTracer, RandomIdGenerator, RoutedIdGenerator, SequentialIdGenerator, SystemClock } from "@trao/kernel";
 import type { InternalKit } from "@trao/kit";
-import { FakeLlmProvider, GeminiTransport, LlmGateway, MemoryCacheStore, RunBudget } from "@trao/llm";
+import {
+  FakeLlmProvider,
+  GeminiTransport,
+  LlmGateway,
+  MemoryCacheStore,
+  OPENROUTER_FREE_MODELS,
+  OpenRouterTransport,
+  RunBudget,
+  type ModelTransport,
+} from "@trao/llm";
 import { MemoryJobStore, MemoryKitStore, connectMongo } from "@trao/persistence";
 import { NullSearchProvider, TavilySearchProvider } from "@trao/research";
 import { FakeFetcher, LiveHttpFetcher, fixtureMounts } from "@trao/retrieval";
@@ -27,6 +36,50 @@ const clock = new SystemClock();
 
 function env(name: string, fallback = ""): string {
   return process.env[name] ?? fallback;
+}
+
+interface ProviderChoice {
+  transport: ModelTransport;
+  quality: string[];
+  fast: string[];
+  label: string;
+}
+
+/** Mirrors `scripts/composition.ts`. See there for why two providers rather than one. */
+function chooseProvider(): ProviderChoice {
+  const geminiKey = env("GEMINI_API_KEY");
+  const openRouterKey = env("OPENROUTER_API_KEY");
+  const requested = env("LLM_PROVIDER").trim().toLowerCase();
+
+  const useOpenRouter = requested === "openrouter" || (requested === "" && geminiKey === "" && openRouterKey !== "");
+
+  if (useOpenRouter) {
+    if (openRouterKey === "") throw new Error("LLM_PROVIDER=openrouter but OPENROUTER_API_KEY is not set.");
+    const free = modelList("OPENROUTER_MODELS", OPENROUTER_FREE_MODELS);
+    return {
+      transport: new OpenRouterTransport({
+        apiKey: openRouterKey,
+        appName: "Trao Interview Prep Kit",
+        ...(env("OPENROUTER_APP_URL") !== "" ? { appUrl: env("OPENROUTER_APP_URL") } : {}),
+      }),
+      quality: free,
+      fast: free,
+      label: "openrouter (free)",
+    };
+  }
+
+  if (geminiKey === "") {
+    throw new Error(
+      "No model key. Set GEMINI_API_KEY or OPENROUTER_API_KEY, or FAKE_LLM=true to run without one.",
+    );
+  }
+
+  return {
+    transport: new GeminiTransport({ apiKey: geminiKey }),
+    quality: modelList("GEMINI_MODEL_QUALITY", ["gemini-flash-latest", "gemini-3.6-flash", "gemini-3.5-flash"]),
+    fast: modelList("GEMINI_MODEL_FAST", ["gemini-flash-lite-latest", "gemini-3.5-flash-lite"]),
+    label: "gemini",
+  };
 }
 
 function modelList(variable: string, fallback: readonly string[]): string[] {
@@ -78,11 +131,7 @@ async function main(): Promise<void> {
   const fakeLlm = flag("FAKE_LLM");
   const fakeFetch = flag("FAKE_FETCH");
   const allowPrivateHosts = flag("ALLOW_PRIVATE_HOSTS");
-  const geminiKey = env("GEMINI_API_KEY");
-
-  if (!fakeLlm && geminiKey === "") {
-    throw new Error("GEMINI_API_KEY is not set. Set FAKE_LLM=true to run the API without a model.");
-  }
+  const provider = fakeLlm ? null : chooseProvider();
 
   const cache = new MemoryCacheStore(clock);
 
@@ -97,17 +146,12 @@ async function main(): Promise<void> {
 
     return {
       llm: fakeLlm ? makeFakeLlm() : new LlmGateway({
-        transport: new GeminiTransport({ apiKey: geminiKey }),
+        transport: (provider as ProviderChoice).transport,
         cache,
         clock,
         tracer,
         budget,
-        models: {
-          // Preferred first, then fallbacks — see scripts/composition.ts for why both a
-          // floating alias and a pinned name are needed.
-          quality: modelList("GEMINI_MODEL_QUALITY", ["gemini-flash-latest", "gemini-3.6-flash", "gemini-3.5-flash"]),
-          fast: modelList("GEMINI_MODEL_FAST", ["gemini-flash-lite-latest", "gemini-3.5-flash-lite"]),
-        },
+        models: { quality: (provider as ProviderChoice).quality, fast: (provider as ProviderChoice).fast },
         requestsPerMinute: Number(env("GEMINI_RPM", "10")),
         tokensPerMinute: Number(env("GEMINI_TPM", "250000")),
       }),
@@ -153,7 +197,7 @@ async function main(): Promise<void> {
         `api listening on :${port}`,
         `  auth      ${issuer !== "" ? "clerk" : "dev (no CLERK_ISSUER)"}`,
         `  store     ${mongoUri !== "" ? "mongodb" : "memory"}`,
-        `  model     ${fakeLlm ? "fake" : "gemini"}`,
+        `  model     ${fakeLlm ? "fake" : (provider as ProviderChoice).label}`,
         `  fetch     ${fakeFetch ? "fixtures" : "live"}`,
         `  search    ${env("TAVILY_API_KEY") === "" ? "none (step will be skipped)" : "tavily"}`,
         "",

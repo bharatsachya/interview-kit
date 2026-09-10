@@ -60,8 +60,25 @@ const clerkAppearance = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${barlow.variable} ${barlowCondensed.variable} h-full antialiased`}>
-      <body className="flex min-h-full flex-col">
+    /*
+     * `suppressHydrationWarning` on these two elements only.
+     *
+     * Browser extensions and Brave's shields write attributes onto <html> and <body> before
+     * React loads — a colour-scheme hint, a grammar checker's marker, a wallet's flag. React
+     * sees the server HTML and the live DOM disagree and reports a hydration error the
+     * application cannot cause and cannot fix.
+     *
+     * The suppression is one level deep by design: it silences the attribute diff on this
+     * element and nothing inside it, so a genuine mismatch in the app still reports normally.
+     * Putting it here rather than reaching for it later is the difference between ignoring one
+     * known class of noise and learning to ignore hydration errors generally.
+     */
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`${barlow.variable} ${barlowCondensed.variable} h-full antialiased`}
+    >
+      <body suppressHydrationWarning className="flex min-h-full flex-col">
         <ClerkProvider appearance={clerkAppearance}>
           {children}
         </ClerkProvider>
