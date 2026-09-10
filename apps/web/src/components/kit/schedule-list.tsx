@@ -25,7 +25,7 @@ export function ScheduleList({
 
   if (schedule.days.length === 0) {
     return (
-      <Frame empty className="p-4" marks={false}>
+      <Frame empty className="p-4">
         <p className="max-w-read text-sm">
           {schedule.daysAvailable <= 1
             ? "One day left, so there is no schedule to make. Work the questions hardest-first."
@@ -45,13 +45,13 @@ export function ScheduleList({
 
         return (
           <li key={day.day}>
-            <Frame className={`flex flex-col gap-3 p-4 ${first ? "bg-mint" : ""}`}>
+            <Frame className={`flex flex-col gap-3 p-4 ${first ? "bg-steel-100" : ""}`}>
               <div className="flex flex-wrap items-center gap-3">
                 <span className="font-head text-xs tracking-widest uppercase tabular-nums">
                   D-{schedule.daysAvailable - day.day + 1}
                 </span>
                 {first ? (
-                  <span className="font-head text-teal-800 text-xs tracking-widest uppercase">
+                  <span className="font-head text-steel-800 text-xs tracking-widest uppercase">
                     Start here
                   </span>
                 ) : null}

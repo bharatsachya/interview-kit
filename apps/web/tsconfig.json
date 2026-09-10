@@ -3,7 +3,13 @@
     "Extends the repo base so the app is held to the same strictness as every package.",
     "`paths` is the dependency-rule allowlist: the web app may read kit-shaped data and the",
     "shared error/DTO types, and nothing else. It must not reach llm, retrieval or pipeline —",
-    "the browser talks to the API, never to a provider. `npm run typecheck` enforces this."
+    "the browser talks to the API, never to a provider. `npm run typecheck` enforces this.",
+    "",
+    "`coverage` is on the list for one reason: comparing two kits means deciding whether two",
+    "requirements from different postings are the same requirement, and that comparison already",
+    "exists there as deterministic token overlap. Re-implementing it here would mean a second",
+    "copy of the stopword list, and the two would drift. It reaches only contracts and kit, so",
+    "it brings no provider with it — which is the property this allowlist actually protects."
   ],
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
@@ -20,6 +26,7 @@
       "@trao/api-contract": ["../../packages/api-contract/src/index.ts"],
       "@trao/contracts": ["../../packages/contracts/src/index.ts"],
       "@trao/kit": ["../../packages/kit/src/index.ts"],
+      "@trao/coverage": ["../../packages/coverage/src/index.ts"],
       "@trao/scheduling": ["../../packages/scheduling/src/index.ts"]
     }
   },

@@ -4,42 +4,52 @@
    Industry — the theme layer.
 
    The design system's stack note is the rule this file obeys: one layer declares the fonts and
-   the teal ramp as CSS variables, and everything after it is Tailwind core utilities. No
+   the steel ramp as CSS variables, and everything after it is Tailwind core utilities. No
    arbitrary values in component code — if a value is needed twice, it earns a token here.
 
-   Palette: near-white ground, mint for what needs you now, dusty teal for the system's own
-   work, and one red spent only on failure. Difficulty and confidence are counted and hatched,
-   never coloured, so they survive greyscale.
+   Palette: light ground, one steel accent, and one red spent only on failure. Difficulty and
+   confidence are counted and hatched, never coloured, so they survive greyscale.
+
+   Softened relative to the original blueprint pass: the hairline frames and registration marks
+   are gone, and everything is separated by tinted fills and gaps rather than a 1px mesh. A frame
+   around every card turned the workspace into graph paper, and one around the application only
+   redrew an edge the browser window already draws.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 @theme {
-  /* — ground — */
-  --color-paper: #f5f5f5;
+  /* — ground —
+     Three surfaces, not one: the workspace ground, the rail's slightly recessed tint, and the
+     white the artifact panel sits on so the kit reads as a document rather than more chrome. */
+  --color-paper: #f2f2f3;
+  --color-surface: #ffffff;
   --color-ink: #1d1f20;
-  --color-mint: #dff1f1;
 
   /* Failure and deletion only. Nothing else in the product may use it, so it never has to
      shout twice. */
   --color-alarm: #ff0000;
 
-  /* Hairline frames are the product's main structural device, so the divider is a token
-     rather than a per-component opacity. */
-  --color-divider: color-mix(in srgb, #1d1f20 16%, transparent);
+  /* — neutral tints —
+     Borders were doing two jobs: separating things, and saying "this is an object". The second
+     job moves here. Named by role rather than by number, because a component should ask for the
+     card fill, not for the 100 step. */
+  --color-tint-soft: #f7f7f8;
+  --color-tint: #ebebed;
+  --color-tint-strong: #e3e3e6;
+  --color-tint-line: #dcdce0;
 
-  /* — teal ramp, one shared lightness scale —
+  /* — steel ramp, one shared lightness scale —
      100–300 tinted fills and hovers · 500 base · 700–900 text on a tint and pressed states.
-     Paragraph-size accent text is always 700 or darker. The two named colours from the
-     palette sit on the ramp: mint #DFF1F1 at 200, dusty teal #BBD5DA at 300, and the deep
-     teal used for accent text and buttons at 700. */
-  --color-teal-100: #f0f8f8;
-  --color-teal-200: #dff1f1;
-  --color-teal-300: #bbd5da;
-  --color-teal-400: #9bbcc3;
-  --color-teal-500: #7ba1aa;
-  --color-teal-600: #5e848e;
-  --color-teal-700: #476c75;
-  --color-teal-800: #34515a;
-  --color-teal-900: #24393f;
+     Paragraph-size accent text is always 700 or darker: 500 on the 100 tint is not readable at
+     body size, and the ramp exists so nobody has to rediscover that per component. */
+  --color-steel-100: #eaf0f6;
+  --color-steel-200: #d7e2ed;
+  --color-steel-300: #b6cadd;
+  --color-steel-400: #8aa9c6;
+  --color-steel-500: #5980a6;
+  --color-steel-600: #4b6c8d;
+  --color-steel-700: #3d5773;
+  --color-steel-800: #2f4359;
+  --color-steel-900: #233343;
 
   /* — type —
      Barlow Condensed 600 for titles and interface labels; Barlow 400/500 for everything read.
@@ -47,9 +57,15 @@
   --font-head: var(--font-barlow-condensed), ui-sans-serif, system-ui, sans-serif;
   --font-body: var(--font-barlow), ui-sans-serif, system-ui, sans-serif;
 
-  /* Objects are square; the 4px belongs to inputs and buttons alone. Naming it means a
-     component never has to remember which Tailwind radius step happens to be 4px. */
-  --radius-control: 4px;
+  /* — radius —
+     Four steps, each tied to a kind of object rather than a size: rows and inputs, cards, the
+     composer, and anything that reads as a token you could pick up. The composer is deliberately
+     rounder than a card — it is the one thing on the page you type into, and the extra 8px is
+     what separates it from the surfaces it sits among. */
+  --radius-control: 10px;
+  --radius-card: 14px;
+  --radius-composer: 22px;
+  --radius-pill: 999px;
 
   /* — measure —
      Reading measure caps at 68ch, answer outlines at 60ch, the page at 1180. */
@@ -75,8 +91,13 @@
   /* — workspace regions —
      Named so the open/close animation interpolates between two tokens rather than two
      arbitrary values, and so the collapsed state is literally zero of the same thing. */
-  --container-sidebar: 16rem;
-  --container-panel: 30rem;
+  /* The conversation's measure. The centre region is fluid, but the conversation inside it is
+     not: a chat surface that grows to 1400px puts the composer's badges a screen away from its
+     button, and reading a paragraph across that width is worse than the empty gutter. */
+  --container-centre: 46rem; /* 736 */
+  --container-sidebar: 13.5rem; /* 216 */
+  --container-panel: 32.5rem; /* 520 */
+  --container-index: 9.5rem; /* 152 — the panel's own index rail */
 }
 
 @layer base {
@@ -102,23 +123,15 @@
     letter-spacing: -0.015em;
   }
 
-  /* Objects are square. The 4px belongs to inputs and buttons alone. */
-  button,
-  input,
-  select,
-  textarea {
-    border-radius: 0;
-  }
-
   /* The system ring: 2px steel, 2px offset. Never removed, never restyled per component —
      which is why it is set once, here, rather than in each component's class list. */
   :focus-visible {
-    outline: 2px solid var(--color-teal-700);
+    outline: 2px solid var(--color-steel-500);
     outline-offset: 2px;
   }
 
   ::selection {
-    background: color-mix(in srgb, var(--color-teal-500) 30%, transparent);
+    background: var(--color-steel-200);
   }
 }
 
@@ -153,74 +166,46 @@
   opacity: 0.7;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   Blueprint frame.
-
-   Cards are hairline frames on paper with registration marks, never filled panels. Ported
-   from the design system's own `.blueprint > .corner` markup so the marks stay outside the
-   box and a wrapper that also clips an overlay cannot swallow them.
-
-   Elevation exists only on the overlay layer — dialogs, the drag ghost, the mobile confidence
-   bar — so there is no elevation utility here on purpose.
-   ═══════════════════════════════════════════════════════════════════════════ */
+/* The composer's focus ring, and the only place the system rings something other than the
+   focused element itself. Focus belongs to the whole composer rather than to the textarea
+   inside it: a square outline drawn tight around a borderless input in a 22px card is the one
+   thing that makes the card look like a mistake. */
+@utility ring-composer {
+  box-shadow:
+    0 0 0 3px var(--color-steel-200),
+    0 0 0 4px var(--color-steel-400);
+}
 
 @layer components {
-  .blueprint {
-    position: relative;
-    border: 1px solid var(--color-divider);
-    border-radius: 0;
+  /* ─────────────────────────────────────────────────────────────────────────
+     Cards.
+
+     A tinted fill, no border, no marks. `tile` is the recessed variant used inside a card that
+     already sits on a tint — a signal tile inside the brief, a count inside the flashcard deck.
+     ───────────────────────────────────────────────────────────────────────── */
+  .card {
+    border-radius: var(--radius-card);
+    background: var(--color-tint);
   }
 
-  .blueprint > .corner {
-    position: absolute;
-    width: 11px;
-    height: 11px;
-    color: color-mix(in srgb, var(--color-ink) 55%, transparent);
+  .tile {
+    border-radius: 12px;
+    background: var(--color-tint-soft);
   }
 
-  .blueprint > .corner::before,
-  .blueprint > .corner::after {
-    content: "";
-    position: absolute;
-    background: currentColor;
+  /* The two states that still earn a frame, because both are claims about the content rather
+     than decoration: this failed, and this is genuinely empty. A dashed edge is not a hairline
+     mesh — there are never two of these next to each other. */
+  .frame-trouble {
+    border: 1px dashed var(--color-alarm);
+    border-radius: var(--radius-card);
+    background: transparent;
   }
 
-  .blueprint > .corner::before {
-    left: 5px;
-    top: 0;
-    width: 1px;
-    height: 100%;
-  }
-
-  .blueprint > .corner::after {
-    top: 5px;
-    left: 0;
-    width: 100%;
-    height: 1px;
-  }
-
-  .blueprint > .corner-tl {
-    top: -6px;
-    left: -6px;
-  }
-  .blueprint > .corner-tr {
-    top: -6px;
-    right: -6px;
-  }
-  .blueprint > .corner-bl {
-    bottom: -6px;
-    left: -6px;
-  }
-  .blueprint > .corner-br {
-    bottom: -6px;
-    right: -6px;
-  }
-
-  /* Incomplete or unverified: a partial brief, an unparsed requirement, a section that failed
-     to regenerate. The dashed frame is the quiet half of the one red. */
-  .blueprint-trouble {
-    border-style: dashed;
-    border-color: var(--color-alarm);
+  .frame-empty {
+    border: 1px dashed color-mix(in srgb, var(--color-ink) 25%, transparent);
+    border-radius: var(--radius-card);
+    background: transparent;
   }
 
   /* While a region edge is being dragged, the whole document takes the resize cursor and
@@ -228,12 +213,5 @@
   body.is-resizing {
     cursor: col-resize;
     user-select: none;
-  }
-
-  /* A category that is legitimately empty is dashed too, but in ink, not red. The four
-     categories are a checklist and a gap is worth seeing — it is not a failure, and borrowing
-     the alarm colour for it would spend the one red on a normal state. */
-  .blueprint-empty {
-    border-style: dashed;
   }
 }

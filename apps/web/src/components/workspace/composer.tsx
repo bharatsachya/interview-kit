@@ -1,51 +1,164 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { parseCasesJSON, type EvaluationCase } from "@trao/kit";
 import { api } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/types";
 import { normaliseCompanyUrl } from "@/lib/role-guess";
+import { Badge, CalendarIcon, GlobeIcon } from "@/components/industry/badge";
 import { Button } from "@/components/industry/button";
-import { TextArea, TextInput } from "@/components/industry/field";
-import { Frame } from "@/components/industry/frame";
 import { ErrorNotice } from "@/components/industry/states";
+import { Eyebrow } from "@/components/industry/text";
+
+/** The six the popover offers. Anything else goes in the field underneath it. */
+const DAY_PRESETS = [3, 5, 8, 14, 21, 30] as const;
+
+/** A role added but not yet built. Held as typed, so editing it puts back exactly what you had. */
+interface QueuedRole {
+  key: string;
+  jd: string;
+  companyUrl: string;
+  days: string;
+  note: string;
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * The `id` Appendix B requires, made from the company rather than asked for.
+ *
+ * It is a key for the batch output, not something a candidate has or should have to invent. The
+ * index keeps it unique when two roles are at the same company, which is the one case a hostname
+ * alone would collide on — and `parseCases` rejects duplicate ids outright.
+ */
+function caseId(url: string, index: number): string {
+  const slug = hostOf(url).replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase();
+  return `${slug || "role"}-${String(index + 1).padStart(2, "0")}`;
+}
+
+/** The candidate's own note, appended to the posting under a label so it is never mistaken for it. */
+function withNote(jd: string, note: string): string {
+  return note === "" ? jd : `${jd}\n\nAdded by the candidate:\n${note}`;
+}
 
 /**
  * The composer: a job description, a company site, the days left, and a file for several roles
  * at once.
  *
- * Centred on an empty workspace, the way a chat opens, then docked to the bottom once there is
- * a conversation above it. Same component either way — the fields are identical and only the
- * framing changes, so nothing about the form can drift between the two placements.
+ * The three inputs are not three labelled fields any more. Two of them — the site and the days —
+ * are settings with short, already-known values, and a labelled box with a hint under it is a
+ * lot of furniture to spend on a URL. They are badges instead: the value is the control, and the
+ * label is folded into the sentence the badge makes. The posting keeps the room, because the
+ * posting is the input that actually needs it.
  *
- * The description is the primary input and gets the room to say so. The other two are single
- * lines because they are a URL and a number.
+ * Focus lives on the whole composer rather than the textarea. A square outline drawn tight
+ * around a borderless input inside a 22px card is the one thing that makes the card look like a
+ * mistake, so the ring goes around the card and the textarea never draws its own.
+ *
+ * The button is dimmed until it would do something, and says what is missing on hover rather
+ * than waiting for a click to tell you. Errors that only a submit can find — a posting too thin
+ * to work with, a URL that will not parse — still surface after one.
  */
-export function Composer({
-  variant,
-  onStarted,
-}: {
-  variant: "centred" | "docked";
-  onStarted: (jobIds: string[]) => void;
-}) {
+export function Composer({ onStarted }: { onStarted: (jobIds: string[], ask: string) => void }) {
   const [jd, setJd] = useState("");
   const [companyUrl, setCompanyUrl] = useState("");
   const [days, setDays] = useState("");
+  const [note, setNote] = useState("");
+  const [noteOpen, setNoteOpen] = useState(false);
   const [batch, setBatch] = useState<{ cases: EvaluationCase[]; fileName: string } | null>(null);
+  // Roles already added, waiting to be built alongside whatever is in the composer now.
+  const [queue, setQueue] = useState<QueuedRole[]>([]);
 
   const [errors, setErrors] = useState<{ jd?: string; companyUrl?: string; days?: string }>({});
   const [fileErrors, setFileErrors] = useState<string[]>([]);
   const [submitError, setSubmitError] = useState<{ message: string; attempts: number } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [open, setOpen] = useState<"url" | "days" | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
-  const centred = variant === "centred";
+
+  // What the composer is still missing before the draft in it counts as a role.
+  const missing: string[] = [
+    jd.trim() === "" ? "the job posting" : null,
+    companyUrl.trim() === "" ? "the company website" : null,
+    days.trim() === "" ? "how many days you have" : null,
+  ].filter((item): item is string => item !== null);
+
+  const draftFilled = missing.length === 0;
+  // Something to build: an uploaded file, roles already queued, or a complete draft. Read in two
+  // places — the disabled state and the tooltip — so the tooltip cannot claim something
+  // different from what the button is enforcing.
+  const ready = batch !== null || queue.length > 0 || draftFilled;
+  const roleCount = batch ? batch.cases.length : queue.length + (draftFilled ? 1 : 0);
+
+  function addRole() {
+    if (!draftFilled) return;
+    const url = normaliseCompanyUrl(companyUrl);
+    if (url === null) {
+      setErrors((previous) => ({ ...previous, companyUrl: "Something like vaultline.com is enough." }));
+      return;
+    }
+    setQueue((previous) => [
+      ...previous,
+      { key: `${Date.now()}-${previous.length}`, jd: jd.trim(), companyUrl: url, days: days.trim(), note: note.trim() },
+    ]);
+    // The site and the days usually carry over to the next role only by accident, so they are
+    // cleared with the posting. Guessing wrong here would silently build a kit for the wrong
+    // company on the right posting, which is worse than retyping a domain.
+    setJd("");
+    setCompanyUrl("");
+    setDays("");
+    setNote("");
+    setNoteOpen(false);
+    setErrors({});
+  }
+
+  /** Pull a queued role back into the composer to change it. */
+  function editRole(key: string) {
+    const role = queue.find((entry) => entry.key === key);
+    if (!role) return;
+    setQueue((previous) => previous.filter((entry) => entry.key !== key));
+    setJd(role.jd);
+    setCompanyUrl(role.companyUrl);
+    setDays(role.days);
+    setNote(role.note);
+    setNoteOpen(role.note !== "");
+  }
 
   async function submit() {
+    if (!ready || busy) return;
     setSubmitError(null);
 
     if (batch) {
-      await start(() => api.createBatch({ cases: batch.cases }));
+      await start(
+        () => api.createBatch({ cases: batch.cases }),
+        `${batch.cases.length} ${batch.cases.length === 1 ? "role" : "roles"} from ${batch.fileName}`,
+      );
+      return;
+    }
+
+    // More than one role goes down the same batch endpoint the JSON upload uses, and the same
+    // one `npm run evaluate` feeds. One format, one parser, whether the cases were typed here or
+    // written by hand.
+    if (queue.length > 0) {
+      const drafted = draftFilled ? [...queue, { key: "draft", jd: jd.trim(), companyUrl: normaliseCompanyUrl(companyUrl) ?? companyUrl, days: days.trim(), note: note.trim() }] : queue;
+      const cases: EvaluationCase[] = drafted.map((role, index) => ({
+        id: caseId(role.companyUrl, index),
+        jd: withNote(role.jd, role.note),
+        company_url: role.companyUrl,
+        days: Number(role.days),
+      }));
+      await start(
+        () => api.createBatch({ cases }),
+        `${cases.length} roles — ${drafted.map((role) => hostOf(role.companyUrl)).join(", ")}`,
+      );
       return;
     }
 
@@ -64,18 +177,30 @@ export function Composer({
     setErrors(next);
     if (Object.keys(next).length > 0 || url === null) return;
 
-    await start(() => api.createKit({ jd: trimmedJd, company_url: url, days: dayCount }));
+    // The note is appended to the posting rather than sent as its own field: the pipeline reads
+    // one job description, and what the candidate knows about the role is part of the posting as
+    // far as extraction is concerned. Labelled, so it is never mistaken for the advert's words.
+    const description = withNote(trimmedJd, note.trim());
+
+    await start(
+      () => api.createKit({ jd: description, company_url: url, days: dayCount }),
+      ask(trimmedJd, url, dayCount),
+    );
   }
 
-  async function start(request: () => Promise<{ job_ids: string[] }>) {
+  async function start(request: () => Promise<{ job_ids: string[] }>, asked: string) {
     setBusy(true);
     try {
       const response = await request();
-      onStarted(response.job_ids);
+      onStarted(response.job_ids, asked);
       setJd("");
       setCompanyUrl("");
       setDays("");
+      setNote("");
+      setNoteOpen(false);
       setBatch(null);
+      setQueue([]);
+      setErrors({});
     } catch (error) {
       const message =
         error instanceof ApiError && error.code === "NETWORK_UNREACHABLE"
@@ -108,17 +233,18 @@ export function Composer({
     }
   }
 
-  return (
-    <div className={centred ? "flex flex-col gap-6" : "flex flex-col gap-3"}>
-      {centred ? (
-        <div className="flex flex-col gap-3">
-          <h1 className="text-4xl tracking-tight">What are you preparing for?</h1>
-          <p className="max-w-read text-base opacity-70">
-            Paste the posting, tell us where they live on the web, and how long you have.
-          </p>
-        </div>
-      ) : null}
+  // Two labels for one setting. "8 days until the interview" is the sentence the badge is meant
+  // to make, and it is 250px wide — at 390px it forces every badge onto its own line and the
+  // composer becomes a column of pills. The phone gets the number and the noun; the sentence
+  // returns as soon as there is room for it.
+  const dayShort = days.trim() === "" ? "Days" : `${days.trim()} ${days.trim() === "1" ? "day" : "days"}`;
+  const dayLong =
+    days.trim() === ""
+      ? "Days until the interview"
+      : `${days.trim()} ${days.trim() === "1" ? "day" : "days"} until the interview`;
 
+  return (
+    <div className="flex flex-col gap-4">
       {fileErrors.length > 0 ? (
         <ErrorNotice title="That file could not be read">
           <ul className="flex list-none flex-col gap-1">
@@ -129,8 +255,8 @@ export function Composer({
             ))}
           </ul>
           <p className="mt-2 opacity-70">
-            It should be a list of <code className="text-xs">{`{ id, jd, company_url, days }`}</code> — the
-            same shape the batch runner takes.
+            It should be a list of <code className="text-xs">{`{ id, jd, company_url, days }`}</code> —
+            the same shape the batch runner takes.
           </p>
         </ErrorNotice>
       ) : null}
@@ -149,11 +275,59 @@ export function Composer({
         </ErrorNotice>
       ) : null}
 
-      <Frame className="flex flex-col gap-4 p-4" marks={centred}>
+      {/* Roles already added. Each is independent — removing one leaves the rest, and a bad
+          posting fails on its own rather than taking the batch with it. */}
+      {queue.length > 0 ? (
+        <ul className="flex list-none flex-col gap-1.5">
+          {queue.map((role, index) => (
+            <li
+              key={role.key}
+              className="bg-surface flex items-center gap-3 rounded-[14px] px-3 py-2.5"
+            >
+              <span className="font-head text-steel-400 w-4 shrink-0 text-xs tabular-nums">
+                {String(index + 1).padStart(2, "0")}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13.5px] font-semibold">
+                  {hostOf(role.companyUrl)}
+                </span>
+                <span className="text-ink/50 block truncate text-xs">
+                  {role.days} {role.days === "1" ? "day" : "days"} ·{" "}
+                  {role.jd.split(/\s+/).length.toLocaleString()} words
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={() => editRole(role.key)}
+                className="text-steel-600 hover:text-steel-800 shrink-0 text-xs font-medium underline-offset-4 hover:underline"
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => setQueue((previous) => previous.filter((entry) => entry.key !== role.key))}
+                aria-label={`Remove ${hostOf(role.companyUrl)}`}
+                className="text-ink/35 hover:bg-tint hover:text-ink grid size-6 shrink-0 place-items-center rounded-full transition-colors"
+              >
+                <svg aria-hidden width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      <div
+        className={`bg-surface rounded-composer px-3 pt-3 pb-2.5 transition-shadow sm:px-4 sm:pt-3.5 sm:pb-3 ${
+          focused ? "ring-composer" : "shadow-[0_1px_2px_rgba(29,31,32,0.05)]"
+        }`}
+      >
         {batch ? (
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3 py-2">
             <span className="text-sm">
-              <strong className="font-medium">{batch.cases.length} roles</strong> from {batch.fileName}
+              <strong className="font-semibold">{batch.cases.length} roles</strong> from{" "}
+              {batch.fileName}
             </span>
             <Button variant="ghost" onClick={() => setBatch(null)}>
               Remove
@@ -161,72 +335,323 @@ export function Composer({
           </div>
         ) : (
           <>
-            <TextArea
-              label="Job description"
-              hint={centred ? "The whole posting works better than a summary." : undefined}
-              error={errors.jd}
-              rows={centred ? 8 : 3}
+            <label htmlFor="composer-jd" className="sr-only">
+              Job description
+            </label>
+            <textarea
+              id="composer-jd"
               value={jd}
-              placeholder="Paste the posting…"
+              rows={3}
               onChange={(event) => setJd(event.target.value)}
+              onFocus={() => setFocused(true)}
+              onBlur={() => setFocused(false)}
               onKeyDown={onKeyDown}
+              aria-invalid={errors.jd ? true : undefined}
+              aria-describedby={errors.jd ? "composer-jd-error" : "composer-hint"}
+              placeholder="Paste the posting, or ask for a change — ‘add more system-design questions’"
+              className="text-ink placeholder:text-ink/40 w-full resize-none bg-transparent px-0.5 pb-1.5 text-[14.5px] leading-relaxed outline-none"
             />
 
-            <div className="flex flex-col gap-4 md:flex-row">
-              <div className="flex-1">
-                <TextInput
-                  label="Company website"
-                  type="url"
-                  inputMode="url"
-                  autoComplete="url"
-                  error={errors.companyUrl}
-                  value={companyUrl}
-                  placeholder="vaultline.com"
-                  onChange={(event) => setCompanyUrl(event.target.value)}
+            {noteOpen ? (
+              <div className="pb-2">
+                <label htmlFor="composer-note" className="sr-only">
+                  Anything the posting does not say
+                </label>
+                <input
+                  id="composer-note"
+                  value={note}
+                  onChange={(event) => setNote(event.target.value)}
+                  onFocus={() => setFocused(true)}
+                  onBlur={() => setFocused(false)}
                   onKeyDown={onKeyDown}
+                  placeholder="Anything the posting does not say — who referred you, what the recruiter mentioned"
+                  className="bg-tint-soft rounded-control placeholder:text-ink/40 w-full px-3 py-2 text-[13px] outline-none"
                 />
               </div>
-              <div className="md:w-40">
-                <TextInput
-                  label="Days until the interview"
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  max={365}
-                  error={errors.days}
-                  value={days}
-                  placeholder="4"
-                  onChange={(event) => setDays(event.target.value)}
-                  onKeyDown={onKeyDown}
-                />
-              </div>
-            </div>
+            ) : null}
           </>
         )}
 
-        <div className="flex flex-wrap items-center gap-3">
-          <Button variant="primary" onClick={() => void submit()} busy={busy} busyLabel="Starting">
-            {batch ? `Build ${batch.cases.length} kits` : "Build the kit"}
-          </Button>
-          <span className="text-xs opacity-45">⌘↵</span>
+        <div className="flex flex-wrap items-center gap-2">
+          {!batch ? (
+            <>
+              <Popover
+                open={open === "url"}
+                onOpenChange={(next) => setOpen(next ? "url" : null)}
+                label="Company website"
+                trigger={
+                  <Badge
+                    icon={<GlobeIcon />}
+                    tone={errors.companyUrl ? "trouble" : companyUrl.trim() === "" ? "faded" : "accent"}
+                    aria-expanded={open === "url"}
+                  >
+                    {companyUrl.trim() === "" ? (
+                      <>
+                        <span className="sm:hidden">Website</span>
+                        <span className="hidden sm:inline">Company website</span>
+                      </>
+                    ) : (
+                      companyUrl.trim()
+                    )}
+                  </Badge>
+                }
+              >
+                <input
+                  autoFocus
+                  value={companyUrl}
+                  onChange={(event) => {
+                    setCompanyUrl(event.target.value);
+                    setErrors((previous) => ({ ...previous, companyUrl: undefined }));
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") setOpen(null);
+                  }}
+                  placeholder="vaultline.com"
+                  className="bg-tint-soft rounded-control w-full px-3 py-2 text-sm outline-none"
+                  aria-label="Company website"
+                />
+              </Popover>
 
-          <Button variant="ghost" onClick={() => fileRef.current?.click()} className="ml-auto">
-            Several roles at once
-          </Button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="application/json,.json"
-            className="sr-only"
-            aria-label="Upload a file of roles"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) void onFile(file);
-              event.target.value = "";
-            }}
-          />
+              <Popover
+                open={open === "days"}
+                onOpenChange={(next) => setOpen(next ? "days" : null)}
+                label="Days until the interview"
+                trigger={
+                  <Badge
+                    icon={<CalendarIcon />}
+                    tone={errors.days ? "trouble" : days.trim() === "" ? "faded" : "accent"}
+                    aria-expanded={open === "days"}
+                  >
+                    <span className="sm:hidden">{dayShort}</span>
+                    <span className="hidden sm:inline">{dayLong}</span>
+                  </Badge>
+                }
+              >
+                <div className="grid grid-cols-3 gap-1.5">
+                  {DAY_PRESETS.map((preset) => {
+                    const chosen = days.trim() === String(preset);
+                    return (
+                      <button
+                        key={preset}
+                        type="button"
+                        aria-pressed={chosen}
+                        onClick={() => {
+                          setDays(String(preset));
+                          setErrors((previous) => ({ ...previous, days: undefined }));
+                          setOpen(null);
+                        }}
+                        className={`font-head h-9 rounded-[10px] text-sm font-semibold tabular-nums transition-colors ${
+                          chosen
+                            ? "bg-steel-500 text-white"
+                            : "bg-tint text-ink/70 hover:bg-steel-100 hover:text-steel-700"
+                        }`}
+                      >
+                        {preset}
+                      </button>
+                    );
+                  })}
+                </div>
+                <input
+                  type="number"
+                  min={1}
+                  max={365}
+                  value={days}
+                  onChange={(event) => {
+                    setDays(event.target.value);
+                    setErrors((previous) => ({ ...previous, days: undefined }));
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") setOpen(null);
+                  }}
+                  placeholder="Or any number, 1 to 365"
+                  className="bg-tint-soft rounded-control mt-2 w-full px-3 py-2 text-sm outline-none"
+                  aria-label="Days until the interview"
+                />
+              </Popover>
+
+              {noteOpen ? null : (
+                <Badge tone="faded" onClick={() => setNoteOpen(true)}>
+                  + Add detail
+                </Badge>
+              )}
+            </>
+          ) : null}
+
+          <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-3">
+            {/* Only once the draft is a complete role. Offering it earlier would queue a blank. */}
+            {!batch && draftFilled ? (
+              <button
+                type="button"
+                onClick={addRole}
+                className="bg-tint text-ink/70 hover:bg-steel-100 hover:text-steel-700 rounded-pill h-9 shrink-0 px-3.5 text-[13px] font-semibold transition-colors"
+              >
+                + Add another
+              </button>
+            ) : null}
+            {/* Hidden on touch: there is no ⌘ to press, and a shortcut you cannot perform is
+                furniture that costs width exactly where width is scarce. */}
+            <span aria-hidden className="font-head text-ink/40 hidden text-[13px] tracking-wider md:inline">
+              ⌘↵
+            </span>
+            <span className="group relative inline-flex">
+              <Button
+                variant="primary"
+                onClick={() => void submit()}
+                busy={busy}
+                busyLabel="Starting"
+                disabled={!ready}
+                className={ready ? "" : "!bg-tint !text-ink/40"}
+              >
+                {roleCount > 1 ? `Build ${roleCount} kits` : "Build the kit"}
+              </Button>
+              {ready || queue.length > 0 ? null : (
+                <span
+                  role="tooltip"
+                  className="bg-steel-900 pointer-events-none absolute right-0 bottom-full z-30 mb-2.5 w-56 rounded-[10px] px-3 py-2 text-xs leading-snug text-white opacity-0 transition-opacity group-hover:opacity-100"
+                >
+                  Still needs {listWords(missing)}.
+                </span>
+              )}
+            </span>
+          </div>
         </div>
-      </Frame>
+      </div>
+
+      <div className="flex flex-wrap items-baseline gap-3 px-1.5">
+        {errors.jd ? (
+          <p id="composer-jd-error" role="alert" className="text-alarm text-xs font-medium">
+            {errors.jd}
+          </p>
+        ) : errors.companyUrl ? (
+          <p role="alert" className="text-alarm text-xs font-medium">
+            {errors.companyUrl}
+          </p>
+        ) : errors.days ? (
+          <p role="alert" className="text-alarm text-xs font-medium">
+            {errors.days}
+          </p>
+        ) : (
+          <p id="composer-hint" className="text-ink/55 text-xs">
+            {queue.length > 0
+              ? `${queue.length} ${queue.length === 1 ? "role" : "roles"} queued. Add another, or build them together.`
+              : "The whole posting works better than a summary."}
+          </p>
+        )}
+
+        <span className="ml-auto flex shrink-0 items-baseline gap-3">
+          {/* "Several roles at once" used to open a file picker, which is the one thing a
+              candidate with four tabs open does not want. It now adds a role to the queue, and
+              the file upload is named for what it actually takes. */}
+          {!batch ? (
+            <button
+              type="button"
+              onClick={addRole}
+              disabled={!draftFilled}
+              title={
+                draftFilled
+                  ? "Queue this role and start another"
+                  : "Fill in the posting, the site and the days first"
+              }
+              className="text-steel-600 hover:text-steel-800 text-xs font-medium underline-offset-4 hover:underline disabled:cursor-not-allowed disabled:text-ink/30 disabled:no-underline"
+            >
+              Several roles at once
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="text-ink/40 hover:text-ink/70 text-xs font-medium underline-offset-4 hover:underline"
+          >
+            Upload cases.json
+          </button>
+        </span>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="application/json,.json"
+          className="sr-only"
+          aria-label="Upload a file of roles"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) void onFile(file);
+            event.target.value = "";
+          }}
+        />
+      </div>
     </div>
+  );
+}
+
+/**
+ * The turn the conversation shows for this run.
+ *
+ * The opening of the posting rather than a sentence written on the user's behalf: what they
+ * sent is what the bubble should say, and a generated "build me a kit for X" would be the app
+ * putting words in their mouth. Trimmed at a word boundary so it does not stop mid-token.
+ */
+function ask(jd: string, url: string, days: number): string {
+  const opening = jd.length <= 220 ? jd : `${jd.slice(0, 220).replace(/\s+\S*$/, "")}…`;
+  return `${opening}\n\n${url} · ${days === 1 ? "1 day" : `${days} days`} until the interview`;
+}
+
+/** "the job posting and how many days you have" — an Oxford-comma list, spoken. */
+function listWords(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? "";
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
+}
+
+/**
+ * A badge's popover.
+ *
+ * Closes on Escape and on a click outside, and the trigger keeps focus so tabbing out of the
+ * popover lands where you were. Small enough to live here: it exists to serve two badges in one
+ * component, and a shared popover primitive with no second caller is an abstraction pretending
+ * to be reuse.
+ */
+function Popover({
+  open,
+  onOpenChange,
+  label,
+  trigger,
+  children,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  label: string;
+  trigger: React.ReactElement<{ onClick?: () => void }>;
+  children: React.ReactNode;
+}) {
+  const wrap = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (event: MouseEvent) => {
+      if (!wrap.current?.contains(event.target as Node)) onOpenChange(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        onOpenChange(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, onOpenChange]);
+
+  return (
+    <span ref={wrap} className="relative inline-flex">
+      <span onClick={() => onOpenChange(!open)}>{trigger}</span>
+      {open ? (
+        <div className="bg-surface rounded-card absolute bottom-full left-0 z-30 mb-2 w-56 p-2.5 shadow-[0_10px_30px_rgba(35,51,67,0.16),0_0_0_1px_rgba(35,51,67,0.06)]">
+          <Eyebrow className="text-ink/40 block px-1 pb-2">{label}</Eyebrow>
+          {children}
+        </div>
+      ) : null}
+    </span>
   );
 }

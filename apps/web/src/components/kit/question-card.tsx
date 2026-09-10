@@ -58,7 +58,7 @@ export function QuestionCard({ question }: { question: InternalQuestion }) {
         <>
           <button
             type="button"
-            className="text-teal-700 self-start text-sm font-medium underline underline-offset-4"
+            className="text-steel-700 self-start text-sm font-medium underline underline-offset-4"
             aria-expanded={open}
             aria-controls={outlineId}
             onClick={() => setOpen((wasOpen) => !wasOpen)}

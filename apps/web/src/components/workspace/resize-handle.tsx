@@ -32,7 +32,7 @@ export function ResizeHandle({
       <span
         aria-hidden
         className={`absolute inset-y-0 w-px ${edge === "right" ? "right-0" : "left-0"} ${
-          dragging ? "bg-teal-700" : "bg-transparent group-hover:bg-teal-500"
+          dragging ? "bg-steel-700" : "bg-transparent group-hover:bg-steel-500"
         }`}
       />
     </div>

@@ -35,7 +35,7 @@ export function CategorySection({
       </div>
 
       {questions.length === 0 ? (
-        <Frame empty className="p-4" marks={false}>
+        <Frame empty className="p-4">
           <p className="max-w-read text-sm">
             Nothing in {meta.label} yet. The description didn&rsquo;t give us anything to ask about
             here, so we didn&rsquo;t invent any.

@@ -56,6 +56,17 @@ export function useResizable({
   label: string;
   onToggle?: () => void;
 }): Resizable {
+  // Starts at the default on both sides of the render, deliberately.
+  //
+  // This used to read localStorage in the initial state, which meant the server rendered
+  // `aria-valuenow="216"` and a client that had ever dragged the handle hydrated with
+  // `aria-valuenow={321}`. React does not patch attribute mismatches — it warns and leaves the
+  // server's value in the DOM — so the separator ended up reporting a width it did not have to
+  // every screen reader, and the console carried a hydration error on every load. The remembered
+  // width is adopted just below, once the client is unambiguously in charge.
+  // The remembered width is the initial state, not something adopted afterwards. Nothing
+  // flashes and nothing mismatches: the regions only take an inline width once `useHydrated`
+  // is true, and this initialiser has already run by then.
   const [width, setWidthState] = useState(() => readStored(storageKey) ?? defaultWidth);
   const [dragging, setDragging] = useState(false);
   const widthRef = useRef(width);

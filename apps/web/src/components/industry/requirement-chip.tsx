@@ -30,9 +30,9 @@ export function RequirementChip({
   const must = requirement.priority === "must";
 
   const tone = must
-    ? "bg-teal-800 text-paper border-teal-800"
-    : "bg-transparent text-teal-800 border-teal-600";
-  const selection = selected ? "outline-2 outline-offset-2 outline-teal-700" : "";
+    ? "bg-steel-800 text-paper border-steel-800"
+    : "bg-transparent text-steel-800 border-steel-600";
+  const selection = selected ? "outline-2 outline-offset-2 outline-steel-700" : "";
 
   return (
     <span
@@ -54,14 +54,14 @@ export function RequirementChip({
       {onTogglePriority ? (
         <button
           type="button"
-          className={`font-head shrink-0 text-xs tracking-widest uppercase ${must ? "text-paper" : "text-teal-700"}`}
+          className={`font-head shrink-0 text-xs tracking-widest uppercase ${must ? "text-paper" : "text-steel-700"}`}
           aria-label={`${requirement.text} is a ${must ? "must" : "nice"}-have. Change to ${must ? "nice" : "must"}-have.`}
           onClick={() => onTogglePriority(requirement.id)}
         >
           {must ? "Must" : "Nice"}
         </button>
       ) : (
-        <span className={`font-head shrink-0 text-xs tracking-widest uppercase ${must ? "text-paper" : "text-teal-700"}`}>
+        <span className={`font-head shrink-0 text-xs tracking-widest uppercase ${must ? "text-paper" : "text-steel-700"}`}>
           {must ? "Must" : "Nice"}
         </span>
       )}

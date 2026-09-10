@@ -25,7 +25,7 @@ export function GenerationStream({
 }: {
   jobId: string;
   showLabel: boolean;
-  onComplete: (kitId: string) => void;
+  onComplete: (jobId: string, kitId: string, spans: Span[]) => void;
 }) {
   const { spans, job, progress, label, transport, error } = useJobStream(jobId);
   const rows = toStreamRows(spans);
@@ -35,16 +35,19 @@ export function GenerationStream({
     if (announced.current) return;
     if (job?.status === "done" && job.kitId) {
       announced.current = true;
-      onComplete(job.kitId);
+      // The spans go up with the kit id. They are the only record of how the run went, and the
+      // conversation keeps showing them after the stream has finished — a trace that vanished
+      // the moment the run ended would be the one thing the product cannot afford to lose.
+      onComplete(jobId, job.kitId, spans);
     }
-  }, [job, onComplete]);
+  }, [job, jobId, spans, onComplete]);
 
   const settled = job?.status === "done" || job?.status === "failed";
   const inFlight = !settled && progress && progress.stepIndex > rows.filter((r) => r.parentId === null).length;
 
   return (
     <section className="flex flex-col gap-4">
-      {showLabel && label ? <Eyebrow className="text-teal-700">{label}</Eyebrow> : null}
+      {showLabel && label ? <Eyebrow className="text-steel-700">{label}</Eyebrow> : null}
 
       <ol className="flex list-none flex-col gap-2">
         {rows.map((span) => (

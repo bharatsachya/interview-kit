@@ -10,8 +10,8 @@ import type { QuestionCategory } from "@trao/kit";
 export const CATEGORY_META: Readonly<
   Record<QuestionCategory, { letter: string; label: string; markClass: string }>
 > = {
-  technical: { letter: "T", label: "Technical", markClass: "bg-teal-300 text-ink" },
-  behavioural: { letter: "B", label: "Behavioural", markClass: "bg-teal-200 text-ink" },
+  technical: { letter: "T", label: "Technical", markClass: "bg-steel-300 text-ink" },
+  behavioural: { letter: "B", label: "Behavioural", markClass: "bg-steel-200 text-ink" },
   "system-design": { letter: "S", label: "System design", markClass: "bg-ink text-paper" },
   "company-fit": { letter: "C", label: "Company fit", markClass: "bg-paper text-ink" },
 };

@@ -36,7 +36,7 @@ export function CoverageBar({
 
   return (
     <section aria-labelledby="coverage-heading" className="flex flex-col gap-3">
-      <Eyebrow className="text-teal-700">
+      <Eyebrow className="text-steel-700">
         <h2 id="coverage-heading" className="inline">
           Coverage
         </h2>

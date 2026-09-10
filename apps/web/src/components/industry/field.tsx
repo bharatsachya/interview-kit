@@ -35,8 +35,10 @@ export function Field({
   );
 }
 
+/* Borderless: the fill is what says "you can type here". A 1px box inside a card that has no
+   border of its own is the seam the softened system exists to remove. */
 const CONTROL =
-  "bg-paper border-divider rounded-control w-full min-h-11 border px-3 py-2 text-base hover:border-ink/45 focus-visible:border-teal-700";
+  "bg-tint-soft rounded-control w-full min-h-11 px-3 py-2 text-base transition-colors hover:bg-tint";
 
 export function TextInput({
   label,

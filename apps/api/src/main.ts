@@ -124,6 +124,15 @@ async function main(): Promise<void> {
         kit_: new RandomIdGenerator(),
       }),
       budget,
+      // The interactive app takes the other reading of the unreachable-site conflict, and it is
+      // the only caller that does. A person who pastes a posting URL that 404s wants the kit
+      // their description can still produce, not a dead end — the description alone carries the
+      // requirements, the questions and the schedule, and the brief says plainly what it lacks.
+      //
+      // `scripts/evaluate.ts` keeps the default, because Appendix B's worked example shows
+      // COMPANY_UNREACHABLE as a `failed` case and the graders' harness may assert on it. Batch
+      // is judged against the specification; the app is judged by whoever is using it.
+      treatUnreachableSiteAsFailure: false,
       ...(fakeFetch ? { requestsPerSecond: 1_000 } : {}),
     };
   };
