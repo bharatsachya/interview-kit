@@ -1,9 +1,10 @@
 import { SignUp } from "@clerk/nextjs";
+import { AuthSplit } from "@/components/auth/auth-split";
 
 export default function SignUpPage() {
   return (
-    <div className="flex min-h-screen items-center justify-center">
+    <AuthSplit>
       <SignUp />
-    </div>
+    </AuthSplit>
   );
 }
