@@ -57,6 +57,31 @@ const STEP_LABELS: Readonly<Record<string, string>> = {
 };
 
 /**
+ * The pipeline's steps in the order they run, as the trace draws them.
+ *
+ * Written out rather than derived from the label table above, because that table also names the
+ * root span and carries an alias — it answers "what is this called", not "what happens next".
+ * This list exists so a run in flight can show the steps that have *not* happened yet: a trace
+ * that only grew downward would make a run that is half done look like one that is nearly done.
+ *
+ * A step the pipeline gains and this list has not is not a bug — it appears as soon as its span
+ * arrives, it simply is not drawn greyed-out beforehand.
+ */
+export const PIPELINE_STEP_ORDER: readonly string[] = [
+  "extract_requirements",
+  "fetch_homepage",
+  "crawl_site",
+  "search_discussion",
+  "generate_brief",
+  "generate_questions",
+  "coverage_check",
+  "gap_fill",
+  "derive_flashcards",
+  "allocate_schedule",
+  "serialize_kit",
+];
+
+/**
  * Takes the step name rather than a whole span, because the in-flight row has a step name and
  * nothing else — the step announces itself before there is a span to describe it.
  */

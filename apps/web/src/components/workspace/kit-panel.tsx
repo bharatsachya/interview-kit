@@ -25,12 +25,21 @@ export function KitPanel({
   desktop,
   hydrated,
   resize,
+  sideBySide,
   children,
 }: {
   open: boolean;
   desktop: boolean;
   hydrated: boolean;
   resize: Resizable;
+  /**
+   * Whether the index rail sits beside the body or above it.
+   *
+   * The same decision the rail itself makes, and it has to be made once for both: a rail drawn
+   * as a full-width strip inside a row-direction panel takes the whole panel and leaves the body
+   * forty pixels.
+   */
+  sideBySide: boolean;
   children: ReactNode;
 }) {
   // Held back until hydration: the server cannot know how wide this was dragged, so it renders
@@ -45,16 +54,19 @@ export function KitPanel({
       aria-hidden={!open}
       inert={!open}
       style={style}
-      className={`bg-surface fixed inset-y-0 right-0 z-40 w-full shrink-0 overflow-hidden duration-300 ease-out md:relative md:inset-y-auto md:z-auto ${
+      className={`bg-surface fixed inset-y-0 right-0 z-40 w-full shrink-0 overflow-hidden duration-300 ease-out lg:relative lg:inset-y-auto lg:z-auto ${
         resize.dragging ? "" : "motion-safe:transition-[width,transform]"
-      } ${open ? "translate-x-0 md:w-panel" : "translate-x-full md:w-0 md:translate-x-0"}`}
+      } ${open ? "translate-x-0 lg:w-panel" : "translate-x-full lg:w-0 lg:translate-x-0"}`}
     >
       {open ? (
         <ResizeHandle edge="left" separatorProps={resize.separatorProps} dragging={resize.dragging} />
       ) : null}
 
       {/* Fixed inner width: the content must not reflow line by line while the panel moves. */}
-      <div style={innerStyle} className="flex h-full w-full flex-col md:w-panel md:flex-row">
+      <div
+        style={innerStyle}
+        className={`flex h-full w-full lg:w-panel ${sideBySide ? "flex-row" : "flex-col"}`}
+      >
         {children}
       </div>
     </aside>

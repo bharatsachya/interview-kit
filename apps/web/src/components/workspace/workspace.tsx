@@ -1,16 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import type { Span } from "@trao/contracts";
 import { api } from "@/lib/api/client";
 import type { KitSummary } from "@/lib/api/types";
 import { KIT_OUTPUTS, seconds, type KitOutputId } from "@/lib/kit-outputs";
-import { DESKTOP, useMediaQuery } from "@/lib/use-media-query";
+import { DESKTOP, WIDE, useMediaQuery } from "@/lib/use-media-query";
 import { useHydrated } from "@/lib/use-hydrated";
+import { copyText } from "@/lib/copy";
 import { useKit } from "@/lib/use-kit";
 import { useResizable } from "@/lib/use-resizable";
 import { Button } from "@/components/industry/button";
+import { Assistant } from "@/components/workspace/assistant";
+import { BootSplash } from "@/components/workspace/boot-splash";
 import { CompareView } from "@/components/workspace/compare-view";
 import { Composer } from "@/components/workspace/composer";
 import { GenerationStream } from "@/components/workspace/generation-stream";
@@ -20,6 +23,9 @@ import { KitPanel } from "@/components/workspace/kit-panel";
 import { OutputGrid } from "@/components/workspace/output-grid";
 import { ResizeHandle } from "@/components/workspace/resize-handle";
 import { Trace } from "@/components/workspace/trace";
+
+/** Below this the panel cannot spare 152px for a column of labels, so the index lies down. */
+const INDEX_RAIL_MIN_PANEL = 448;
 
 /** What a finished run left behind: the kit it made, and the trace that proves how. */
 interface Run {
@@ -61,12 +67,18 @@ export function Workspace() {
   // Finished runs, keyed by job. The spans are what the trace and the per-output build times are
   // read from — a kit opened from history has none, and both simply say less rather than guess.
   const [runs, setRuns] = useState<Record<string, Run>>({});
-  const [asks, setAsks] = useState<Record<string, string>>({});
+  // The ask and the moment it was made. The time is captured at submit rather than derived from
+  // the job later: what the conversation shows is when *you* sent it, which is not the same as
+  // when the server got round to it.
+  const [asks, setAsks] = useState<Record<string, { text: string; at: number }>>({});
 
   // The history column follows the viewport until somebody says otherwise: open on a laptop,
   // closed on a phone. `null` means "no opinion yet", which is what keeps the default from
   // being sticky the first time the window is resized across the breakpoint.
   const isDesktop = useMediaQuery(DESKTOP);
+  // The rail can be a column from 768 up; the panel needs 1024 before it can sit beside the
+  // conversation instead of over it.
+  const isWide = useMediaQuery(WIDE);
   const [historyOverride, setHistoryOverride] = useState<boolean | null>(null);
   const historyOpen = historyOverride ?? isDesktop;
 
@@ -169,9 +181,10 @@ export function Workspace() {
     setJobIds(ids);
     setActiveKitId(null);
     setPanelOpen(false);
+    const at = Date.now();
     setAsks((previous) => {
       const next = { ...previous };
-      for (const id of ids) next[id] = ask;
+      for (const id of ids) next[id] = { text: ask, at };
       return next;
     });
   }, []);
@@ -182,7 +195,7 @@ export function Workspace() {
     (jobId: string, kitId: string, spans: Span[]) => {
       setRuns((previous) => ({
         ...previous,
-        [jobId]: { jobId, kitId, spans, ask: asks[jobId] ?? "" },
+        [jobId]: { jobId, kitId, spans, ask: asks[jobId]?.text ?? "" },
       }));
       setKitsLoading(true);
       setHistoryNonce((nonce) => nonce + 1);
@@ -206,6 +219,9 @@ export function Workspace() {
     onToggle: () => setHistoryOverride(!historyOpen),
   });
   const panelResize = useResizable({
+    // The rail is standing in the same viewport, so the panel may not count its width as space
+    // it could take. Zero when the rail is collapsed, which is when the panel really can be wider.
+    reserve: historyOpen && isDesktop ? sidebarResize.width : 0,
     storageKey: "workspace.panel.width",
     defaultWidth: 520,
     min: 380,
@@ -214,6 +230,9 @@ export function Workspace() {
     label: "Resize the kit panel",
     onToggle: closePanel,
   });
+
+  // One decision, read by the panel and by the rail inside it.
+  const railBeside = isWide && panelResize.width >= INDEX_RAIL_MIN_PANEL;
 
   const activeKitSummary = kits.find((entry) => entry.id === activeKitId) ?? null;
   const activeRun = Object.values(runs).find((run) => run.kitId === activeKitId) ?? null;
@@ -224,7 +243,9 @@ export function Workspace() {
   const elapsed = spans.length > 0 ? seconds(totalMs(spans)) : null;
 
   return (
-    <div className="fixed inset-0 overflow-hidden">
+    <>
+      <BootSplash />
+      <div className="fixed inset-0 overflow-hidden">
       <div className="flex h-full w-full overflow-hidden">
         {/* Left region. A column on a laptop, a drawer over the left edge on a phone. */}
         {historyOpen && !isDesktop ? (
@@ -325,7 +346,15 @@ export function Workspace() {
                   </p>
                 </div>
                 <div className="ml-auto flex shrink-0 items-center gap-2.5 pt-1">
-                  {activeKitId && !kitLoading ? (
+                  {running ? (
+                    <span className="bg-steel-100 text-steel-700 font-head rounded-pill inline-flex h-6 items-center gap-1.5 px-3 text-xs tracking-widest uppercase">
+                      <span
+                        aria-hidden
+                        className="bg-steel-500 motion-safe:animate-dot-blink size-1.5 rounded-full"
+                      />
+                      Running
+                    </span>
+                  ) : activeKitId && !kitLoading ? (
                     <span className="bg-steel-100 text-steel-700 font-head rounded-pill inline-flex h-6 items-center px-3 text-xs tracking-widest uppercase">
                       Complete
                     </span>
@@ -344,7 +373,11 @@ export function Workspace() {
           ) : null}
 
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 md:px-8">
-            <div className="max-w-centre mx-auto flex w-full flex-1 flex-col gap-5 pb-6">
+            {/* A query container, so what is inside responds to this column's real width. The
+                  output grid used viewport breakpoints, which is wrong in a three-pane layout:
+                  at 1180px the viewport says "wide, three columns" while this column is 444px
+                  and the cards are 140px each. */}
+              <div className="@container max-w-centre mx-auto flex w-full flex-1 flex-col gap-5 pb-6">
               {staleKitId ? (
                 <div className="bg-tint rounded-card flex items-start gap-3 px-4 py-3">
                   <p className="text-ink/70 min-w-0 flex-1 text-[13px] leading-relaxed">
@@ -373,7 +406,7 @@ export function Workspace() {
                     const ask = asks[jobId];
                     return (
                       <div key={jobId} className="flex flex-col gap-5">
-                        {ask ? <AskBubble>{ask}</AskBubble> : null}
+                        {ask ? <AskBubble at={ask.at}>{ask.text}</AskBubble> : null}
 
                         {run ? (
                           <>
@@ -381,12 +414,12 @@ export function Workspace() {
                               Built your kit in {seconds(totalMs(run.spans))} — {KIT_OUTPUTS.length}{" "}
                               outputs, ready to open.
                             </Assistant>
-                            <div className="md:ml-8">
+                            <div className="md:ml-[38px]">
                               <Trace spans={run.spans} />
                             </div>
                           </>
                         ) : (
-                          <div className="md:ml-8">
+                          <div className="md:ml-[38px]">
                             <GenerationStream
                               jobId={jobId}
                               showLabel={jobIds.length > 1}
@@ -447,7 +480,13 @@ export function Workspace() {
         </main>
 
         {/* Right region. */}
-        <KitPanel open={panelOpen} desktop={isDesktop} hydrated={hydrated} resize={panelResize}>
+        <KitPanel
+          open={panelOpen}
+          desktop={isWide}
+          hydrated={hydrated}
+          resize={panelResize}
+          sideBySide={railBeside}
+        >
           <KitDrawer
             kitId={activeKitId}
             kit={kit}
@@ -455,38 +494,86 @@ export function Workspace() {
             error={kitError}
             onRetry={retryKit}
             spans={spans}
+            indexVertical={railBeside}
             activeOutput={activeOutput}
             onSelectOutput={setActiveOutput}
             onClose={closePanel}
           />
         </KitPanel>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/**
+ * The posting you sent, as the turn that started this — with the time you sent it and a way to
+ * get it back.
+ *
+ * Copy matters more here than it looks: the composer clears on submit, so before this the text
+ * you pasted existed nowhere you could reach it. If a run went wrong, getting your own posting
+ * back meant finding the original tab again.
+ */
+function AskBubble({ children, at }: { children: string; at: number }) {
+  // "idle" until you press it, then what actually happened. A button that says "Copied" when
+  // nothing was copied is worse than one that says nothing.
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  async function copy() {
+    const ok = await copyText(children);
+    setState(ok ? "copied" : "failed");
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setState("idle"), ok ? 1600 : 2600);
+  }
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <p className="bg-tint text-ink/70 max-w-[74%] rounded-[16px] rounded-br-[6px] px-4 py-2.5 text-sm whitespace-pre-line">
+        {children}
+      </p>
+      <div className="flex items-center gap-2 pr-1">
+        <button
+          type="button"
+          onClick={() => void copy()}
+          aria-label={state === "copied" ? "Copied" : "Copy this posting"}
+          className="text-ink/35 hover:bg-tint hover:text-ink/70 grid size-6 place-items-center rounded-md transition-colors"
+        >
+          {state === "copied" ? (
+            <svg aria-hidden width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          ) : (
+            <svg aria-hidden width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+          )}
+        </button>
+        <span className="text-ink/35 text-[11px] tabular-nums" aria-live="polite">
+          {state === "copied" ? "Copied" : state === "failed" ? "Select and copy" : <AskedAt at={at} />}
+        </span>
       </div>
     </div>
   );
 }
 
-/** The posting you sent, as the turn that started this. */
-function AskBubble({ children }: { children: React.ReactNode }) {
+/**
+ * When the query was sent.
+ *
+ * Rendered only after mount. `toLocaleTimeString` reads the machine's locale and timezone, and
+ * the server's are not the reader's — formatting it during the first render is the textbook
+ * hydration mismatch, and this component exists to keep that out of the conversation.
+ */
+function AskedAt({ at }: { at: number }) {
+  const hydrated = useHydrated();
+  if (!hydrated) return null;
   return (
-    <div className="flex justify-end">
-      <p className="bg-tint text-ink/70 max-w-[74%] rounded-[16px] rounded-br-[6px] px-4 py-2.5 text-sm whitespace-pre-line">
-        {children}
-      </p>
-    </div>
-  );
-}
-
-function Assistant({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex items-start gap-3">
-      <span
-        aria-hidden
-        className="bg-steel-500 font-head mt-0.5 grid size-[22px] shrink-0 place-items-center rounded-md text-xs font-semibold text-white"
-      >
-        P
-      </span>
-      <p className="text-[14.5px] leading-relaxed">{children}</p>
-    </div>
+    <time dateTime={new Date(at).toISOString()}>
+      {new Date(at).toLocaleTimeString(undefined, { timeStyle: "short" })}
+    </time>
   );
 }
 

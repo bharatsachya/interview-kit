@@ -37,6 +37,7 @@ export function KitDrawer({
   onRetry,
   spans,
   activeOutput,
+  indexVertical,
   onSelectOutput,
   onClose,
 }: {
@@ -47,6 +48,7 @@ export function KitDrawer({
   onRetry: () => void;
   spans: readonly Span[];
   activeOutput: KitOutputId;
+  indexVertical: boolean;
   onSelectOutput: (id: KitOutputId) => void;
   onClose: () => void;
 }) {
@@ -99,7 +101,7 @@ export function KitDrawer({
 
   return (
     <>
-      <KitIndex active={activeOutput} builtIn={builtIn} onSelect={onSelectOutput} />
+      <KitIndex active={activeOutput} builtIn={builtIn} vertical={indexVertical} onSelect={onSelectOutput} />
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex shrink-0 flex-col gap-0.5 px-4 pt-3 pb-3 md:px-5 md:pt-4">

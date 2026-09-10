@@ -88,6 +88,89 @@
     }
   }
 
+  /* ── the loading identity ──────────────────────────────────────────────────
+     One mark, two states, and every loop below returns to a frame identical to
+     its first — a spinner that jumps on restart is worse than no spinner.
+
+     The crawl is the reason the square is 15 units a side: perimeter 60, dash
+     pattern 6+4, so the pattern divides the path exactly six times and the
+     offset can travel one whole period and start again invisibly. Change the
+     square's size and the seam comes back. */
+  --animate-mark-crawl: mark-crawl 1.9s linear infinite;
+  --animate-mark-breathe: mark-breathe 2.4s cubic-bezier(0.4, 0, 0.4, 1) infinite;
+  --animate-ring-spin: ring-spin 1.15s linear infinite;
+  --animate-bar-sweep: bar-sweep 1.35s cubic-bezier(0.5, 0, 0.4, 1) infinite;
+  --animate-dot-blink: dot-blink 1.25s cubic-bezier(0.4, 0, 0.4, 1) infinite;
+  --animate-text-shimmer: text-shimmer 2.1s linear infinite;
+
+  @keyframes mark-crawl {
+    /* Exactly one dash period. The last frame draws what the first frame drew. */
+    to {
+      stroke-dashoffset: -10;
+    }
+  }
+
+  @keyframes mark-breathe {
+    0%,
+    100% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(0.55);
+    }
+  }
+
+  @keyframes ring-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  /* The segment leaves to the right and returns from the left. Both extremes sit
+     outside the clipped track, so the wrap is never on screen. */
+  @keyframes bar-sweep {
+    from {
+      transform: translateX(-105%);
+    }
+    to {
+      transform: translateX(238%);
+    }
+  }
+
+  @keyframes dot-blink {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.25;
+    }
+  }
+
+  /* Travels exactly one tile of a repeating gradient, so the glyphs at the end
+     are lit precisely as they were at the start. */
+  @keyframes text-shimmer {
+    to {
+      background-position-x: -13em;
+    }
+  }
+
+  /* The flashcard answer. A longer travel than a trace step and a curve that decelerates hard,
+     so the block reads as having been dealt onto the card rather than fading up through it —
+     the same easing the deck switch uses, because they are the same gesture at two scales. */
+  --animate-rise: rise-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+
+  @keyframes rise-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
   /* — workspace regions —
      Named so the open/close animation interpolates between two tokens rather than two
      arbitrary values, and so the collapsed state is literally zero of the same thing. */
@@ -164,6 +247,42 @@
   );
   background-color: transparent;
   opacity: 0.7;
+}
+
+/* Text that is still being produced.
+   A gradient clipped to the glyphs rather than a block sliding over them: the
+   sentence stays readable the whole time, which a highlight sweep does not
+   allow. Tiled and moved by exactly one tile, and horizontal — an angled
+   gradient cannot tile without a seam down every repeat.
+
+   The base is steel 900 rather than ink so nothing here leaves the accent ramp;
+   at this size the two are indistinguishable until the highlight passes. */
+@utility shimmer-text {
+  background-image: linear-gradient(
+    to right,
+    var(--color-steel-900) 0%,
+    var(--color-steel-900) 38%,
+    var(--color-steel-400) 50%,
+    var(--color-steel-900) 62%,
+    var(--color-steel-900) 100%
+  );
+  background-size: 13em 100%;
+  background-repeat: repeat-x;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  animation: var(--animate-text-shimmer);
+}
+
+/* Reduced motion keeps the identity and drops the movement — the mark still says
+   "working", it simply stops travelling to say it. */
+@media (prefers-reduced-motion: reduce) {
+  .shimmer-text {
+    animation: none;
+    background-image: none;
+    color: var(--color-steel-900);
+    -webkit-text-fill-color: var(--color-steel-900);
+  }
 }
 
 /* The composer's focus ring, and the only place the system rings something other than the

@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useHydrated } from "@/lib/use-hydrated";
 
 /**
  * A draggable region edge.
@@ -46,6 +47,7 @@ export function useResizable({
   max,
   edge,
   label,
+  reserve = 0,
   onToggle,
 }: {
   storageKey: string;
@@ -54,6 +56,14 @@ export function useResizable({
   max: number;
   edge: "left" | "right";
   label: string;
+  /**
+   * Width taken by the *other* region, which this one must not also spend.
+   *
+   * Without it the ceiling reserved the conversation's minimum out of the whole viewport and
+   * forgot the rail was standing in it: at 1024px the panel was allowed its full 520 and the
+   * conversation got 288 — well under the 420 the ceiling believed it was protecting.
+   */
+  reserve?: number;
   onToggle?: () => void;
 }): Resizable {
   // Starts at the default on both sides of the render, deliberately.
@@ -69,13 +79,15 @@ export function useResizable({
   // is true, and this initialiser has already run by then.
   const [width, setWidthState] = useState(() => readStored(storageKey) ?? defaultWidth);
   const [dragging, setDragging] = useState(false);
+  // Read below, for `aria-valuenow` only. See the note on it.
+  const hydrated = useHydrated();
   const widthRef = useRef(width);
 
   const ceiling = useCallback(() => {
     if (typeof window === "undefined") return max;
     // Leave the conversation a readable column no matter how hard someone drags.
-    return Math.max(min, Math.min(max, window.innerWidth - CENTRE_MIN));
-  }, [min, max]);
+    return Math.max(min, Math.min(max, window.innerWidth - reserve - CENTRE_MIN));
+  }, [min, max, reserve]);
 
   const apply = useCallback(
     (next: number) => {
@@ -85,6 +97,28 @@ export function useResizable({
     },
     [ceiling, min],
   );
+
+  /**
+   * Give ground when the window does.
+   *
+   * The ceiling was only consulted while dragging, so a panel sized for a wide screen kept its
+   * full width on a narrower one and took the difference out of the conversation — at 834px the
+   * centre column was 98 pixels of a 520-pixel panel's leftovers. The region is only allowed to
+   * be as wide as the window can spare, and that has to be re-checked when the window changes
+   * rather than only when a pointer is on the handle.
+   *
+   * Run on mount too: a width remembered from a larger screen is the same problem arriving by
+   * a different route.
+   */
+  useEffect(() => {
+    const clamp = () => {
+      const limit = ceiling();
+      if (widthRef.current > limit) apply(limit);
+    };
+    clamp();
+    window.addEventListener("resize", clamp);
+    return () => window.removeEventListener("resize", clamp);
+  }, [ceiling, apply]);
 
   const persist = useCallback(() => {
     try {
@@ -163,7 +197,19 @@ export function useResizable({
     separatorProps: {
       role: "separator",
       "aria-orientation": "vertical",
-      "aria-valuenow": width,
+      // The one value here the server also renders, so the one that has to agree with it.
+      //
+      // The inline widths above are already held back until `useHydrated`, which is what keeps
+      // the *layout* from mismatching. This attribute is not — it is rendered unconditionally,
+      // so a client that had ever dragged the handle hydrated with `aria-valuenow={321}` against
+      // a server that wrote 216. React does not patch attribute mismatches: it warns and leaves
+      // the server's number in the DOM, so the separator went on reporting a width it did not
+      // have to every screen reader, and the console carried a hydration error on every load.
+      //
+      // Reporting the default until the client is in charge costs one frame of a number nobody
+      // is reading yet, and is the whole fix. Do not remove the guard without moving the
+      // remembered width out of the initial state as well — one or the other has to give.
+      "aria-valuenow": hydrated ? width : defaultWidth,
       "aria-valuemin": min,
       "aria-valuemax": max,
       "aria-label": label,

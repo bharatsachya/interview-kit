@@ -2,7 +2,6 @@
 
 import { useRef } from "react";
 import { KIT_OUTPUTS, type KitOutputId } from "@/lib/kit-outputs";
-import { DESKTOP, useMediaQuery } from "@/lib/use-media-query";
 import { Eyebrow, OpenDot } from "@/components/industry/text";
 
 /**
@@ -20,18 +19,25 @@ import { Eyebrow, OpenDot } from "@/components/industry/text";
 export function KitIndex({
   active,
   builtIn,
+  vertical,
   onSelect,
 }: {
   active: KitOutputId;
   builtIn: string | null;
+  /**
+   * Column beside the body, or strip above it.
+   *
+   * Decided by how wide the *panel* is, not how wide the window is. A 152px column inside a
+   * 388px panel leaves the brief 236px to wrap in, and the window being 1024 wide says nothing
+   * about that — the panel is its own layout context.
+   */
+  vertical: boolean;
   onSelect: (id: KitOutputId) => void;
 }) {
   const rail = useRef<HTMLDivElement>(null);
-  // The rail is a column beside the body on a laptop and a strip above it on a phone, so which
-  // axis the arrows follow is not fixed. Both are accepted, and `aria-orientation` reports the
-  // one actually on screen — a vertical list that answers only to Left and Right, or claims an
-  // orientation it does not have, is the kind of detail the interaction score is about.
-  const vertical = useMediaQuery(DESKTOP);
+  // Both axes move the selection whichever way the rail is drawn, and `aria-orientation` below
+  // reports the one actually on screen — a list that claims an orientation it does not have is
+  // the kind of detail the interaction score is about.
 
   function onKeyDown(event: React.KeyboardEvent) {
     const index = KIT_OUTPUTS.findIndex((output) => output.id === active);
@@ -51,8 +57,8 @@ export function KitIndex({
   }
 
   return (
-    <div className="bg-tint-soft flex w-full shrink-0 flex-col gap-1 p-2 md:w-index md:overflow-hidden md:p-3">
-      <Eyebrow className="text-ink/40 hidden px-2 pb-1 md:block">Outputs</Eyebrow>
+    <div className={`bg-tint-soft flex shrink-0 flex-col gap-1 ${vertical ? "w-index overflow-hidden p-3" : "w-full p-2"}`}>
+      <Eyebrow className={`text-ink/40 px-2 pb-1 ${vertical ? "block" : "hidden"}`}>Outputs</Eyebrow>
 
       <div
         ref={rail}
@@ -60,7 +66,7 @@ export function KitIndex({
         aria-orientation={vertical ? "vertical" : "horizontal"}
         aria-label="Kit outputs"
         onKeyDown={onKeyDown}
-        className="flex min-h-0 flex-1 flex-row gap-1 overflow-x-auto md:flex-col md:overflow-x-visible md:overflow-y-auto"
+        className={`flex min-h-0 flex-1 gap-1 ${vertical ? "flex-col overflow-y-auto" : "flex-row overflow-x-auto"}`}
       >
         {KIT_OUTPUTS.map((output, index) => {
           const selected = output.id === active;
@@ -74,7 +80,7 @@ export function KitIndex({
               id={`kit-tab-${output.id}`}
               tabIndex={selected ? 0 : -1}
               onClick={() => onSelect(output.id)}
-              className={`flex min-h-9 shrink-0 items-center gap-2 rounded-[10px] px-2.5 py-2 text-left text-[13.5px] transition-colors md:shrink ${
+              className={`flex min-h-9 shrink-0 items-center gap-2 rounded-[10px] px-2.5 py-2 text-left text-[13.5px] transition-colors ${
                 selected
                   ? "bg-steel-100 text-steel-800 font-semibold"
                   : "text-ink/70 hover:bg-tint hover:text-ink font-medium"
@@ -83,7 +89,7 @@ export function KitIndex({
               {selected ? <OpenDot /> : <span aria-hidden className="size-1.5 shrink-0" />}
               <span className="truncate">{output.label}</span>
               <span
-                className={`font-head ml-auto hidden shrink-0 text-xs tabular-nums md:inline ${
+                className={`font-head ml-auto shrink-0 text-xs tabular-nums ${vertical ? "inline" : "hidden"} ${
                   selected ? "text-steel-500" : "text-ink/35"
                 }`}
               >
@@ -96,8 +102,8 @@ export function KitIndex({
 
       {/* Only rendered when the run is still in the session. Opened from history, the spans are
           gone and there is no honest number to print here. */}
-      {builtIn ? (
-        <p className="font-head text-ink/40 mt-auto hidden shrink-0 px-2 pt-3 text-xs tracking-wider uppercase tabular-nums md:block">
+      {builtIn && vertical ? (
+        <p className="font-head text-ink/40 mt-auto shrink-0 px-2 pt-3 text-xs tracking-wider uppercase tabular-nums">
           Kit built in {builtIn}
         </p>
       ) : null}

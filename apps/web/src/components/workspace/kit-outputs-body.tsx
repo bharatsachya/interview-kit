@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { QUESTION_CATEGORIES, minutesForQuestions, type InternalKit, type QuestionCategory } from "@trao/kit";
 import { CATEGORY_META } from "@/lib/categories";
+import { useMediaQuery } from "@/lib/use-media-query";
 import type { KitOutputId } from "@/lib/kit-outputs";
 import { Button } from "@/components/industry/button";
 import { Frame } from "@/components/industry/frame";
@@ -394,6 +395,34 @@ function TrackChip({
 
 /* ═════════════════════════════════════════════════════════ flashcards ══ */
 
+/**
+ * The deck's motion, ported from the Flashcards prototype.
+ *
+ * Two layers rather than one: the arriving card and the leaving one are on screen together, so
+ * the switch reads as a card being dealt off a stack instead of text being swapped in place.
+ * Forward, the new card drops in from above while the old one slides off to the left with a
+ * slight rotation; backward runs the same motion in reverse, which is what makes "back" feel
+ * like undo rather than like another step forward.
+ *
+ * The two easings differ on purpose. Transform uses a curve that overshoots its own settle
+ * slightly; opacity uses a flatter one and finishes at 85% of the distance, so the outgoing card
+ * is gone before it has finished moving and nothing crossfades through a muddy middle.
+ */
+const DECK_MOTION = {
+  inForward: "translateY(-14px) scale(.955)",
+  inBack: "translateX(-58%) rotate(-4deg) scale(.975)",
+  outForward: "translateX(-58%) rotate(-4deg) scale(.975)",
+  outBack: "translateY(-14px) scale(.955)",
+} as const;
+
+const DECK_EASE = "cubic-bezier(.32,.72,.26,1)";
+const FADE_EASE = "cubic-bezier(.4,0,.3,1)";
+/** The prototype defaults to 820ms, which reads well in a demo of one card and drags when you
+ *  are rating eighteen. Same curve, two thirds of the distance. */
+const DECK_MS = 520;
+
+type DeckPhase = "idle" | "enter" | "settle";
+
 function FlashcardsBody({
   kit,
   confidence,
@@ -404,10 +433,80 @@ function FlashcardsBody({
   onRate: (flashcardId: string, value: Confidence) => void;
 }) {
   const [position, setPosition] = useState(0);
+  const [previous, setPrevious] = useState<number | null>(null);
+  const [direction, setDirection] = useState(1);
+  const [phase, setPhase] = useState<DeckPhase>("idle");
   const [revealed, setRevealed] = useState(false);
 
+  // Anyone who has asked not to be moved gets the swap with no motion at all. The card still
+  // changes; it simply does not travel to get there.
+  const still = useMediaQuery("(prefers-reduced-motion: reduce)", false);
+
   const cards = kit.flashcards;
-  if (cards.length === 0) {
+  const total = cards.length;
+
+  const go = useCallback(
+    (step: number) => {
+      if (phase !== "idle" || total < 2) return;
+      setPrevious(position);
+      setPosition((current) => (current + step + total) % total);
+      setDirection(step);
+      setRevealed(false);
+      setPhase(still ? "idle" : "enter");
+    },
+    [phase, position, total, still],
+  );
+
+  /**
+   * Place the incoming card, then release it on the next frame.
+   *
+   * Two nested `requestAnimationFrame`s because one is not enough: the first fires before the
+   * browser has laid the new transform out, so turning the transition on there animates from
+   * wherever the element used to be. The timeout is the backstop for a tab that is not painting
+   * — a backgrounded tab never runs rAF, and without it the card would sit mid-animation until
+   * you came back to it.
+   */
+  useEffect(() => {
+    if (phase !== "enter") return;
+    let fired = false;
+    const kick = () => {
+      if (fired) return;
+      fired = true;
+      setPhase("settle");
+    };
+    const frame = requestAnimationFrame(() => requestAnimationFrame(kick));
+    const backstop = setTimeout(kick, 60);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(backstop);
+    };
+  }, [phase]);
+
+  useEffect(() => {
+    if (phase !== "settle") return;
+    const done = setTimeout(() => {
+      setPhase("idle");
+      setPrevious(null);
+    }, DECK_MS + 80);
+    return () => clearTimeout(done);
+  }, [phase]);
+
+  // Left and right move through the deck. Bound to the panel rather than the window so it does
+  // not steal the arrow keys from the composer or the index rail.
+  const onDeckKeyDown = useCallback(
+    (event: React.KeyboardEvent) => {
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        go(1);
+      } else if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        go(-1);
+      }
+    },
+    [go],
+  );
+
+  if (total === 0) {
     return (
       <EmptyState title="No cards yet">
         Flashcards are derived from the questions, so there will be cards once there are
@@ -416,9 +515,10 @@ function FlashcardsBody({
     );
   }
 
-  const index = Math.min(position, cards.length - 1);
+  const index = Math.min(position, total - 1);
   const card = cards[index];
   if (!card) return null;
+  const ghostCard = previous === null ? null : cards[previous] ?? null;
 
   const counts = {
     known: cards.filter((entry) => confidence[entry.id] === "known").length,
@@ -428,17 +528,50 @@ function FlashcardsBody({
 
   function rate(value: Confidence) {
     onRate(card!.id, value);
-    setRevealed(false);
-    setPosition((current) => (current + 1) % cards.length);
+    go(1);
   }
 
+  const entering = phase === "enter";
+  const forward = direction > 0;
+  const move = `transform ${DECK_MS}ms ${DECK_EASE}, opacity ${Math.round(DECK_MS * 0.85)}ms ${FADE_EASE}`;
+
+  const activeStyle: React.CSSProperties = {
+    transform: entering ? (forward ? DECK_MOTION.inForward : DECK_MOTION.inBack) : "none",
+    opacity: entering ? 0 : 1,
+    transition: entering ? "none" : move,
+    // Forward the outgoing card passes over the arriving one; backward the arriving one leads.
+    zIndex: forward ? 2 : 4,
+    willChange: "transform, opacity",
+  };
+
+  const ghostStyle: React.CSSProperties = {
+    transform: entering ? "none" : forward ? DECK_MOTION.outForward : DECK_MOTION.outBack,
+    opacity: entering ? 1 : 0,
+    transition: entering ? "none" : move,
+    zIndex: forward ? 3 : 2,
+    willChange: "transform, opacity",
+  };
+
+  const stackStyle: React.CSSProperties = {
+    transform: entering ? "translateY(5px)" : "none",
+    transition: `transform ${DECK_MS}ms ${DECK_EASE}`,
+  };
+
+  const metaStyle: React.CSSProperties = {
+    transform: entering ? "translateY(6px)" : "none",
+    opacity: entering ? 0 : 1,
+    transition: entering
+      ? "none"
+      : `transform ${Math.round(DECK_MS * 0.8)}ms ${DECK_EASE}, opacity ${Math.round(DECK_MS * 0.7)}ms ${FADE_EASE}`,
+  };
+
   return (
-    <>
+    <div className="flex flex-col gap-4" onKeyDown={onDeckKeyDown}>
       <div className="flex items-baseline gap-3">
         <span className="font-head text-ink/40 text-xs tracking-wider uppercase">
-          Card <b className="text-ink text-sm">{index + 1}</b> / {cards.length}
+          Card <b className="text-ink text-sm" style={metaStyle}>{index + 1}</b> / {total}
         </span>
-        <span className="text-steel-600 ml-auto text-xs font-medium">
+        <span className="text-steel-600 ml-auto text-xs font-medium" style={metaStyle}>
           {card.requirementIds.length > 0 ? card.requirementIds.join(" · ") : "No requirement tag"}
         </span>
       </div>
@@ -465,18 +598,39 @@ function FlashcardsBody({
         })}
       </div>
 
-      {/* The stacked edges are absolutely positioned but sized off the card in normal flow, so
-          the stack follows the card as the answer expands it. The card itself is plain flow —
-          it was a 3D flip, and two absolutely-positioned faces in a wrapper that was inline
-          collapsed to nothing the first time it met real content. */}
+      {/* The active card stays in normal flow so the wrapper is sized by it and grows when the
+          answer opens. Only the outgoing ghost is absolute, and it exists for half a second. */}
       <div className="relative mt-4">
-        <span aria-hidden className="bg-tint absolute inset-x-0 top-0 h-full rounded-card scale-x-[0.9] -translate-y-3.5 opacity-60" />
-        <span aria-hidden className="bg-tint absolute inset-x-0 top-0 h-full rounded-card scale-x-[0.955] -translate-y-[7px]" />
+        <span
+          aria-hidden
+          style={stackStyle}
+          className="bg-tint rounded-card absolute inset-x-0 top-0 h-full -translate-y-3.5 scale-x-[0.9] opacity-60"
+        />
+        <span
+          aria-hidden
+          style={stackStyle}
+          className="bg-tint rounded-card absolute inset-x-0 top-0 h-full -translate-y-[7px] scale-x-[0.955]"
+        />
+
+        {ghostCard ? (
+          <div
+            aria-hidden
+            style={ghostStyle}
+            className={`rounded-card pointer-events-none absolute inset-0 flex flex-col gap-2.5 overflow-hidden p-5 ${
+              revealed ? "bg-steel-100" : "bg-tint-soft"
+            }`}
+          >
+            <Kicker>Prompt</Kicker>
+            <span className="font-head text-xl leading-snug font-semibold">{ghostCard.front}</span>
+          </div>
+        ) : null}
+
         <button
           type="button"
           onClick={() => setRevealed((value) => !value)}
           aria-expanded={revealed}
-          className={`rounded-card relative z-10 flex min-h-44 w-full flex-col gap-2.5 p-5 text-left transition-colors ${
+          style={activeStyle}
+          className={`rounded-card relative flex min-h-44 w-full flex-col gap-2.5 p-5 text-left ${
             revealed ? "bg-steel-100" : "bg-tint-soft hover:bg-tint"
           }`}
         >
@@ -484,7 +638,7 @@ function FlashcardsBody({
           <span className="font-head text-xl leading-snug font-semibold">{card.front}</span>
 
           {revealed ? (
-            <span className="bg-surface motion-safe:animate-step-in mt-0.5 flex flex-col gap-1 rounded-[10px] px-3.5 py-3">
+            <span className="bg-surface motion-safe:animate-rise mt-0.5 flex flex-col gap-1 rounded-[10px] px-3.5 py-3">
               <span className="font-head text-steel-600 text-[11px] tracking-widest uppercase">
                 Answer
               </span>
@@ -517,12 +671,32 @@ function FlashcardsBody({
         </RateButton>
       </div>
 
+      {/* Moving without rating. Going back is what makes the reverse motion reachable, and a
+          card you skipped stays unseen rather than being silently marked. */}
+      <div className="flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => go(-1)}
+          className="font-head text-ink/45 hover:text-steel-700 text-xs tracking-widest uppercase transition-colors"
+        >
+          ← Back
+        </button>
+        <span className="text-ink/30 text-[11px]">← → to move</span>
+        <button
+          type="button"
+          onClick={() => go(1)}
+          className="font-head text-ink/45 hover:text-steel-700 text-xs tracking-widest uppercase transition-colors"
+        >
+          Skip →
+        </button>
+      </div>
+
       <div className="grid grid-cols-3 gap-2">
         <SignalTile label="Known" value={String(counts.known)} detail="Confident" />
         <SignalTile label="Shaky" value={String(counts.shaky)} detail="Repeat tomorrow" />
         <SignalTile label="Unseen" value={String(counts.unseen)} detail="Not drawn yet" />
       </div>
-    </>
+    </div>
   );
 }
 

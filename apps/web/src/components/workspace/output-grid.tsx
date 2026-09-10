@@ -25,17 +25,17 @@ export function OutputGrid({
   onOpen: (id: KitOutputId) => void;
 }) {
   return (
-    <ul className="grid list-none grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+    <ul className="@sm:grid-cols-2 @xl:grid-cols-3 grid list-none grid-cols-1 gap-3">
       {KIT_OUTPUTS.map((output) => {
         const open = output.id === activeId;
         const took = outputDuration(output.id, spans);
         return (
-          <li key={output.id}>
+          <li key={output.id} className="flex">
             <button
               type="button"
               onClick={() => onOpen(output.id)}
               aria-current={open ? "true" : undefined}
-              className={`rounded-card flex w-full flex-col items-start gap-0.5 p-4 text-left transition-all duration-150 ${
+              className={`rounded-card flex h-full w-full flex-col items-start gap-0.5 p-4 text-left transition-all duration-150 ${
                 open
                   ? "bg-steel-100"
                   : "bg-tint hover:bg-steel-100 hover:-translate-y-0.5 hover:shadow-[0_6px_16px_rgba(35,51,67,0.09)]"

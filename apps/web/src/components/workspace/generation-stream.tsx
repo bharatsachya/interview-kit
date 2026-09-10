@@ -3,20 +3,22 @@
 import { useEffect, useRef } from "react";
 import type { Span } from "@trao/contracts";
 import { useJobStream } from "@/lib/api/job-stream";
-import { spanConsequence, spanResult, spanTone, stepLabel, toStreamRows, type SpanTone } from "@/lib/spans";
+import { stepLabel } from "@/lib/spans";
 import { Button } from "@/components/industry/button";
 import { ErrorNotice } from "@/components/industry/states";
 import { Eyebrow } from "@/components/industry/text";
+import { Assistant } from "@/components/workspace/assistant";
+import { Trace } from "@/components/workspace/trace";
 
 /**
  * One run, rendered as it happens.
  *
  * Mounted with `key={jobId}`, so a new run is a new component and there is no state to reset.
  *
- * A skipped step reads as information, not as an error: running without a search key is a normal
- * outcome, and drawing it in the alarm colour would misreport a kit that is perfectly fine. A
- * failed step says what it means for the kit rather than what broke in the pipeline — the person
- * watching wants to know what they are getting, not which function threw.
+ * The step list is `Trace` — the same component that draws the finished run — given a live
+ * step instead of nothing. It used to be a second list with its own markup, which meant two
+ * places to rename a step and a visible change of furniture the moment a run ended. Now the
+ * rows do not move when the run finishes; the running one simply stops running.
  */
 export function GenerationStream({
   jobId,
@@ -28,7 +30,6 @@ export function GenerationStream({
   onComplete: (jobId: string, kitId: string, spans: Span[]) => void;
 }) {
   const { spans, job, progress, label, transport, error } = useJobStream(jobId);
-  const rows = toStreamRows(spans);
   const announced = useRef(false);
 
   useEffect(() => {
@@ -43,28 +44,33 @@ export function GenerationStream({
   }, [job, jobId, spans, onComplete]);
 
   const settled = job?.status === "done" || job?.status === "failed";
-  const inFlight = !settled && progress && progress.stepIndex > rows.filter((r) => r.parentId === null).length;
+  const running = !settled;
 
   return (
     <section className="flex flex-col gap-4">
       {showLabel && label ? <Eyebrow className="text-steel-700">{label}</Eyebrow> : null}
 
-      <ol className="flex list-none flex-col gap-2">
-        {rows.map((span) => (
-          <StepRow key={span.id} span={span} />
-        ))}
+      {running ? (
+        <Assistant live>
+          {/* Shimmered rather than animated with dots: the sentence names the step, and the step
+              changes, so the text is already telling you it is alive. The sweep is what says the
+              app has not simply stopped on that step. */}
+          <span className="shimmer-text">
+            Building your kit{progress ? ` — ${stepLabel(progress.step).toLowerCase()}` : ""}
+          </span>
+        </Assistant>
+      ) : null}
 
-        {inFlight ? (
-          <li className="motion-safe:animate-step-in flex flex-wrap items-baseline gap-3">
-            <span aria-hidden className="border-ink hatch size-3 shrink-0 self-center border" />
-            <span className="text-sm">{stepLabel(progress.step)}</span>
-            <span className="sr-only">in progress</span>
-          </li>
-        ) : null}
-      </ol>
+      <div className="md:ml-[38px]">
+        <Trace
+          spans={spans}
+          progress={running && progress ? { step: progress.step } : null}
+          defaultOpen
+        />
+      </div>
 
       {transport === "polling" && !settled ? (
-        <p className="text-xs opacity-45">
+        <p className="text-ink/40 text-xs">
           The live stream dropped, so this is polling instead. The run is unaffected.
         </p>
       ) : null}
@@ -86,38 +92,5 @@ export function GenerationStream({
         <ErrorNotice title="No kit could be produced">{job.error.message}</ErrorNotice>
       ) : null}
     </section>
-  );
-}
-
-const TONE_MARK: Readonly<Record<SpanTone, string>> = {
-  done: "bg-ink",
-  // Informational, not alarming: the step chose not to run, and the kit records why.
-  info: "hatch",
-  trouble: "border-alarm bg-transparent",
-};
-
-function StepRow({ span }: { span: Span }) {
-  const tone = spanTone(span);
-  const result = spanResult(span);
-  const consequence = spanConsequence(span);
-
-  return (
-    <li className="motion-safe:animate-step-in flex flex-col gap-1">
-      <div className="flex flex-wrap items-baseline gap-3">
-        <span aria-hidden className={`border-ink size-3 shrink-0 self-center border ${TONE_MARK[tone]}`} />
-        <span className="text-sm">{stepLabel(span.step, span.attrs)}</span>
-        {result ? (
-          <>
-            <span aria-hidden className="text-xs opacity-35">
-              →
-            </span>
-            <span className={`text-sm tabular-nums ${tone === "trouble" ? "text-alarm" : "opacity-65"}`}>
-              {result}
-            </span>
-          </>
-        ) : null}
-      </div>
-      {consequence ? <p className="pl-6 text-xs opacity-55">{consequence}</p> : null}
-    </li>
   );
 }

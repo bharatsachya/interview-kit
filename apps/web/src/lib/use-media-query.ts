@@ -30,3 +30,13 @@ export function useMediaQuery(query: string, serverSnapshot = true): boolean {
 }
 
 export const DESKTOP = "(min-width: 768px)";
+
+/**
+ * Where the kit panel can afford to sit *beside* the conversation rather than over it.
+ *
+ * Higher than DESKTOP on purpose. The rail is 216 and the panel 520; at 834px that leaves the
+ * conversation 98 pixels, which is not a narrow column, it is a broken one. Between the two
+ * breakpoints the panel behaves the way it does on a phone — a sheet over the top — and the
+ * conversation keeps its full width underneath.
+ */
+export const WIDE = "(min-width: 1024px)";
