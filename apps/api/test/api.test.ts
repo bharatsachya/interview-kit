@@ -535,6 +535,24 @@ describe("the builder", () => {
     expect((second.body as { existing: boolean }).existing).toBe(true);
   });
 
+  it("gives a regenerated question an id the kit has never used", async () => {
+    await seed();
+    const started = await request(h.app).post("/kits/kit_seed/regenerate").set(...alice()).send({ section: "questions", category: "technical" });
+    await waitForJob(h, (started.body as { job_id: string }).job_id);
+
+    const stored = (await h.kits.findById("kit_seed")) as { kit: InternalKit };
+    const ids = stored.kit.questions.map((q) => q.id);
+
+    // Soft delete rests entirely on ids never being reused: two records sharing one id leaves a
+    // schedule day unable to say which of them it meant. Two things hold that here, and this
+    // asserts the outcome rather than either of them — the runner hands the regenerator its own
+    // durable generator rather than the per-run sequential one, whose counter restarts at q1 on
+    // every job, and `regenerateSection` skips any name the kit already holds regardless.
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(stored.kit.questions.find((q) => q.id === "q1")?.active).toBe(false);
+    expect(stored.kit.questions.some((q) => q.active && q.category === "technical")).toBe(true);
+  });
+
   it("refuses a regeneration of questions with no category, and a category on the others", async () => {
     await seed();
     expect((await request(h.app).post("/kits/kit_seed/regenerate").set(...alice()).send({ section: "questions" })).status).toBe(400);
