@@ -24,10 +24,21 @@ export function GenerationStream({
   jobId,
   showLabel,
   onComplete,
+  onFailed,
 }: {
   jobId: string;
   showLabel: boolean;
   onComplete: (jobId: string, kitId: string, spans: Span[]) => void;
+  /**
+   * A run that ended without a kit.
+   *
+   * Separate from `onComplete` because there is no kit id to hand over and nothing for the
+   * panel to open — the only consequence is that the history rail now has a row it did not
+   * have a moment ago. Without this the failure was on screen but absent from the rail until
+   * the next reload, which is precisely backwards: the run you most want to find again was the
+   * one the list did not admit existed.
+   */
+  onFailed: (jobId: string) => void;
 }) {
   const { spans, job, progress, label, transport, error } = useJobStream(jobId);
   const announced = useRef(false);
@@ -40,8 +51,11 @@ export function GenerationStream({
       // conversation keeps showing them after the stream has finished — a trace that vanished
       // the moment the run ended would be the one thing the product cannot afford to lose.
       onComplete(jobId, job.kitId, spans);
+    } else if (job?.status === "failed") {
+      announced.current = true;
+      onFailed(jobId);
     }
-  }, [job, jobId, spans, onComplete]);
+  }, [job, jobId, spans, onComplete, onFailed]);
 
   const settled = job?.status === "done" || job?.status === "failed";
   const running = !settled;

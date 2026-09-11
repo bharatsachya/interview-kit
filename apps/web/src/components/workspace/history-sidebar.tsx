@@ -1,7 +1,7 @@
 "use client";
 
 import { UserButton, useClerk, useUser } from "@clerk/nextjs";
-import type { KitSummary } from "@/lib/api/types";
+import { kitCount, runLabel, type HistoryEntry } from "@/lib/history";
 import { KIT_OUTPUTS } from "@/lib/kit-outputs";
 import { Button } from "@/components/industry/button";
 import { EmptyState, Skeleton } from "@/components/industry/states";
@@ -21,26 +21,33 @@ import { Eyebrow, OpenDot } from "@/components/industry/text";
 export function HistorySidebar({
   comparing,
   onCompare,
-  kits,
+  entries,
   loading,
   error,
   activeKitId,
+  activeJobId,
   onSelect,
+  onOpenRun,
   onNew,
   onRetry,
 }: {
   comparing: boolean;
   onCompare: () => void;
-  kits: KitSummary[];
+  entries: HistoryEntry[];
   loading: boolean;
   error: string | null;
   activeKitId: string | null;
+  activeJobId: string | null;
   onSelect: (kitId: string) => void;
+  onOpenRun: (jobId: string) => void;
   onNew: () => void;
   onRetry: () => void;
 }) {
   const { user } = useUser();
   const { signOut } = useClerk();
+  // Only finished kits can be compared, and only they are counted below — a failed run in the
+  // list must not make "Compare 2 kits" appear when there is one kit to compare.
+  const kits = kitCount(entries);
 
   return (
     <div className="bg-tint-soft flex h-full w-full flex-col gap-5 overflow-hidden p-4">
@@ -69,7 +76,7 @@ export function HistorySidebar({
         {/* Only with something to compare. One kit has no comparison, and an always-visible
             control that does nothing five times out of six is worse than one that arrives when
             it becomes true. */}
-        {kits.length > 1 ? (
+        {kits > 1 ? (
           <button
             type="button"
             onClick={onCompare}
@@ -81,11 +88,11 @@ export function HistorySidebar({
             <svg aria-hidden width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
               <path d="M3 12V6M8 12V3M13 12V8" />
             </svg>
-            Compare {kits.length} kits
+            Compare {kits} kits
           </button>
         ) : null}
 
-        {loading && kits.length === 0 ? (
+        {loading && entries.length === 0 ? (
           <div className="flex flex-col gap-3">
             <Skeleton lines={2} />
             <Skeleton lines={2} />
@@ -100,11 +107,63 @@ export function HistorySidebar({
           >
             {error}
           </EmptyState>
-        ) : kits.length === 0 ? (
+        ) : entries.length === 0 ? (
           <EmptyState>Nothing built yet. Paste a job description to start one.</EmptyState>
         ) : (
           <ul className="flex list-none flex-col gap-1">
-            {kits.map((kit) => {
+            {entries.map((entry) => {
+              // A run row and a kit row are the same row with different things known about it.
+              // A failed run has no company and no role — the job's label, taken from the
+              // posting's first line, is all there is, and inventing more would be a lie about
+              // work that did not finish.
+              if (entry.kind === "run") {
+                const { job } = entry;
+                const active = job.id === activeJobId;
+                const failed = job.status === "failed";
+                return (
+                  <li key={job.id}>
+                    <button
+                      type="button"
+                      onClick={() => onOpenRun(job.id)}
+                      aria-current={active ? "true" : undefined}
+                      className={`flex w-full flex-col rounded-xl px-3 py-2.5 text-left transition-colors ${
+                        active ? "bg-steel-100" : "hover:bg-tint"
+                      }`}
+                    >
+                      <span className="flex items-center gap-2">
+                        {active ? <OpenDot /> : null}
+                        <span
+                          className={`font-head truncate text-[15px] font-semibold ${
+                            active ? "text-steel-800" : failed ? "text-ink/70" : ""
+                          }`}
+                        >
+                          {job.label === "" ? "Untitled run" : job.label}
+                        </span>
+                      </span>
+                      {/* The reason, not just the state. Reaching a failure from the rail and
+                          being told only "Failed" would mean opening it to learn anything. */}
+                      <span className="text-ink/55 truncate text-xs">
+                        {failed ? (job.error?.message ?? "No kit could be produced") : "In progress"}
+                      </span>
+                      <span
+                        className={`font-head mt-0.5 flex items-center gap-1.5 text-xs tracking-wider uppercase ${
+                          failed ? "text-alarm" : active ? "text-steel-500" : "text-ink/40"
+                        }`}
+                      >
+                        {!failed ? (
+                          <span
+                            aria-hidden
+                            className="bg-steel-400 inline-block size-1.5 shrink-0 animate-pulse rounded-full"
+                          />
+                        ) : null}
+                        {runLabel(job)}
+                      </span>
+                    </button>
+                  </li>
+                );
+              }
+
+              const { kit } = entry;
               const active = kit.id === activeKitId;
               return (
                 <li key={kit.id}>
@@ -156,9 +215,7 @@ export function HistorySidebar({
             {user?.fullName ?? user?.primaryEmailAddress?.emailAddress ?? "Signed in"}
           </span>
           <span className="text-ink/55 truncate text-[11.5px] leading-tight">
-            {kits.length === 0
-              ? "No kits yet"
-              : `${kits.length} ${kits.length === 1 ? "kit" : "kits"}`}
+            {kits === 0 ? "No kits yet" : `${kits} ${kits === 1 ? "kit" : "kits"}`}
           </span>
         </span>
 

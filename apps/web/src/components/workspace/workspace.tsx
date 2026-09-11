@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import type { Span } from "@trao/contracts";
 import { api } from "@/lib/api/client";
-import type { KitSummary } from "@/lib/api/types";
+import { kitsOf, mergeHistory, type HistoryEntry } from "@/lib/history";
 import { KIT_OUTPUTS, seconds, type KitOutputId } from "@/lib/kit-outputs";
 import { DESKTOP, WIDE, useMediaQuery } from "@/lib/use-media-query";
 import { useHydrated } from "@/lib/use-hydrated";
@@ -82,7 +82,9 @@ export function Workspace() {
   const [historyOverride, setHistoryOverride] = useState<boolean | null>(null);
   const historyOpen = historyOverride ?? isDesktop;
 
-  const [kits, setKits] = useState<KitSummary[]>([]);
+  // Kits and runs, merged. A kit does not exist until its job succeeds, so a list built from
+  // kits alone loses every failure the moment the page reloads — see lib/history.ts.
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [kitsLoading, setKitsLoading] = useState(true);
   const [kitsError, setKitsError] = useState<string | null>(null);
   const [historyNonce, setHistoryNonce] = useState(0);
@@ -115,10 +117,11 @@ export function Workspace() {
 
   useEffect(() => {
     const controller = new AbortController();
-    api
-      .listKits(controller.signal)
-      .then((view) => {
-        setKits(view.kits);
+    // Both, together. Neither list is a superset of the other: kits carry what a finished run
+    // was about, jobs carry the runs that have no kit — queued, running, and above all failed.
+    Promise.all([api.listKits(controller.signal), api.listJobs(controller.signal)])
+      .then(([kitView, jobView]) => {
+        setHistory(mergeHistory(kitView.kits, jobView.jobs));
         setKitsError(null);
       })
       .catch((error: unknown) => {
@@ -174,6 +177,23 @@ export function Workspace() {
     setHistoryOverride((open) => (open === true ? null : open));
   }, []);
 
+  /**
+   * Reopen a run from history — one that failed, or one still going.
+   *
+   * Nothing new is needed to show it: putting the id back in `jobIds` is exactly the state a
+   * fresh run is in, and `GenerationStream` re-reads the job and its spans from the API. So a
+   * failure reached from the rail renders the same trace and the same message it showed while
+   * it was happening, which is the whole point of keeping the row.
+   */
+  const openRun = useCallback((jobId: string) => {
+    setStaleKitId(null);
+    setComparing(false);
+    setJobIds([jobId]);
+    setActiveKitId(null);
+    setPanelOpen(false);
+    setHistoryOverride((open) => (open === true ? null : open));
+  }, []);
+
   const startRun = useCallback((ids: string[], ask: string) => {
     setStaleKitId(null);
     setComparing(false);
@@ -186,6 +206,18 @@ export function Workspace() {
       for (const id of ids) next[id] = { text: ask, at };
       return next;
     });
+  }, []);
+
+  /**
+   * A run that produced nothing. There is no kit to open — only a row to add to the rail.
+   *
+   * The refetch is the whole point: the job has been in Mongo since it was accepted, so the row
+   * exists server-side already, and the rail simply has not asked since. Without this the
+   * failure stays on screen and out of the list until a reload.
+   */
+  const onRunFailed = useCallback(() => {
+    setKitsLoading(true);
+    setHistoryNonce((nonce) => nonce + 1);
   }, []);
 
   // The panel opens on the first kit to finish. In a batch the others are reachable from
@@ -233,6 +265,7 @@ export function Workspace() {
   // One decision, read by the panel and by the rail inside it.
   const railBeside = isWide && panelResize.width >= INDEX_RAIL_MIN_PANEL;
 
+  const kits = kitsOf(history);
   const activeKitSummary = kits.find((entry) => entry.id === activeKitId) ?? null;
   const activeRun = Object.values(runs).find((run) => run.kitId === activeKitId) ?? null;
   const running = jobIds.some((jobId) => runs[jobId] === undefined);
@@ -275,11 +308,13 @@ export function Workspace() {
             <HistorySidebar
               comparing={comparing}
               onCompare={() => setComparing(true)}
-              kits={kits}
+              entries={history}
               loading={kitsLoading}
               error={kitsError}
               activeKitId={activeKitId}
+              activeJobId={jobIds.length === 1 ? (jobIds[0] as string) : null}
               onSelect={selectKit}
+              onOpenRun={openRun}
               onNew={startNew}
               onRetry={() => {
                 setKitsLoading(true);
@@ -423,6 +458,7 @@ export function Workspace() {
                               jobId={jobId}
                               showLabel={jobIds.length > 1}
                               onComplete={onKitReady}
+                              onFailed={onRunFailed}
                             />
                           </div>
                         )}
