@@ -15,6 +15,7 @@ import {
   reorderQuestions,
   setQuestionPinned,
 } from "../src/edits";
+import { QUESTION_CATEGORIES } from "../src/types";
 import { VersionConflictError } from "../src/version";
 
 /**
@@ -444,5 +445,17 @@ describe("addFlashcard", () => {
     const after = addFlashcard(kit, { front: "f", back: "b" }, new TestIds());
     expect(after.flashcards[0]!.questionId).toBeNull();
     expect(after.flashcards[0]!.origin).toBe("manual");
+  });
+
+  it("survives a regeneration of every category", () => {
+    // The deck offers a way to write a card, and the README says no regeneration will take it
+    // away. Two things hold that and this asserts both: it is `manual` rather than `generated`,
+    // and it is derived from no question, so there is nothing whose archiving could sweep it up.
+    const kit = addFlashcard(makeKit({ flashcards: [] }), { front: "mine", back: "also mine" }, new TestIds());
+    const mine = kit.flashcards[0]!.id;
+
+    const after = QUESTION_CATEGORIES.reduce((current, category) => regenerateCategory(current, category, []), kit);
+
+    expect(after.flashcards.find((f) => f.id === mine)).toMatchObject({ active: true, origin: "manual" });
   });
 });

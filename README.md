@@ -24,7 +24,7 @@ with **no API key, no database and no network**. It is the fastest way to see th
 | [What it does](#what-it-does) | the nine steps, and what each is responsible for |
 | [Running it](#running-it) | local setup, the batch command, the API and the web app |
 | [Architecture](#architecture) | the one rule the whole repo is arranged around |
-| [The state problem](#the-state-problem-generated-edited-pinned) | how an edit survives a regeneration |
+| [The builder](#the-builder-and-the-state-problem) | what is editable, and how an edit survives a regeneration |
 | [Scheduling](#scheduling) | why the schedule is arithmetic and not a prompt |
 | [Coverage](#coverage) | gap detection, two extra passes, and the acceptance gates |
 | [Retrieval](#retrieval) | crawling, link ranking, and what is actually read |
@@ -168,11 +168,17 @@ because the frontend promises to set one is authenticated only to people who use
 
 ---
 
-## The state problem: generated, edited, pinned
+## The builder, and the state problem
 
-The 15-point item, and the one the brief says it will look at most closely: *regenerating one
-section must not discard edits made elsewhere, and a question the user wrote or edited by hand
-must survive a regeneration of its category.*
+Everything in a kit is editable: every question prompt and answer outline, every flashcard's two
+sides, the brief, and any day's focus. Questions reorder within a category, move between
+categories, and can be written by hand — as can flashcards, which are otherwise derived. Any
+question, any card, and any of the brief, one question category or the schedule can be
+regenerated on its own.
+
+Which is where the hard part is. The 15-point item, and the one the brief says it will look at
+most closely: *regenerating one section must not discard edits made elsewhere, and a question the
+user wrote or edited by hand must survive a regeneration of its category.*
 
 Every editable item carries four fields that never appear in the Appendix A output:
 
@@ -287,27 +293,33 @@ the step records itself as skipped, and the brief says what it could not find.
 
 ## Robustness: the degradation ladder
 
-Every rung still produces a kit. A partial kit is `ok`; only a kit that could not be produced at
-all is `failed`.
+- Search key absent or API down → no public-discussion section, recorded as a gap in the brief.
+- Company site 404s or times out → kit generates from the JD alone, `pages_used` empty, brief
+  says so honestly.
+- Model returns invalid JSON → one repair attempt, then skip that step and record it.
+- Budget exhausted mid-coverage → ship with gaps listed rather than looping.
+- Provider 429s → queue and wait. Only after retries exhaust does a case become `failed`.
 
-| What went wrong | What happens |
-|---|---|
-| No search key, or the search API is down | No public-discussion section, recorded as a gap |
-| An inner page 404s or times out | Skipped and reported; the crawl continues |
-| One question category fails | That section is thinner; the rest of the kit is unaffected |
-| The model returns invalid JSON | Local repair, then one paid repair, then the step is skipped and recorded |
-| Budget exhausted mid-coverage | Ship with the gaps listed rather than looping |
-| Provider 429s | The gateway queues and waits; only after retries are exhausted is a case `failed` |
-| The company site is unreachable | The one fatal research failure — see below |
-| A thin job description | A thin kit that says so — `suspicious_extraction` on the trace |
+**A partial kit is `ok`. Only a kit that could not be produced at all is `failed`.** A missing
+hiring page is not a failure.
 
-The last one is the point: **inventing requirements is worse than reporting there were few.**
+Three more rungs this implementation adds, on the same principle:
 
-The unreachable homepage is a deliberate split. `scripts/evaluate.ts` treats it as `failed:
-COMPANY_UNREACHABLE`, because Appendix B's own worked example shows exactly that and the graders'
-harness may assert on it. The interactive app takes the other reading — someone who pastes a URL
-that 404s wants the kit their description can still produce — and says plainly in the brief what
-it lacks. One flag, both behaviours, neither pretending to be the only reasonable one.
+- An inner page 404s or times out → skipped and reported; the crawl continues.
+- One question category fails → that section is thinner, the rest of the kit is unaffected.
+- A thin job description → a thin kit that says so, with `suspicious_extraction` on the trace.
+  **Inventing requirements is worse than reporting there were few.**
+
+### The one rung that behaves differently in batch
+
+The second bullet describes the interactive app. `scripts/evaluate.ts` takes the other reading
+and treats an unreachable homepage as `failed: COMPANY_UNREACHABLE`, because Appendix B's own
+worked example shows exactly that entry and the graders' harness may assert on it.
+
+Both readings are defensible and the specification contains both, so it is one flag
+(`treatUnreachableSiteAsFailure`) rather than a decision baked in — batch is judged against the
+specification, the app is judged by whoever is using it. Someone who pastes a URL that 404s
+wants the kit their description can still produce.
 
 ---
 
@@ -337,7 +349,10 @@ anywhere it chose.
 ## Practice and the creative features
 
 **Practice** deals one flashcard at a time, reveals on click, and takes a three-way rating —
-Knew it / Shaky / Again. Ratings live in their own `practice_sessions` collection, not on the
+Knew it / Shaky / Again. The card in front of you can be edited or deleted without leaving the
+deck, and a new one written there too: the deck is where you notice the bank is missing
+something, in the same way it is where you notice a card is wrong. A card written by hand is
+`manual`, so no regeneration will take it away. Ratings live in their own `practice_sessions` collection, not on the
 kit: a rating log grows with use and a kit does not, and embedding it would make every builder
 read carry a month of history it has no use for.
 

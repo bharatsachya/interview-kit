@@ -711,6 +711,82 @@ function MoveMenu({
 }
 
 /** Writing a question by hand. Origin `manual`, so no regeneration will ever take it back. */
+/**
+ * A card the user writes.
+ *
+ * Deliberately smaller than `NewQuestionForm`: a card has two sides and no difficulty, because
+ * nothing schedules a flashcard — the minutes table works off questions. Requirement ids are
+ * left empty for the same reason they are on a hand-written question: coverage is computed from
+ * them, and a card the user wrote does not get to claim it closes a gap.
+ *
+ * Enter submits from the front field, because a two-field form where the obvious key does
+ * nothing is a form people fill in twice.
+ */
+function NewFlashcardForm({
+  busy,
+  onAdd,
+  onCancel,
+}: {
+  busy: boolean;
+  onAdd: (draft: { front: string; back: string }) => void;
+  onCancel: () => void;
+}) {
+  const [front, setFront] = useState("");
+  const [back, setBack] = useState("");
+  const ready = front.trim() !== "";
+
+  const submit = () => {
+    if (!ready) return;
+    onAdd({ front: front.trim(), back: back.trim() });
+  };
+
+  return (
+    <Frame className="flex flex-col gap-2.5 p-4">
+      <Kicker>New card</Kicker>
+      <textarea
+        autoFocus
+        value={front}
+        onChange={(event) => setFront(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            submit();
+          }
+          if (event.key === "Escape") onCancel();
+        }}
+        placeholder="The front — what you want to be asked."
+        rows={2}
+        className="bg-surface rounded-control placeholder:text-ink/35 w-full px-3 py-2 text-sm outline-none"
+      />
+      <textarea
+        value={back}
+        onChange={(event) => setBack(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") onCancel();
+          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+            event.preventDefault();
+            submit();
+          }
+        }}
+        placeholder="The back — the answer, in as few words as it takes."
+        rows={2}
+        className="bg-surface rounded-control placeholder:text-ink/35 w-full px-3 py-2 text-[13px] outline-none"
+      />
+      <div className="flex items-center gap-2">
+        <span className="text-ink/35 text-[11px]">Enter to add · Esc to cancel</span>
+        <span className="ml-auto flex gap-2">
+          <Button variant="ghost" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button variant="primary" busy={busy} busyLabel="Adding" disabled={!ready} onClick={submit}>
+            Add card
+          </Button>
+        </span>
+      </div>
+    </Frame>
+  );
+}
+
 function NewQuestionForm({
   category,
   busy,
@@ -843,6 +919,10 @@ function FlashcardsBody({
   const [direction, setDirection] = useState(1);
   const [phase, setPhase] = useState<DeckPhase>("idle");
   const [revealed, setRevealed] = useState(false);
+  const [adding, setAdding] = useState(false);
+  // Set when a card has been sent and not yet arrived. The server mints the id, so there is no
+  // optimistic preview to jump to — the deck waits for the refetch and then deals the new card.
+  const [awaitingNewCard, setAwaitingNewCard] = useState(false);
 
   // Anyone who has asked not to be moved gets the swap with no motion at all. The card still
   // changes; it simply does not travel to get there.
@@ -912,6 +992,21 @@ function FlashcardsBody({
     return () => clearTimeout(done);
   }, [phase]);
 
+  /**
+   * Show the card you just wrote.
+   *
+   * Adding one and staying where you were leaves the user to work out whether it saved by
+   * counting segments in the progress strip. A new card sorts to the back of the deck — the
+   * server has no rating for it yet, so it is not in the order the server sent — which is where
+   * this jumps to.
+   */
+  useEffect(() => {
+    if (!awaitingNewCard || total === 0) return;
+    setAwaitingNewCard(false);
+    setPosition(total - 1);
+    setRevealed(false);
+  }, [awaitingNewCard, total]);
+
   // Left and right move through the deck. Bound to the panel rather than the window so it does
   // not steal the arrow keys from the composer or the index rail.
   const onDeckKeyDown = useCallback(
@@ -927,12 +1022,37 @@ function FlashcardsBody({
     [go],
   );
 
+  const addCard = (draft: { front: string; back: string }) => {
+    builder.addFlashcard({ ...draft, requirementIds: [] });
+    setAdding(false);
+    setAwaitingNewCard(true);
+  };
+
   if (total === 0) {
     return (
-      <EmptyState title="No cards yet">
-        Flashcards are derived from the questions, so there will be cards once there are
-        questions.
-      </EmptyState>
+      <div className="flex flex-col gap-4">
+        <EmptyState title="No cards yet">
+          Flashcards are derived from the questions, so there will be cards once there are
+          questions — or write one yourself.
+        </EmptyState>
+        {adding ? (
+          <NewFlashcardForm
+            busy={builder.busy === "flashcard:new"}
+            onCancel={() => setAdding(false)}
+            onAdd={addCard}
+          />
+        ) : (
+          <div>
+            <button
+              type="button"
+              onClick={() => setAdding(true)}
+              className="bg-tint text-ink/70 hover:bg-steel-100 hover:text-steel-700 rounded-pill h-8 px-3.5 text-xs font-semibold transition-colors"
+            >
+              + Write your own card
+            </button>
+          </div>
+        )}
+      </div>
     );
   }
 
@@ -1154,6 +1274,27 @@ function FlashcardsBody({
           />
         </div>
       </Frame>
+
+      {/* Writing a card belongs next to editing one, not in a separate place: the deck is where
+          you notice the bank is missing something, in the same way it is where you notice a card
+          is wrong. A card written here is `manual` and no regeneration will take it away. */}
+      {adding ? (
+        <NewFlashcardForm
+          busy={builder.busy === "flashcard:new"}
+          onCancel={() => setAdding(false)}
+          onAdd={addCard}
+        />
+      ) : (
+        <div>
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            className="bg-tint text-ink/70 hover:bg-steel-100 hover:text-steel-700 rounded-pill h-8 px-3.5 text-xs font-semibold transition-colors"
+          >
+            + Write your own card
+          </button>
+        </div>
+      )}
 
       <div className="grid grid-cols-3 gap-2">
         <SignalTile label="Known" value={String(counts.known)} detail="Confident" />
