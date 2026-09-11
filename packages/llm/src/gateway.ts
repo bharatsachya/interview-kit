@@ -87,18 +87,19 @@ export const DEFAULT_OUTPUT_RESERVE = 1_024;
 /**
  * Ceiling on any single request, however much time the run has left.
  *
- * Fifteen seconds, not thirty. A free model that has not answered in fifteen is usually not
- * going to: measured against the live free tier, the models that work answer a small prompt in
- * one to three seconds, while a stalled one sat for thirty-one before returning an error and
- * another never finished a generation-sized prompt inside two minutes. Waiting the full thirty
- * spends a third of the run's deadline learning what the first fifteen already showed.
+ * Thirty seconds, and the number is measured rather than chosen. This was briefly fifteen, on
+ * the theory that a free model which has not answered by then is not going to — which was true
+ * of the toy prompts it was tested against and false of the real ones. Extraction from an
+ * actual posting, six thousand characters in and two dozen requirements out, takes these models
+ * twenty-two to twenty-seven seconds. Fifteen did not filter out the slow models; it timed out
+ * every model there was, and the fallback chain dutifully worked its way through all four
+ * before failing the run.
  *
- * The cost is real and worth stating: a model that genuinely needs twenty-odd seconds to write
- * a full question set is abandoned mid-answer and the next one in the list is tried instead.
- * That trade only pays because the fallback chain works — before `modelUnavailable`, giving up
- * early meant giving up entirely. `LLM_REQUEST_TIMEOUT_MS` moves it without a rebuild.
+ * So this is a real ceiling on a real answer, not a patience threshold. It is not the lever for
+ * how long a person waits either — that is the progress stream, which shows each step landing.
+ * `LLM_REQUEST_TIMEOUT_MS` moves it without a rebuild when the free tier's mix changes again.
  */
-export const DEFAULT_REQUEST_BUDGET_MS = 15_000;
+export const DEFAULT_REQUEST_BUDGET_MS = 30_000;
 
 interface CachedResponse {
   text: string;

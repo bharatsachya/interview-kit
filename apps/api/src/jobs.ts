@@ -56,8 +56,16 @@ export interface JobRunnerOptions {
   timeoutMs?: number;
 }
 
-/** Longer than a healthy run by a wide margin, shorter than a person's patience. */
-export const DEFAULT_JOB_TIMEOUT_MS = 3 * 60_000;
+/**
+ * Longer than a healthy run by a wide margin, shorter than a person's patience.
+ *
+ * Four minutes, up from three, because the per-request ceiling is a measured thirty seconds and
+ * the budget deadline is four fifths of this. A run that loses its first model to a timeout and
+ * succeeds on the second spends fifty-five seconds on extraction alone; add the brief, four
+ * question calls and a gap-fill pass and three minutes left no room for the fallback chain to
+ * do the job it exists for. `JOB_TIMEOUT_MS` overrides it.
+ */
+export const DEFAULT_JOB_TIMEOUT_MS = 4 * 60_000;
 
 /** The nine steps, for turning a span count into a percentage the UI can show. */
 const PIPELINE_STEPS = [

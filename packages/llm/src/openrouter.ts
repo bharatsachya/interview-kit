@@ -74,8 +74,8 @@ export const OPENROUTER_FREE_MODELS = [
   "nex-agi/nex-n2.5-pro:free",
 ] as const;
 
-/** See DEFAULT_REQUEST_BUDGET_MS in gateway.ts. The gateway normally caps this lower still. */
-export const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+/** See DEFAULT_REQUEST_BUDGET_MS in gateway.ts, where the measurement behind this number is. */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 export class OpenRouterTransport implements ModelTransport {
   readonly name = "openrouter";
