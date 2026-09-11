@@ -1,4 +1,4 @@
-import type { JobRecord } from "@trao/contracts";
+import type { JobRecordView } from "@/lib/api/types";
 import type { JobView } from "@trao/api-contract";
 import { Unauthenticated, UpstreamUnreachable, callApi, unauthenticated, unreachable } from "@/lib/api/upstream";
 
@@ -182,7 +182,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ jobI
   });
 }
 
-function settled(job: JobRecord): boolean {
+function settled(job: JobRecordView): boolean {
   return job.status === "done" || job.status === "failed";
 }
 

@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Span } from "@trao/contracts";
+import { api } from "@/lib/api/client";
 import { useJobStream } from "@/lib/api/job-stream";
 import { stepLabel } from "@/lib/spans";
 import { Button } from "@/components/industry/button";
@@ -25,6 +26,7 @@ export function GenerationStream({
   showLabel,
   onComplete,
   onFailed,
+  onRetried,
 }: {
   jobId: string;
   showLabel: boolean;
@@ -39,9 +41,34 @@ export function GenerationStream({
    * one the list did not admit existed.
    */
   onFailed: (jobId: string) => void;
+  /** A retry started: the workspace swaps this run for the new one it created. */
+  onRetried: (jobId: string) => void;
 }) {
   const { spans, job, progress, label, transport, error } = useJobStream(jobId);
   const announced = useRef(false);
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
+
+  /**
+   * Start the same work again, as a new run.
+   *
+   * The new job replaces this one on screen rather than being appended: two traces for what the
+   * user thinks of as one attempt is a worse answer than the newest one, and the failure it
+   * came from is still in the history rail either way.
+   */
+  const retry = useCallback(async () => {
+    setRetrying(true);
+    setRetryError(null);
+    try {
+      const { job_ids } = await api.retryJob(jobId);
+      const next = job_ids[0];
+      if (next === undefined) throw new Error("The API accepted the retry but named no run.");
+      onRetried(next);
+    } catch (cause: unknown) {
+      setRetryError(cause instanceof Error ? cause.message : "Could not start it again.");
+      setRetrying(false);
+    }
+  }, [jobId, onRetried]);
 
   useEffect(() => {
     if (announced.current) return;
@@ -103,8 +130,24 @@ export function GenerationStream({
       ) : null}
 
       {job?.status === "failed" && job.error ? (
-        <ErrorNotice title="No kit could be produced">{job.error.message}</ErrorNotice>
+        <ErrorNotice
+          title="No kit could be produced"
+          actions={
+            // Offered only when the API says this run can actually be repeated. A run that
+            // failed before the posting was kept on its record has nothing to retry with, and a
+            // button that can only 404 is worse than no button.
+            job.retryable ? (
+              <Button variant="secondary" onClick={() => void retry()} disabled={retrying}>
+                {retrying ? "Starting…" : "Try again"}
+              </Button>
+            ) : null
+          }
+        >
+          {job.error.message}
+        </ErrorNotice>
       ) : null}
+
+      {retryError ? <p className="text-alarm text-xs font-medium">{retryError}</p> : null}
     </section>
   );
 }

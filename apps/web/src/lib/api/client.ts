@@ -164,6 +164,20 @@ export const api = {
     return request<CreateJobsResponse>("/kits/batch", { method: "POST", body: JSON.stringify(body), signal });
   },
 
+  /**
+   * Run a failed job's work again. Answers with the new job's id, like any other start.
+   *
+   * No body: what the run was for is on the job record, which is why it is stored there. The
+   * page cannot supply it — a run reached from history was loaded long after its posting left
+   * the screen.
+   */
+  async retryJob(jobId: string, signal?: AbortSignal): Promise<CreateJobsResponse> {
+    return request<CreateJobsResponse>(`/jobs/${encodeURIComponent(jobId)}/retry`, {
+      method: "POST",
+      signal,
+    });
+  },
+
   async getJob(jobId: string, signal?: AbortSignal): Promise<JobView> {
     return request<JobView>(`/jobs/${encodeURIComponent(jobId)}`, { signal });
   },

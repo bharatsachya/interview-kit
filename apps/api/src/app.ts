@@ -128,8 +128,25 @@ export function createApp(options: ApiOptions): express.Express {
           createdAt: job.createdAt,
           progress: job.progress,
           error: job.error,
+          // Whether this one can be run again, rather than leaving the client to infer it from
+          // a status and be wrong about the records written before the posting was stored.
+          retryable: job.status === "failed" && job.request !== null,
         })),
       } satisfies JobListView);
+    }),
+  );
+
+  app.post(
+    "/jobs/:jobId/retry",
+    guarded(options.auth, async (req, res, userId) => {
+      const started = await options.runner.retry(userId, req.params["jobId"] as string);
+      // One 404 for "no such job", "not yours", "did not fail" and "nothing to retry with".
+      // The first two must not be distinguishable — confirming a job exists leaks that it does
+      // — and the last two are only reachable by a client ignoring what the list already told
+      // it, so there is nothing to gain from telling them apart.
+      if (started === null) return notFound(res, "job");
+
+      res.status(202).json({ job_ids: [started.jobId] } satisfies CreateJobsResponse);
     }),
   );
 
@@ -140,8 +157,9 @@ export function createApp(options: ApiOptions): express.Express {
       // 404 rather than 403 for someone else's job: confirming it exists leaks that it does.
       if (job === null || job.userId !== userId) return notFound(res, "job");
 
+      const { request: jobRequest, ...rest } = job;
       res.set("cache-control", "no-store").json({
-        job,
+        job: { ...rest, retryable: job.status === "failed" && jobRequest !== null },
         spans: options.runner.spansFor(job.id),
         // The in-process label while the job is running, the stored one otherwise — a job
         // watched after a restart still has a name, it just no longer has live spans.

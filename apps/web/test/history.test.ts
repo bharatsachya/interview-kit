@@ -17,6 +17,7 @@ const job = (id: string, createdAt: number, over: Partial<JobSummary> = {}): Job
   kitId: null,
   createdAt,
   progress: null,
+  retryable: true,
   error: { code: "TIMEOUT", message: "The operation was aborted due to timeout" },
   ...over,
 });

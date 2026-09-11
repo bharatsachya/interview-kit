@@ -122,6 +122,30 @@ export class JobRunner {
    * there is no kit yet. Reserving it also gives the progress screen somewhere to navigate to
    * before the run ends.
    */
+  /**
+   * Run a failed job's work again, as a new job.
+   *
+   * A new job rather than a reset of the old one: the failure is a thing that happened, the
+   * history list now says so, and rewriting the record would erase the evidence of what went
+   * wrong while someone was still reading it. The retry stands beside it.
+   *
+   * Everything else is `start`, including its idempotency — so a double click costs one run,
+   * and a retry that succeeds where the original failed still deduplicates against a kit
+   * somebody else's run may have produced in the meantime.
+   */
+  async retry(userId: string, jobId: string): Promise<StartedJob | null> {
+    const job = await this.options.jobs.findById(jobId);
+    if (job === null || job.userId !== userId) return null;
+    if (job.status !== "failed" || job.request === null) return null;
+
+    return this.start(userId, {
+      id: jobId,
+      jd: job.request.jd,
+      company_url: job.request.companyUrl,
+      days: job.request.days,
+    });
+  }
+
   async start(userId: string, testCase: EvaluationCase): Promise<StartedJob> {
     const key = `${userId}\u0000${hashSubmission(testCase.jd, testCase.company_url, testCase.days)}`;
 
@@ -147,6 +171,7 @@ export class JobRunner {
         userId,
         label: labelFor(testCase),
         kitId: existing.id,
+        request: requestOf(testCase),
         status: "done",
         progress: { step: "serialize_kit", stepIndex: PIPELINE_STEPS.length, stepCount: PIPELINE_STEPS.length },
         error: null,
@@ -164,6 +189,8 @@ export class JobRunner {
       userId,
       label: labelFor(testCase),
       kitId,
+      // Kept so a failed run can be run again. The browser cannot supply it after a reload.
+      request: requestOf(testCase),
       // Queued, not invisible. The history list reads jobs as well as kits, so a run holds its
       // place from the moment it is accepted rather than appearing only once it has a kit.
       status: "queued",
@@ -216,6 +243,8 @@ export class JobRunner {
       userId,
       label: regenerationLabel(request),
       kitId,
+      // A regeneration runs from a kit, not from a posting. There is no posting to retry with.
+      request: null,
       status: "queued",
       progress: null,
       error: null,
@@ -444,7 +473,12 @@ async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
 }
 
 /** A human-readable name for a job before any kit exists to name it. */
-export function labelFor(testCase: EvaluationCase): string {
+export /** The half of a case worth keeping on the job: what a retry would have to send again. */
+function requestOf(testCase: EvaluationCase): { jd: string; companyUrl: string; days: number } {
+  return { jd: testCase.jd, companyUrl: testCase.company_url, days: testCase.days };
+}
+
+function labelFor(testCase: EvaluationCase): string {
   const firstLine = testCase.jd.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() ?? "";
   if (firstLine.length > 0) return firstLine.slice(0, 80);
   try {

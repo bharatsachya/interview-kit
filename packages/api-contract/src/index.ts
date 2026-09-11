@@ -76,8 +76,18 @@ export interface RegenerateResponse {
  * fake spinner — and asking for them separately would let the two answers disagree about which
  * step is running.
  */
+/**
+ * A job record as the browser sees it, minus what the browser has no use for.
+ *
+ * `request` — the whole job description — stays on the server. The progress screen polls this
+ * every couple of seconds, and shipping the posting back on every tick to answer a yes/no
+ * question about a button would be a strange way to spend a phone's data. `retryable` is that
+ * answer, computed where the record already is.
+ */
+export type JobRecordView = Omit<JobRecord, "request"> & { retryable: boolean };
+
 export interface JobView {
-  job: JobRecord;
+  job: JobRecordView;
   spans: Span[];
   /** The role this job is for, so a batch of six can label its rows before any kit exists. */
   label: string;
@@ -127,6 +137,14 @@ export interface JobSummary {
   createdAt: number;
   progress: JobRecord["progress"];
   error: JobRecord["error"];
+  /**
+   * Whether this run can be started again.
+   *
+   * Sent rather than inferred from the status: a run that failed before the posting was stored
+   * on the record has nothing to retry with, and a client deducing "failed means retryable"
+   * would offer a button that can only 404.
+   */
+  retryable: boolean;
 }
 
 export interface JobListView {

@@ -62,6 +62,17 @@ export interface JobRecord {
   status: JobStatus;
   progress: JobProgress | null;
   error: { code: string; message: string } | null;
+  /**
+   * What the run was asked for, kept so it can be asked again.
+   *
+   * A failed run is the one a user most wants to retry, and until this was stored there was
+   * nothing to retry *from*: the record knew a run had failed and not what it had been for. The
+   * browser could not supply it either — after a reload the posting is gone from the page.
+   *
+   * Null on a regeneration, which re-runs from a kit rather than from a posting, and on any
+   * record written before this field existed. Both mean the same thing to a caller: no retry.
+   */
+  request: { jd: string; companyUrl: string; days: number } | null;
   createdAt: number;
   updatedAt: number;
 }

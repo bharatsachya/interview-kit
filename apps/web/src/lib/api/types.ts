@@ -11,6 +11,7 @@ export type {
   CreateJobsResponse,
   CreateKitRequest,
   JobListView,
+  JobRecordView,
   JobSummary,
   JobView,
   KitListView,

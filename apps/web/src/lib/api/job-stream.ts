@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { JobProgress, JobRecord, Span } from "@trao/contracts";
+import type { JobProgress, Span } from "@trao/contracts";
+import type { JobRecordView } from "@/lib/api/types";
 import { API_BASE_URL, api } from "./client";
 
 /**
@@ -27,7 +28,7 @@ export type Transport = "stream" | "polling";
 
 export interface JobStreamState {
   spans: Span[];
-  job: JobRecord | null;
+  job: JobRecordView | null;
   /** The step currently in flight, announced before it runs. */
   progress: JobProgress | null;
   label: string;
@@ -38,7 +39,7 @@ export interface JobStreamState {
 
 export function useJobStream(jobId: string): JobStreamState {
   const [spans, setSpans] = useState<Span[]>([]);
-  const [job, setJob] = useState<JobRecord | null>(null);
+  const [job, setJob] = useState<JobRecordView | null>(null);
   const [progress, setProgress] = useState<JobProgress | null>(null);
   const [label, setLabel] = useState("");
   const [transport, setTransport] = useState<Transport>("stream");
@@ -68,7 +69,7 @@ export function useJobStream(jobId: string): JobStreamState {
       });
     };
 
-    const settled = (record: JobRecord) => record.status === "done" || record.status === "failed";
+    const settled = (record: JobRecordView) => record.status === "done" || record.status === "failed";
 
     function startPolling() {
       if (disposed) return;
@@ -110,7 +111,7 @@ export function useJobStream(jobId: string): JobStreamState {
       });
 
       source.addEventListener("done", (event) => {
-        const payload = JSON.parse((event as MessageEvent<string>).data) as { job: JobRecord; label: string };
+        const payload = JSON.parse((event as MessageEvent<string>).data) as { job: JobRecordView; label: string };
         setJob(payload.job);
         setLabel(payload.label);
         source?.close();

@@ -220,6 +220,19 @@ export function Workspace() {
     setHistoryNonce((nonce) => nonce + 1);
   }, []);
 
+  /**
+   * A retry started. Show the new run in place of the one it came from.
+   *
+   * The failed run is not lost by this — it is in the history rail, which is the whole reason
+   * that rail now lists runs. Keeping both on screen would mean two traces for what the user
+   * experienced as one attempt, and the older of the two is the one they have finished with.
+   */
+  const onRetried = useCallback((jobId: string) => {
+    setJobIds([jobId]);
+    setKitsLoading(true);
+    setHistoryNonce((nonce) => nonce + 1);
+  }, []);
+
   // The panel opens on the first kit to finish. In a batch the others are reachable from
   // history; opening and reopening the drawer under someone as each one lands would be hostile.
   const onKitReady = useCallback(
@@ -459,6 +472,7 @@ export function Workspace() {
                               showLabel={jobIds.length > 1}
                               onComplete={onKitReady}
                               onFailed={onRunFailed}
+                              onRetried={onRetried}
                             />
                           </div>
                         )}

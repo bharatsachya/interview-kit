@@ -603,6 +603,7 @@ describe("the event stream", () => {
       label: "Backend Engineer",
       status: "running",
       progress: null,
+      request: null,
       error: null,
       createdAt: 0,
       updatedAt: 0,
@@ -624,9 +625,91 @@ describe("the event stream", () => {
   });
 
   it("shows a stranger a 404 rather than another user's trace", async () => {
-    await h.jobs.create({ id: "job_watch", userId: "alice", kitId: null, label: "x", status: "running", progress: null, error: null, createdAt: 0, updatedAt: 0 });
+    await h.jobs.create({ id: "job_watch", userId: "alice", kitId: null, label: "x", status: "running", progress: null, request: null, error: null, createdAt: 0, updatedAt: 0 });
     const response = await request(h.app).get("/jobs/job_watch/events").set("authorization", "Bearer bob");
     expect(response.status).toBe(404);
+  });
+});
+
+describe("retrying a failed run", () => {
+  it("starts a new run from the posting the failed one stored", async () => {
+    await h.jobs.create({
+      id: "job_dead", userId: "alice", kitId: null, label: "Acme", status: "failed",
+      progress: null, request: { jd: "Senior Backend Engineer at Acme", companyUrl: "http://127.0.0.1:8099/acme/", days: 5 },
+      error: { code: "TIMEOUT", message: "timed out" }, createdAt: 0, updatedAt: 0,
+    });
+
+    const response = await request(h.app).post("/jobs/job_dead/retry").set("authorization", "Bearer alice");
+
+    expect(response.status).toBe(202);
+    const startedId = (response.body as { job_ids: string[] }).job_ids[0] as string;
+    // A new run, not a reset of the old one — the failure stays in the history rail.
+    expect(startedId).not.toBe("job_dead");
+    expect((await h.jobs.findById("job_dead"))?.status).toBe("failed");
+  });
+
+  it("refuses a run that stored no posting, rather than starting an empty one", async () => {
+    await h.jobs.create({
+      id: "job_old", userId: "alice", kitId: null, label: "x", status: "failed",
+      progress: null, request: null, error: { code: "INTERNAL", message: "x" }, createdAt: 0, updatedAt: 0,
+    });
+
+    const response = await request(h.app).post("/jobs/job_old/retry").set("authorization", "Bearer alice");
+    expect(response.status).toBe(404);
+  });
+
+  it("refuses to retry a run that did not fail", async () => {
+    await h.jobs.create({
+      id: "job_fine", userId: "alice", kitId: "kit_1", label: "x", status: "done",
+      progress: null, request: { jd: "x", companyUrl: "http://127.0.0.1:8099/acme/", days: 3 },
+      error: null, createdAt: 0, updatedAt: 0,
+    });
+
+    const response = await request(h.app).post("/jobs/job_fine/retry").set("authorization", "Bearer alice");
+    expect(response.status).toBe(404);
+  });
+
+  it("shows a stranger a 404 rather than retrying someone else's run", async () => {
+    await h.jobs.create({
+      id: "job_hers", userId: "alice", kitId: null, label: "x", status: "failed",
+      progress: null, request: { jd: "x", companyUrl: "http://127.0.0.1:8099/acme/", days: 3 },
+      error: { code: "INTERNAL", message: "x" }, createdAt: 0, updatedAt: 0,
+    });
+
+    const response = await request(h.app).post("/jobs/job_hers/retry").set("authorization", "Bearer bob");
+    expect(response.status).toBe(404);
+  });
+
+  it("tells the list which runs can be retried and which cannot", async () => {
+    await h.jobs.create({
+      id: "job_a", userId: "carol", kitId: null, label: "x", status: "failed",
+      progress: null, request: { jd: "x", companyUrl: "http://127.0.0.1:8099/acme/", days: 3 },
+      error: { code: "INTERNAL", message: "x" }, createdAt: 1, updatedAt: 1,
+    });
+    await h.jobs.create({
+      id: "job_b", userId: "carol", kitId: null, label: "x", status: "failed",
+      progress: null, request: null, error: { code: "INTERNAL", message: "x" }, createdAt: 2, updatedAt: 2,
+    });
+
+    const response = await request(h.app).get("/jobs").set("authorization", "Bearer carol");
+    const byId = new Map((response.body as { jobs: { id: string; retryable: boolean }[] }).jobs.map((j) => [j.id, j.retryable]));
+
+    expect(byId.get("job_a")).toBe(true);
+    expect(byId.get("job_b")).toBe(false);
+  });
+
+  it("keeps the posting server-side rather than shipping it back on every poll", async () => {
+    await h.jobs.create({
+      id: "job_poll", userId: "alice", kitId: null, label: "x", status: "failed",
+      progress: null, request: { jd: "a very long posting".repeat(50), companyUrl: "http://127.0.0.1:8099/acme/", days: 3 },
+      error: { code: "INTERNAL", message: "x" }, createdAt: 0, updatedAt: 0,
+    });
+
+    const response = await request(h.app).get("/jobs/job_poll").set("authorization", "Bearer alice");
+
+    expect(response.status).toBe(200);
+    expect((response.body as { job: Record<string, unknown> }).job["request"]).toBeUndefined();
+    expect((response.body as { job: { retryable: boolean } }).job.retryable).toBe(true);
   });
 });
 
