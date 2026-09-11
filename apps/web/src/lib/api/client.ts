@@ -292,4 +292,59 @@ export const api = {
       body: JSON.stringify(target),
     });
   },
+
+  /**
+   * Open a practice sitting: the deck order, what the history knows, and a session id.
+   *
+   * A fresh session id on every call, because a session is one sitting and a reload is a new
+   * one. The ratings themselves are not per-session — they accumulate, which is what makes the
+   * next deck ordered by lowest confidence rather than by the last five minutes.
+   */
+  async openPractice(kitId: string, signal?: AbortSignal): Promise<PracticeView> {
+    return request<PracticeView>(kitPath(kitId, "practice"), { signal });
+  },
+
+  /** Record one card. Fire-and-forget from the deck's point of view — see `use-practice.ts`. */
+  async recordPractice(kitId: string, rating: PracticeRatingRequest): Promise<PracticeSummaryView> {
+    return request<PracticeSummaryView>(kitPath(kitId, "practice"), {
+      method: "POST",
+      body: JSON.stringify(rating),
+    });
+  },
 };
+
+export interface PracticeStanding {
+  flashcard_id: string;
+  /** Null for a card the deck has never dealt — not the same as one rated "Again". */
+  confidence: "unseen" | "shaky" | "known" | null;
+  rated_at: number | null;
+  attempts: number;
+}
+
+export interface PracticeSummaryBody {
+  total: number;
+  covered: number;
+  not_covered: number;
+  known: number;
+  shaky: number;
+  again: number;
+  last_practised_at: number | null;
+}
+
+export interface PracticeView {
+  session_id: string;
+  /** Flashcard ids, lowest confidence first. Computed on the server from the whole history. */
+  deck: string[];
+  standings: PracticeStanding[];
+  summary: PracticeSummaryBody;
+}
+
+export interface PracticeSummaryView {
+  summary: PracticeSummaryBody;
+}
+
+export interface PracticeRatingRequest {
+  session_id: string;
+  flashcard_id: string;
+  confidence: "unseen" | "shaky" | "known";
+}

@@ -6,6 +6,9 @@ import type {
   JobStore,
   KitRecord,
   KitStore,
+  PracticeRating,
+  PracticeSession,
+  PracticeStore,
   UserRecord,
   UserStore,
 } from "@trao/contracts";
@@ -31,6 +34,7 @@ export async function connectMongo(options: MongoStoresOptions): Promise<{
   kits: KitStore<unknown>;
   jobs: JobStore;
   users: UserStore;
+  practice: PracticeStore;
   close: () => Promise<void>;
 }> {
   const client = new MongoClient(options.uri);
@@ -43,6 +47,7 @@ export async function connectMongo(options: MongoStoresOptions): Promise<{
     kits: new MongoKitStore(db),
     jobs: new MongoJobStore(db, options.clock),
     users: new MongoUserStore(db),
+    practice: new MongoPracticeStore(db, options.clock),
     close: () => client.close(),
   };
 }
@@ -54,6 +59,9 @@ async function ensureIndexes(db: Db): Promise<void> {
   await db.collection("kits").createIndex({ userId: 1, createdAt: -1 });
   // The history list reads jobs by user, newest first, on every page load.
   await db.collection("jobs").createIndex({ userId: 1, createdAt: -1 });
+  // Every practice read is "this kit, this user, newest first". The collection grows with use
+  // rather than with the number of kits, so it is the one that would notice a scan.
+  await db.collection("practice_sessions").createIndex({ kitId: 1, userId: 1, startedAt: -1 });
 }
 
 type Stored<T> = T & { _id: string };
@@ -147,5 +155,53 @@ export class MongoUserStore implements UserStore {
   async create(user: UserRecord): Promise<void> {
     const { id, ...rest } = user;
     await this.#collection.replaceOne({ _id: id }, { _id: id, ...rest }, { upsert: true });
+  }
+}
+
+export class MongoPracticeStore implements PracticeStore {
+  // Typed to the document rather than to `Record<string, unknown>` like its neighbours: this is
+  // the one store that uses an update operator (`$push`) rather than replacing the whole
+  // document, and the driver can only check an operator against a known field.
+  readonly #collection: Collection<Stored<Omit<PracticeSession, "id">>>;
+
+  constructor(
+    db: Db,
+    private readonly clock: Clock,
+  ) {
+    this.#collection = db.collection("practice_sessions");
+  }
+
+  /**
+   * One round trip whether the session exists or not.
+   *
+   * `$push` with `$setOnInsert` for the fields that only apply at creation: a read-then-write
+   * would drop a rating whenever two cards were answered inside the same round trip, which on a
+   * keyboard-driven deck is the normal case rather than the unlucky one.
+   */
+  async record(
+    session: Pick<PracticeSession, "id" | "kitId" | "userId">,
+    rating: PracticeRating,
+  ): Promise<void> {
+    const now = this.clock.now();
+    await this.#collection.updateOne(
+      { _id: session.id },
+      {
+        $push: { ratings: { ...rating } },
+        $set: { updatedAt: now },
+        $setOnInsert: { kitId: session.kitId, userId: session.userId, startedAt: now },
+      },
+      { upsert: true },
+    );
+  }
+
+  async listByKit(kitId: string, userId: string | null, limit = 50): Promise<PracticeSession[]> {
+    const documents = await this.#collection
+      .find({ kitId, userId })
+      .sort({ startedAt: -1 })
+      .limit(limit)
+      .toArray();
+    return documents
+      .map((document) => strip<PracticeSession>(document))
+      .filter((s): s is PracticeSession => s !== null);
   }
 }

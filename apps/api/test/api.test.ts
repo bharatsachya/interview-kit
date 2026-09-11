@@ -8,7 +8,7 @@ import type { Budget, JobStore, KitStore, LlmRequest } from "@trao/contracts";
 import { InMemoryTracer, RandomIdGenerator, RoutedIdGenerator, SequentialIdGenerator, SystemClock } from "@trao/kernel";
 import { validateKitJSON, type InternalKit } from "@trao/kit";
 import { FakeLlmProvider, unlimitedBudget } from "@trao/llm";
-import { MemoryJobStore, MemoryKitStore } from "@trao/persistence";
+import { MemoryJobStore, MemoryKitStore, MemoryPracticeStore } from "@trao/persistence";
 import { regenerateSection } from "@trao/pipeline";
 import { NullSearchProvider } from "@trao/research";
 import { FakeFetcher, fixtureMounts } from "@trao/retrieval";
@@ -38,6 +38,7 @@ interface Harness {
   runner: JobRunner;
   feed: JobSpanFeed;
   ids: RandomIdGenerator;
+  practice: MemoryPracticeStore;
 }
 
 /**
@@ -79,10 +80,11 @@ function harness(): Harness {
 
   const feed = new JobSpanFeed();
   const ids = new RandomIdGenerator();
+  const practice = new MemoryPracticeStore(clock);
   const runner = new JobRunner({ jobs, kits, ids, clock, makeDeps, feed, regenerate: regenerateSection });
-  const app = createApp({ auth: new DevAuthenticator(), jobs, kits, runner, feed, ids, clock, heartbeatMs: 50 });
+  const app = createApp({ auth: new DevAuthenticator(), jobs, kits, practice, runner, feed, ids, clock, heartbeatMs: 50 });
 
-  return { app, kits, jobs, runner, feed, ids };
+  return { app, kits, jobs, runner, feed, ids, practice };
 }
 
 /** Poll the way the browser does, rather than reaching into the runner. */
@@ -108,6 +110,7 @@ describe("auth", () => {
       auth: new ClerkAuthenticator({ issuer: "https://example.test", verify: async () => ({ sub: "x" }) }),
       jobs: h.jobs,
       kits: h.kits,
+      practice: h.practice,
       runner: h.runner,
       feed: h.feed,
       ids: h.ids,
@@ -124,6 +127,7 @@ describe("auth", () => {
       auth: new ClerkAuthenticator({ issuer: "https://example.test", verify: async () => ({ sub: "user_123" }) }),
       jobs: h.jobs,
       kits: h.kits,
+      practice: h.practice,
       runner: h.runner,
       feed: h.feed,
       ids: h.ids,
@@ -144,6 +148,7 @@ describe("auth", () => {
       }),
       jobs: h.jobs,
       kits: h.kits,
+      practice: h.practice,
       runner: h.runner,
       feed: h.feed,
       ids: h.ids,
@@ -622,5 +627,99 @@ describe("the event stream", () => {
     await h.jobs.create({ id: "job_watch", userId: "alice", kitId: null, label: "x", status: "running", progress: null, error: null, createdAt: 0, updatedAt: 0 });
     const response = await request(h.app).get("/jobs/job_watch/events").set("authorization", "Bearer bob");
     expect(response.status).toBe(404);
+  });
+});
+
+describe("practice", () => {
+  it("deals a fresh deck in stored order and reports nothing covered", async () => {
+    await seed();
+    const response = await request(h.app).get("/kits/kit_seed/practice").set(...alice());
+
+    expect(response.status).toBe(200);
+    const body = response.body as { session_id: string; deck: string[]; summary: Record<string, number> };
+    expect(body.session_id).toMatch(/^practice_/);
+    expect(body.deck).toEqual(["f1"]);
+    expect(body.summary).toMatchObject({ total: 1, covered: 0, not_covered: 1 });
+  });
+
+  it("records a rating and reports it as covered on the next read", async () => {
+    await seed();
+    const opened = (await request(h.app).get("/kits/kit_seed/practice").set(...alice())).body as { session_id: string };
+
+    const rated = await request(h.app)
+      .post("/kits/kit_seed/practice")
+      .set(...alice())
+      .send({ session_id: opened.session_id, flashcard_id: "f1", confidence: "shaky" });
+
+    expect(rated.status).toBe(200);
+    expect((rated.body as { summary: Record<string, number> }).summary).toMatchObject({ covered: 1, shaky: 1 });
+
+    // The point of the collection: a reload is a new session and the history is still there.
+    const reopened = await request(h.app).get("/kits/kit_seed/practice").set(...alice());
+    expect((reopened.body as { summary: Record<string, number> }).summary).toMatchObject({ covered: 1, shaky: 1 });
+    expect((reopened.body as { standings: { confidence: string }[] }).standings[0]?.confidence).toBe("shaky");
+  });
+
+  it("orders the next deck by lowest confidence", async () => {
+    await seed();
+    // A second card, so there is an order to get wrong.
+    await request(h.app).post("/kits/kit_seed/flashcards").set(...alice()).send({ front: "Second", back: "Card" });
+    const opened = (await request(h.app).get("/kits/kit_seed/practice").set(...alice())).body as {
+      session_id: string;
+      deck: string[];
+    };
+    expect(opened.deck[0]).toBe("f1");
+
+    await request(h.app)
+      .post("/kits/kit_seed/practice")
+      .set(...alice())
+      .send({ session_id: opened.session_id, flashcard_id: "f1", confidence: "known" });
+
+    const next = (await request(h.app).get("/kits/kit_seed/practice").set(...alice())).body as { deck: string[] };
+    // f1 is known, the other has never been dealt — so the untouched one leads now.
+    expect(next.deck[next.deck.length - 1]).toBe("f1");
+  });
+
+  it("keeps one user's ratings out of another's deck", async () => {
+    await seed("alice");
+    const opened = (await request(h.app).get("/kits/kit_seed/practice").set(...alice())).body as { session_id: string };
+    await request(h.app)
+      .post("/kits/kit_seed/practice")
+      .set(...alice())
+      .send({ session_id: opened.session_id, flashcard_id: "f1", confidence: "known" });
+
+    expect((await request(h.app).get("/kits/kit_seed/practice").set("authorization", "Bearer bob")).status).toBe(404);
+    const asBob = await request(h.app)
+      .post("/kits/kit_seed/practice")
+      .set("authorization", "Bearer bob")
+      .send({ session_id: "practice_bob", flashcard_id: "f1", confidence: "known" });
+    expect(asBob.status).toBe(404);
+  });
+
+  it("refuses a rating for a card the deck does not have, and a confidence off the scale", async () => {
+    await seed();
+    const missing = await request(h.app)
+      .post("/kits/kit_seed/practice")
+      .set(...alice())
+      .send({ session_id: "practice_x", flashcard_id: "f99", confidence: "known" });
+    expect(missing.status).toBe(404);
+
+    const bogus = await request(h.app)
+      .post("/kits/kit_seed/practice")
+      .set(...alice())
+      .send({ session_id: "practice_x", flashcard_id: "f1", confidence: "brilliant" });
+    expect(bogus.status).toBe(400);
+    expect(bogus.body).toMatchObject({ code: "INVALID_BODY", field: "confidence" });
+  });
+
+  it("does not bump the kit's version — a rating is not an edit", async () => {
+    await seed();
+    const before = (await h.kits.findById("kit_seed"))?.kit.version;
+    await request(h.app)
+      .post("/kits/kit_seed/practice")
+      .set(...alice())
+      .send({ session_id: "practice_x", flashcard_id: "f1", confidence: "known" });
+
+    expect((await h.kits.findById("kit_seed"))?.kit.version).toBe(before);
   });
 });

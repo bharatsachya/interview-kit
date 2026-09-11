@@ -10,11 +10,8 @@ import { Kicker } from "@/components/industry/text";
 import type { BuilderState } from "@/lib/use-builder";
 import { ConflictBanner } from "@/components/workspace/conflict-banner";
 import { KitIndex } from "@/components/workspace/kit-index";
-import {
-  KitOutputBody,
-  type Confidence,
-  type ConfidenceMap,
-} from "@/components/workspace/kit-outputs-body";
+import { KitOutputBody } from "@/components/workspace/kit-outputs-body";
+import { usePractice } from "@/lib/use-practice";
 
 /**
  * The panel's contents: remember where you were in the kit, and render one output of it.
@@ -57,23 +54,15 @@ export function KitDrawer({
   onClose: () => void;
 }) {
 
-  // Flashcard confidence and the questions track filter live here rather than in the bodies,
-  // because both outlive the body that sets them: rating a card and then opening Practice must
-  // not lose the rating, and Practice's Start hands the track filter to Questions on its way
-  // out. Keyed by kit so switching kits does not carry one kit's ratings into another.
-  const [confidenceByKit, setConfidenceByKit] = useState<Record<string, ConfidenceMap>>({});
+  // Flashcard confidence comes from the server now, keyed by kit by the hook itself. It used to
+  // be a `useState` here, which meant a reload threw away every rating — and the deck tells the
+  // user their ratings feed the weak-spots report, which a report rebuilt from nothing on every
+  // refresh does not honour.
+  //
+  // The questions track filter stays local: it is a filter on what is on screen, it means
+  // nothing tomorrow, and Practice's Start hands it to Questions on its way out.
+  const practice = usePractice(kitId);
   const [track, setTrack] = useState<QuestionCategory | null>(null);
-
-  const rate = useCallback(
-    (flashcardId: string, value: Confidence) => {
-      if (!kitId) return;
-      setConfidenceByKit((previous) => ({
-        ...previous,
-        [kitId]: { ...(previous[kitId] ?? {}), [flashcardId]: value },
-      }));
-    },
-    [kitId],
-  );
 
   const scroller = useRef<HTMLDivElement>(null);
   const positions = useRef(new Map<string, number>());
@@ -169,8 +158,10 @@ export function KitDrawer({
               output={activeOutput}
               builder={builder}
               kit={kit}
-              confidence={confidenceByKit[kitId] ?? {}}
-              onRate={rate}
+              confidence={practice.confidence}
+              deck={practice.deck}
+              practiceError={practice.error}
+              onRate={practice.rate}
               track={track}
               onTrack={setTrack}
               onOpenOutput={onSelectOutput}

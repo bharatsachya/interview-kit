@@ -31,6 +31,7 @@ COPY packages/kit/package.json packages/kit/
 COPY packages/llm/package.json packages/llm/
 COPY packages/persistence/package.json packages/persistence/
 COPY packages/pipeline/package.json packages/pipeline/
+COPY packages/practice/package.json packages/practice/
 COPY packages/research/package.json packages/research/
 COPY packages/retrieval/package.json packages/retrieval/
 COPY packages/scheduling/package.json packages/scheduling/

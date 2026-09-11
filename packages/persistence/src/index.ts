@@ -6,5 +6,12 @@
  * able to clone the repository and run one command without standing up a database.
  */
 
-export { MemoryJobStore, MemoryKitStore, MemoryUserStore } from "./memory";
-export { MongoJobStore, MongoKitStore, MongoUserStore, connectMongo, type MongoStoresOptions } from "./mongo";
+export { MemoryJobStore, MemoryKitStore, MemoryPracticeStore, MemoryUserStore } from "./memory";
+export {
+  MongoJobStore,
+  MongoKitStore,
+  MongoPracticeStore,
+  MongoUserStore,
+  connectMongo,
+  type MongoStoresOptions,
+} from "./mongo";

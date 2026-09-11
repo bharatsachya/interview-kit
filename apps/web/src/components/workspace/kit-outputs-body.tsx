@@ -16,7 +16,7 @@ import { useMediaQuery } from "@/lib/use-media-query";
 import type { KitOutputId } from "@/lib/kit-outputs";
 import { Button } from "@/components/industry/button";
 import { Frame } from "@/components/industry/frame";
-import { EmptyState } from "@/components/industry/states";
+import { EmptyState, ErrorNotice } from "@/components/industry/states";
 import { Kicker } from "@/components/industry/text";
 import { Ring } from "@/components/industry/mark";
 import { CoverageBar } from "@/components/kit/coverage-bar";
@@ -36,6 +36,8 @@ export function KitOutputBody({
   builder,
   kit,
   confidence,
+  deck,
+  practiceError,
   onRate,
   track,
   onTrack,
@@ -45,6 +47,9 @@ export function KitOutputBody({
   builder: BuilderState;
   kit: InternalKit;
   confidence: ConfidenceMap;
+  /** Flashcard ids, lowest confidence first, from the server. Empty before the history lands. */
+  deck: readonly string[];
+  practiceError: string | null;
   onRate: (flashcardId: string, value: Confidence) => void;
   track: QuestionCategory | null;
   onTrack: (track: QuestionCategory | null) => void;
@@ -64,7 +69,14 @@ export function KitOutputBody({
         <QuestionsBody kit={kit} builder={builder} track={track} onTrack={onTrack} />
       ) : null}
       {output === "flashcards" ? (
-        <FlashcardsBody kit={kit} builder={builder} confidence={confidence} onRate={onRate} />
+        <FlashcardsBody
+          kit={kit}
+          builder={builder}
+          confidence={confidence}
+          deck={deck}
+          practiceError={practiceError}
+          onRate={onRate}
+        />
       ) : null}
       {output === "schedule" ? <ScheduleBody kit={kit} builder={builder} /> : null}
       {output === "practice" ? (
@@ -815,11 +827,15 @@ function FlashcardsBody({
   kit,
   builder,
   confidence,
+  deck,
+  practiceError,
   onRate,
 }: {
   kit: InternalKit;
   builder: BuilderState;
   confidence: ConfidenceMap;
+  deck: readonly string[];
+  practiceError: string | null;
   onRate: (flashcardId: string, value: Confidence) => void;
 }) {
   const [position, setPosition] = useState(0);
@@ -832,7 +848,22 @@ function FlashcardsBody({
   // changes; it simply does not travel to get there.
   const still = useMediaQuery("(prefers-reduced-motion: reduce)", false);
 
-  const cards = kit.flashcards;
+  /**
+   * Dealt lowest-confidence first, in the order the server worked out from the whole rating
+   * history — not in the order the cards happen to be stored in.
+   *
+   * Held for the length of the sitting rather than recomputed as you rate: a deck that re-sorted
+   * itself under you would move the card you were about to see. Cards the server has not placed
+   * — added by hand a moment ago, or the whole deck before the history has landed — keep their
+   * stored order behind the ones it has.
+   */
+  const cards = useMemo(() => {
+    if (deck.length === 0) return kit.flashcards;
+    const position = new Map(deck.map((id, index) => [id, index]));
+    return [...kit.flashcards].sort(
+      (a, b) => (position.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (position.get(b.id) ?? Number.MAX_SAFE_INTEGER),
+    );
+  }, [kit.flashcards, deck]);
   const total = cards.length;
 
   const go = useCallback(
@@ -957,6 +988,12 @@ function FlashcardsBody({
 
   return (
     <div className="flex flex-col gap-4" onKeyDown={onDeckKeyDown}>
+      {/* The deck keeps working when the history does not — it falls back to stored order and an
+          empty record — so this is a notice rather than an empty state. Said out loud because a
+          rating that silently failed to save is exactly the thing the user would find out about
+          a week later, from a weak-spots report that disagrees with what they remember. */}
+      {practiceError === null ? null : <ErrorNotice title="Your practice history">{practiceError}</ErrorNotice>}
+
       <div className="flex items-baseline gap-3">
         <span className="font-head text-ink/40 text-xs tracking-wider uppercase">
           Card <b className="text-ink text-sm" style={metaStyle}>{index + 1}</b> / {total}

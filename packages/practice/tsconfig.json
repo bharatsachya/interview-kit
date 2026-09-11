@@ -1,0 +1,11 @@
+{
+  "//": "Pure arithmetic over a rating log. No LLM, no network, no store — a PracticeSession[] goes in and an order comes out.",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@trao/contracts": ["../contracts/src/index.ts"]
+    }
+  },
+  "include": ["src", "test"]
+}

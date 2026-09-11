@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { ClerkAuthenticator, DevAuthenticator, type Authenticator } from "@trao/auth";
-import type { Budget, JobStore, KitStore } from "@trao/contracts";
+import type { Budget, JobStore, KitStore, PracticeStore } from "@trao/contracts";
 import { InMemoryTracer, RandomIdGenerator, RoutedIdGenerator, SequentialIdGenerator, SystemClock } from "@trao/kernel";
 import type { InternalKit } from "@trao/kit";
 import {
@@ -13,7 +13,7 @@ import {
   RunBudget,
   type ModelTransport,
 } from "@trao/llm";
-import { MemoryJobStore, MemoryKitStore, connectMongo } from "@trao/persistence";
+import { MemoryJobStore, MemoryKitStore, MemoryPracticeStore, connectMongo } from "@trao/persistence";
 import { regenerateSection } from "@trao/pipeline";
 import { NullSearchProvider, TavilySearchProvider } from "@trao/research";
 import { FakeFetcher, LiveHttpFetcher, fixtureMounts } from "@trao/retrieval";
@@ -115,18 +115,21 @@ async function main(): Promise<void> {
   const mongoUri = env("MONGODB_URI");
   let kits: KitStore<InternalKit>;
   let jobs: JobStore;
+  let practice: PracticeStore;
   let closeStores: () => Promise<void> = async () => {};
 
   if (mongoUri !== "") {
     const stores = await connectMongo({ uri: mongoUri, clock, ...(env("MONGODB_DB") !== "" ? { dbName: env("MONGODB_DB") } : {}) });
     kits = stores.kits as KitStore<InternalKit>;
     jobs = stores.jobs;
+    practice = stores.practice;
     closeStores = stores.close;
   } else {
     if (production) throw new Error("MONGODB_URI is required in production.");
     process.stderr.write("⚠ MONGODB_URI is not set — kits live in memory and vanish on restart.\n");
     kits = new MemoryKitStore<InternalKit>();
     jobs = new MemoryJobStore(clock);
+    practice = new MemoryPracticeStore(clock);
   }
 
   // ── The pipeline's dependencies, rebuilt per job ─────────────────────────────────────
@@ -213,6 +216,7 @@ async function main(): Promise<void> {
     auth,
     jobs,
     kits,
+    practice,
     runner,
     feed,
     ids,
@@ -226,6 +230,7 @@ async function main(): Promise<void> {
         `api listening on :${port}`,
         `  auth      ${issuer !== "" ? "clerk" : "dev (no CLERK_ISSUER)"}`,
         `  store     ${mongoUri !== "" ? "mongodb" : "memory"}`,
+        `  practice  ${mongoUri !== "" ? "mongodb (practice_sessions)" : "memory — ratings vanish on restart"}`,
         `  model     ${fakeLlm ? "fake" : (provider as ProviderChoice).label}`,
         `  fetch     ${fakeFetch ? "fixtures" : "live"}`,
         `  search    ${env("TAVILY_API_KEY") === "" ? "none (step will be skipped)" : "tavily"}`,

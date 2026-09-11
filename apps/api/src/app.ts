@@ -1,11 +1,19 @@
 import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
 import type { CreateJobsResponse, CreateKitResponse, JobListView, KitListView } from "@trao/api-contract";
-import { isKitError, type Clock, type IdGenerator, type JobStore, type KitStore } from "@trao/contracts";
+import {
+  isKitError,
+  type Clock,
+  type IdGenerator,
+  type JobStore,
+  type KitStore,
+  type PracticeStore,
+} from "@trao/contracts";
 import { isAuthError, type Authenticator } from "@trao/auth";
 import { parseCases, type EvaluationCase, type InternalKit } from "@trao/kit";
 import { builderRoutes } from "./builder";
 import { eventRoutes } from "./events";
+import { practiceRoutes } from "./practice";
 import { guarded, notFound, unauthenticated } from "./http";
 import type { JobRunner } from "./jobs";
 import { createKitSchema, parseBody } from "./schemas";
@@ -30,6 +38,7 @@ export interface ApiOptions {
   auth: Authenticator;
   jobs: JobStore;
   kits: KitStore<InternalKit>;
+  practice: PracticeStore;
   runner: JobRunner;
   feed: JobSpanFeed;
   ids: IdGenerator;
@@ -156,6 +165,18 @@ export function createApp(options: ApiOptions): express.Express {
           createdAt: record.createdAt,
         })),
       } satisfies KitListView);
+    }),
+  );
+
+  // Before the builder, because a rating is not an edit: no version, no `If-Match`, and two
+  // tabs rating the same card do not conflict.
+  app.use(
+    practiceRoutes({
+      auth: options.auth,
+      kits: options.kits,
+      practice: options.practice,
+      ids: options.ids,
+      clock: options.clock,
     }),
   );
 

@@ -5,6 +5,9 @@ import type {
   JobStore,
   KitRecord,
   KitStore,
+  PracticeRating,
+  PracticeSession,
+  PracticeStore,
   UserRecord,
   UserStore,
 } from "@trao/contracts";
@@ -107,5 +110,53 @@ export class MemoryUserStore implements UserStore {
 
   async create(user: UserRecord): Promise<void> {
     this.#users.set(user.id, { ...user });
+  }
+}
+
+/**
+ * Practice sessions, in memory.
+ *
+ * Kept out of the kit store on purpose: a rating log grows with use and a kit does not, and
+ * putting the two behind one document would make every builder read carry a month of card
+ * ratings it has no use for.
+ */
+export class MemoryPracticeStore implements PracticeStore {
+  readonly #sessions = new Map<string, PracticeSession>();
+
+  constructor(private readonly clock: Clock) {}
+
+  async record(
+    session: Pick<PracticeSession, "id" | "kitId" | "userId">,
+    rating: PracticeRating,
+  ): Promise<void> {
+    const now = this.clock.now();
+    const existing = this.#sessions.get(session.id);
+
+    if (existing === undefined) {
+      this.#sessions.set(session.id, {
+        ...session,
+        startedAt: now,
+        updatedAt: now,
+        ratings: [clone(rating)],
+      });
+      return;
+    }
+
+    // Appended, never collapsed. Rating the same card twice in one sitting is the useful shape
+    // — "wrong, then right" is the only evidence that anything improved.
+    existing.ratings.push(clone(rating));
+    existing.updatedAt = now;
+  }
+
+  async listByKit(kitId: string, userId: string | null, limit = 50): Promise<PracticeSession[]> {
+    return [...this.#sessions.values()]
+      .filter((session) => session.kitId === kitId && session.userId === userId)
+      .sort((a, b) => b.startedAt - a.startedAt)
+      .slice(0, limit)
+      .map(clone);
+  }
+
+  get size(): number {
+    return this.#sessions.size;
   }
 }

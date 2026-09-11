@@ -22,6 +22,7 @@
       "@trao/llm": ["../../packages/llm/src/index.ts"],
       "@trao/persistence": ["../../packages/persistence/src/index.ts"],
       "@trao/pipeline": ["../../packages/pipeline/src/index.ts"],
+      "@trao/practice": ["../../packages/practice/src/index.ts"],
       "@trao/research": ["../../packages/research/src/index.ts"],
       "@trao/retrieval": ["../../packages/retrieval/src/index.ts"]
     }
