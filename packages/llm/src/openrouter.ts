@@ -65,8 +65,8 @@ export const OPENROUTER_FREE_MODELS = [
   "nvidia/nemotron-3-super-120b-a12b:free",
 ] as const;
 
-/** See the note in gemini.ts: sixty seconds is far too long to wait for a free model. */
-export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+/** See DEFAULT_REQUEST_BUDGET_MS in gateway.ts. The gateway normally caps this lower still. */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 
 export class OpenRouterTransport implements ModelTransport {
   readonly name = "openrouter";

@@ -4,6 +4,7 @@ import type { Budget, JobStore, KitStore, PracticeStore } from "@trao/contracts"
 import { InMemoryTracer, RandomIdGenerator, RoutedIdGenerator, SequentialIdGenerator, SystemClock } from "@trao/kernel";
 import type { InternalKit } from "@trao/kit";
 import {
+  DEFAULT_REQUEST_BUDGET_MS,
   FakeLlmProvider,
   GeminiTransport,
   LlmGateway,
@@ -162,6 +163,10 @@ async function main(): Promise<void> {
         models: { quality: (provider as ProviderChoice).quality, fast: (provider as ProviderChoice).fast },
         requestsPerMinute: Number(env("GEMINI_RPM", "10")),
         tokensPerMinute: Number(env("GEMINI_TPM", "250000")),
+        // How long one model call may take before the next model in the list is tried. Tunable
+        // without a rebuild because the right value depends on which free models are healthy
+        // today, and that changes week to week.
+        requestBudgetMs: Number(env("LLM_REQUEST_TIMEOUT_MS", String(DEFAULT_REQUEST_BUDGET_MS))),
       }),
       fetcher: fakeFetch
         ? new FakeFetcher({ root: resolve(process.cwd(), "fixtures", "sites"), mounts: fixtureMounts() })

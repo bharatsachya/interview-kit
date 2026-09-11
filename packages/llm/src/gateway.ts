@@ -59,6 +59,8 @@ export interface LlmGatewayOptions {
   requestsPerMinute?: number;
   tokensPerMinute?: number;
   maxAttempts?: number;
+  /** Ceiling on one request. See DEFAULT_REQUEST_BUDGET_MS for why it is fifteen seconds. */
+  requestBudgetMs?: number;
   cacheTtlSeconds?: number;
   backoff?: BackoffOptions;
 
@@ -82,8 +84,21 @@ export const DEFAULT_MAX_ATTEMPTS = 4;
 export const DEFAULT_CACHE_TTL_SECONDS = 60 * 60 * 24 * 7;
 /** Output allowance reserved when the caller does not cap it. */
 export const DEFAULT_OUTPUT_RESERVE = 1_024;
-/** Ceiling on any single request, however much time the run has left. */
-export const DEFAULT_REQUEST_BUDGET_MS = 30_000;
+/**
+ * Ceiling on any single request, however much time the run has left.
+ *
+ * Fifteen seconds, not thirty. A free model that has not answered in fifteen is usually not
+ * going to: measured against the live free tier, the models that work answer a small prompt in
+ * one to three seconds, while a stalled one sat for thirty-one before returning an error and
+ * another never finished a generation-sized prompt inside two minutes. Waiting the full thirty
+ * spends a third of the run's deadline learning what the first fifteen already showed.
+ *
+ * The cost is real and worth stating: a model that genuinely needs twenty-odd seconds to write
+ * a full question set is abandoned mid-answer and the next one in the list is tried instead.
+ * That trade only pays because the fallback chain works — before `modelUnavailable`, giving up
+ * early meant giving up entirely. `LLM_REQUEST_TIMEOUT_MS` moves it without a rebuild.
+ */
+export const DEFAULT_REQUEST_BUDGET_MS = 15_000;
 
 interface CachedResponse {
   text: string;
@@ -97,6 +112,7 @@ export class LlmGateway implements LlmProvider {
   readonly #tpm: TokenBucket;
   readonly #maxAttempts: number;
   readonly #cacheTtl: number;
+  readonly #requestBudgetMs: number;
 
   constructor(private readonly options: LlmGatewayOptions) {
     this.name = options.transport.name;
@@ -104,6 +120,7 @@ export class LlmGateway implements LlmProvider {
     this.#tpm = perMinute(options.tokensPerMinute ?? DEFAULT_TPM, options.clock);
     this.#maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
     this.#cacheTtl = options.cacheTtlSeconds ?? DEFAULT_CACHE_TTL_SECONDS;
+    this.#requestBudgetMs = options.requestBudgetMs ?? DEFAULT_REQUEST_BUDGET_MS;
   }
 
   complete<T>(request: LlmRequest<T>): Promise<LlmResult<T>> {
@@ -271,7 +288,7 @@ export class LlmGateway implements LlmProvider {
         // Never start a request with more time than the run has left.
         return await this.options.transport.send({
           ...request,
-          ...(Number.isFinite(remaining) ? { timeoutMs: Math.max(1_000, Math.min(remaining, DEFAULT_REQUEST_BUDGET_MS)) } : {}),
+          ...(Number.isFinite(remaining) ? { timeoutMs: Math.max(1_000, Math.min(remaining, this.#requestBudgetMs)) } : {}),
         });
       } catch (error) {
         lastError = error;

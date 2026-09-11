@@ -32,6 +32,9 @@ cd "$here"
 : "${GEMINI_MODEL_FAST:=}"
 : "${GEMINI_RPM:=}"
 : "${GEMINI_TPM:=}"
+# How long one model call may take before the next model in the list is tried. Empty uses the
+# built-in 15s; raise it if the free models you are on need longer to write a full question set.
+: "${LLM_REQUEST_TIMEOUT_MS:=}"
 # Container Apps fixes the ratio at 1 vCPU : 2 GiB, so these move together.
 #
 # Measured on a real run rather than guessed. One kit costs ~1.0 CPU-second of actual work — the
@@ -138,7 +141,7 @@ if [[ -n "$TAVILY_API_KEY" ]]; then
   env_vars+=( "TAVILY_API_KEY=secretref:tavily-key" )
 fi
 
-for pass_through in OPENROUTER_MODELS GEMINI_MODEL_QUALITY GEMINI_MODEL_FAST GEMINI_RPM GEMINI_TPM CORS_ORIGINS; do
+for pass_through in OPENROUTER_MODELS GEMINI_MODEL_QUALITY GEMINI_MODEL_FAST GEMINI_RPM GEMINI_TPM LLM_REQUEST_TIMEOUT_MS CORS_ORIGINS; do
   [[ -n "${!pass_through}" ]] && env_vars+=( "${pass_through}=${!pass_through}" )
 done
 

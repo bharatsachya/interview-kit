@@ -11,7 +11,7 @@ import {
 } from "@trao/llm";
 import { NullSearchProvider, TavilySearchProvider } from "@trao/research";
 import { FakeFetcher, LiveHttpFetcher, fixtureMounts } from "@trao/retrieval";
-import { GeminiTransport, OPENROUTER_FREE_MODELS, OpenRouterTransport } from "@trao/llm";
+import { DEFAULT_REQUEST_BUDGET_MS, GeminiTransport, OPENROUTER_FREE_MODELS, OpenRouterTransport } from "@trao/llm";
 import type { ModelTransport } from "@trao/llm";
 import { fakeLlmResponses, gapFillResponse } from "../fixtures/fake-llm-responses";
 
@@ -183,6 +183,9 @@ export function wire(options: WiringOptions = {}): Wiring {
       },
       requestsPerMinute: Number(process.env["GEMINI_RPM"] ?? 10),
       tokensPerMinute: Number(process.env["GEMINI_TPM"] ?? 250_000),
+      // Mirrors apps/api. Batch wants this at least as much as the app does: a stalled free
+      // model there costs a case rather than a page load.
+      requestBudgetMs: Number(process.env["LLM_REQUEST_TIMEOUT_MS"] ?? DEFAULT_REQUEST_BUDGET_MS),
       ...(options.recordPrompts === true ? { recordPrompts: true } : {}),
     });
     describe.push(`llm: ${label} via gateway${options.noCache === true ? " (cache bypassed)" : ""}`);
