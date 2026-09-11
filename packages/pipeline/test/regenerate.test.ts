@@ -149,6 +149,85 @@ describe("regenerateSection", () => {
     });
   });
 
+  describe("ids", () => {
+    /** What a composition root that builds one generator per job actually hands over. */
+    function freshSequentialIds(): IdGenerator {
+      const counters = new Map<string, number>();
+      return {
+        next: (prefix) => {
+          const n = (counters.get(prefix) ?? 0) + 1;
+          counters.set(prefix, n);
+          return `${prefix}${n}`;
+        },
+      };
+    }
+
+    it("never hands a new question an id the kit already holds", async () => {
+      const tracer = new TestTracer();
+      const llm = new StubLlm({
+        generate_questions: () => QUESTIONS("A new PostgreSQL query tuning question.", ["r1"]),
+        gap_fill: () => ({ prompt: "x", answer_outline: "", difficulty: 2 }),
+      }).tracing(tracer);
+
+      // The kit's first question is already `q1`, and this generator starts counting at q1.
+      const next = await regenerateSection(
+        kit(),
+        { section: "questions", category: "technical" },
+        { llm, ids: freshSequentialIds(), tracer },
+      );
+
+      const seen = next.questions.map((q) => q.id);
+      expect(seen.filter((id, i) => seen.indexOf(id) !== i)).toEqual([]);
+      // The archived original still resolves to itself, rather than to whatever came last.
+      expect(next.questions.filter((q) => q.id === "q1")).toHaveLength(1);
+    });
+
+    it("does not reuse a flashcard id either", async () => {
+      const tracer = new TestTracer();
+      const llm = new StubLlm({
+        generate_questions: () => QUESTIONS("A new PostgreSQL query tuning question.", ["r1"]),
+        gap_fill: () => ({ prompt: "x", answer_outline: "", difficulty: 2 }),
+      }).tracing(tracer);
+
+      const next = await regenerateSection(
+        kit(),
+        { section: "questions", category: "technical" },
+        { llm, ids: freshSequentialIds(), tracer },
+      );
+
+      const seen = next.flashcards.map((f) => f.id);
+      expect(seen.filter((id, i) => seen.indexOf(id) !== i)).toEqual([]);
+    });
+
+    it("says on the span when the caller's generator was colliding", async () => {
+      const tracer = new TestTracer();
+      const llm = new StubLlm({
+        generate_questions: () => QUESTIONS("A new PostgreSQL query tuning question.", ["r1"]),
+        gap_fill: () => ({ prompt: "x", answer_outline: "", difficulty: 2 }),
+      }).tracing(tracer);
+
+      await regenerateSection(
+        kit(),
+        { section: "questions", category: "technical" },
+        { llm, ids: freshSequentialIds(), tracer },
+      );
+
+      // Silently correct is not good enough: the misconfiguration has to be visible somewhere.
+      expect(tracer.byStep("regenerate_section")?.attrs["ids_skipped"]).toBeGreaterThan(0);
+    });
+
+    it("leaves a correctly wired caller's ids alone", async () => {
+      const d = deps({
+        generate_questions: () => QUESTIONS("A new PostgreSQL query tuning question.", ["r1"]),
+        gap_fill: () => ({ prompt: "x", answer_outline: "", difficulty: 2 }),
+      });
+
+      await regenerateSection(kit(), { section: "questions", category: "technical" }, d.deps);
+
+      expect(d.tracer.byStep("regenerate_section")?.attrs["ids_skipped"]).toBeUndefined();
+    });
+  });
+
   describe("the schedule branch", () => {
     it("calls no model at all", async () => {
       const d = deps({});

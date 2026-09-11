@@ -82,20 +82,79 @@ export async function regenerateSection(
       ...(request.category !== undefined ? { category: request.category } : {}),
     });
 
-    switch (request.section) {
-      case "company_brief":
-        return regenerateBrief(kit, deps);
-      case "schedule":
-        return regenerateSchedule(kit, deps);
-      case "questions": {
-        if (request.category === undefined) {
-          throw new KitError("INVALID_INPUT", "Regenerating questions needs a category.");
+    // Ids are never reused. That is a property of the document, not of whichever generator the
+    // caller happened to pass, so it is enforced here rather than assumed. See `UnusedIds`.
+    const ids = new UnusedIds(deps.ids, kit);
+    const safe: RegenerateDeps = { ...deps, ids };
+
+    try {
+      switch (request.section) {
+        case "company_brief":
+          return await regenerateBrief(kit, safe);
+        case "schedule":
+          return await regenerateSchedule(kit, safe);
+        case "questions": {
+          if (request.category === undefined) {
+            throw new KitError("INVALID_INPUT", "Regenerating questions needs a category.");
+          }
+          root.set("category", request.category);
+          return await regenerateQuestions(kit, request.category, safe);
         }
-        root.set("category", request.category);
-        return regenerateQuestions(kit, request.category, deps);
       }
+    } finally {
+      // Zero on a correctly wired caller. Anything else says the generator it passed is minting
+      // names this kit already holds, which is worth seeing before it becomes a support ticket.
+      if (ids.skipped > 0) root.set("ids_skipped", ids.skipped);
     }
   });
+}
+
+/**
+ * The caller's generator, minus any name this kit already holds.
+ *
+ * Soft delete is the reason. Nothing is ever removed from a kit and no id is ever reused, which
+ * is what makes a dangling reference impossible in storage — and a generator that hands back an
+ * id already in use turns that guarantee inside out. The new question does not replace the old
+ * one, it sits beside it: two records, one id, `byId` maps silently keeping whichever came last,
+ * and a schedule day that no longer says which of the two it meant.
+ *
+ * It is not a hypothetical. A composition root that builds a fresh `SequentialIdGenerator` per
+ * job — which is exactly what `--fake-llm` did — starts counting at `q1` against a kit whose
+ * first question is `q1`. The generator is not wrong in isolation; it simply has no idea a
+ * document already exists. Nothing downstream notices, because nothing downstream is looking.
+ *
+ * So the invariant is enforced where the document is, not left to each caller to remember: three
+ * call sites needed this independently and two of them got it wrong. Skipping rather than
+ * throwing keeps a merely misconfigured caller working, since the right answer is obvious and
+ * costs one loop; `ids_skipped` on the span is what stops that being invisible.
+ */
+class UnusedIds implements IdGenerator {
+  skipped = 0;
+  readonly #taken: Set<string>;
+
+  constructor(
+    private readonly inner: IdGenerator,
+    kit: InternalKit,
+  ) {
+    this.#taken = new Set<string>([
+      ...kit.questions.map((q) => q.id),
+      ...kit.flashcards.map((f) => f.id),
+      ...kit.requirements.map((r) => r.id),
+      kit.id,
+    ]);
+  }
+
+  next(prefix: string): string {
+    for (;;) {
+      const id = this.inner.next(prefix);
+      if (this.#taken.has(id)) {
+        this.skipped += 1;
+        continue;
+      }
+      this.#taken.add(id);
+      return id;
+    }
+  }
 }
 
 // ── company_brief ────────────────────────────────────────────────────────────────────────

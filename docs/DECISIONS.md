@@ -738,6 +738,25 @@ level up. `autoTagSingleSeed: false` lets coverage reach its own verdict instead
 `regen-technical-refills-newly-uncovered-must` is built on it: the fake answers a Go question to a
 Postgres seed, and Postgres has to stay open.
 
+### The id generator is wrapped, because the invariant belongs to the document
+
+`regenerateSection` wraps whatever `IdGenerator` it is handed and skips any name the kit already
+holds. Soft delete is the reason: nothing is ever removed and no id is ever reused, which is what
+makes a dangling reference impossible in storage — and a generator handing back an id already in
+use turns that guarantee inside out. The new question does not replace the old one, it sits beside
+it: two records, one id, `byId` maps silently keeping whichever came last, and a schedule day that
+no longer says which of the two it meant.
+
+Not hypothetical. A composition root that builds a fresh `SequentialIdGenerator` per job — which
+is what `--fake-llm` did — starts counting at `q1` against a kit whose first question is `q1`. The
+generator is not wrong in isolation; it has no idea a document already exists. Three call sites
+needed this guard independently and two of them got it wrong, which is the argument for enforcing
+it where the document is rather than asking every caller to remember.
+
+Skipping rather than throwing, because the right answer is obvious and costs one loop, and a
+merely misconfigured caller should keep working. `ids_skipped` on the span is what stops that
+being invisible — zero on a correct caller, non-zero the moment someone wires it up wrong.
+
 ### The trace reads like the steps it replays
 
 `regenerate_section` wraps the same child spans the first-generation pipeline emits —
