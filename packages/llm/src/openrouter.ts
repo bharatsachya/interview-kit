@@ -83,6 +83,22 @@ export class OpenRouterTransport implements ModelTransport {
   constructor(private readonly options: OpenRouterOptions) {}
 
   async send(request: ModelTransportRequest): Promise<ModelTransportResponse> {
+    try {
+      return await this.#attempt(request, true);
+    } catch (error) {
+      // `response_format` is an optimisation, never a requirement.
+      //
+      // Some providers answer a model that cannot do structured outputs with a flat 400, which
+      // is otherwise the one status that must not be retried — a malformed request stays
+      // malformed. This one does not: the request is fine and the *feature* is unavailable, and
+      // the gateway parses and repairs the JSON itself either way. So the same model is asked
+      // once more without the hint rather than the run ending on a capability it never needed.
+      if (!(error instanceof ProviderError) || !error.unsupportedFeature) throw error;
+      return await this.#attempt(request, false);
+    }
+  }
+
+  async #attempt(request: ModelTransportRequest, structured: boolean): Promise<ModelTransportResponse> {
     const doFetch = this.options.fetchImpl ?? globalThis.fetch;
     const base = (this.options.baseUrl ?? "https://openrouter.ai/api/v1").replace(/\/$/, "");
 
@@ -103,7 +119,7 @@ export class OpenRouterTransport implements ModelTransport {
           // Ask for JSON at the protocol level where the model supports it. The gateway still
           // parses and validates — this reduces how often the repair round is needed rather
           // than replacing it, and several free models ignore the hint entirely.
-          response_format: { type: "json_object" },
+          ...(structured ? { response_format: { type: "json_object" } } : {}),
           temperature: 0.2,
           ...(request.maxOutputTokens !== undefined ? { max_tokens: request.maxOutputTokens } : {}),
         }),
@@ -141,6 +157,7 @@ export class OpenRouterTransport implements ModelTransport {
 
       throw new ProviderError(`OpenRouter responded ${response.status}: ${detail}`, {
         status: response.status,
+        unsupportedFeature: structured && isUnsupportedFeature(response.status, detail),
         ...(retryAfterMs(response) !== undefined ? { retryAfterMs: retryAfterMs(response) as number } : {}),
       });
     }
@@ -158,11 +175,14 @@ export class OpenRouterTransport implements ModelTransport {
     if (payload.error !== undefined) {
       const status = typeof payload.error.code === "number" ? payload.error.code : undefined;
       const upstreamOutOfCapacity = status === 429 || status === 502 || status === 503;
+      // The same capability rejection also arrives this way — 200 outside, 400 in the body.
+      const raw = JSON.stringify(payload.error);
       throw new ProviderError(`OpenRouter error: ${payload.error.message ?? "unknown"}`, {
         ...(status !== undefined ? { status } : {}),
         // Not retryable and not the account's problem: try the next model instead of sleeping.
         retryable: upstreamOutOfCapacity ? false : status === undefined || status >= 500,
         modelUnavailable: upstreamOutOfCapacity,
+        unsupportedFeature: structured && isUnsupportedFeature(status, raw),
       });
     }
 
@@ -204,6 +224,19 @@ async function safeText(response: Response): Promise<string> {
   } catch {
     return "(no body)";
   }
+}
+
+/**
+ * A 400 that means "this model cannot do that", not "your request is wrong".
+ *
+ * Matched on the provider's words because there is no code for it: OpenRouter passes the
+ * upstream body through, and Novita's reads `does not support feature: structured-outputs`.
+ * Kept narrow — it only ever downgrades one optional field and retries once, so a false
+ * positive costs a wasted call, while a false negative costs the whole run.
+ */
+function isUnsupportedFeature(status: number | undefined, detail: string): boolean {
+  if (status !== 400) return false;
+  return /does not support feature|structured[-_ ]?outputs?|response_format/i.test(detail);
 }
 
 function describe(error: unknown): string {

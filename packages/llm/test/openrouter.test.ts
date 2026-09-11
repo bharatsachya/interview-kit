@@ -116,6 +116,49 @@ describe("OpenRouterTransport", () => {
     expect((error as ProviderError).modelUnavailable).toBe(false);
   });
 
+  it("retries without response_format when the model cannot do structured outputs", async () => {
+    // A real production failure: Novita rejects ling-3.0-flash-vl with a flat 400 saying the
+    // model has no structured-output support. A 400 is normally final, and treating this one as
+    // final ended the whole run over an optional field the gateway does not need — it parses
+    // and repairs the JSON itself.
+    const bodies: string[] = [];
+    const picky = transport(async (_url, init) => {
+      const body = String((init as { body?: unknown }).body);
+      bodies.push(body);
+      if (body.includes("response_format")) {
+        return ok(
+          {
+            error: {
+              message: "Provider returned error",
+              code: 400,
+              metadata: { raw: '{"reason":"INVALID_REQUEST_BODY","message":"model: x does not support feature: structured-outputs"}' },
+            },
+          },
+          400,
+        );
+      }
+      return ok({ choices: [{ message: { content: '{"greeting":"hello"}' } }] });
+    });
+
+    const result = await picky.send({ model: "m", prompt: "p" });
+
+    expect(result.text).toContain("hello");
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]).toContain("response_format");
+    expect(bodies[1]).not.toContain("response_format");
+  });
+
+  it("does not retry an ordinary 400 — a malformed request stays malformed", async () => {
+    let calls = 0;
+    const wrong = transport(async () => {
+      calls += 1;
+      return ok({ error: { message: "messages must be an array", code: 400 } }, 400);
+    });
+
+    await expect(wrong.send({ model: "m", prompt: "p" })).rejects.toThrow(/400/);
+    expect(calls).toBe(1);
+  });
+
   it("rejects an empty completion rather than passing it on", async () => {
     const empty = transport(async () => ok({ choices: [{ message: { content: "" }, finish_reason: "length" }] }));
 

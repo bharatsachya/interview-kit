@@ -55,6 +55,15 @@ export class ProviderError extends Error {
    * transport knows which of the two it is looking at, so it says so here.
    */
   readonly modelUnavailable: boolean;
+  /**
+   * The request asked for something this model cannot do, rather than being wrong.
+   *
+   * Narrow on purpose, and currently one thing: a provider rejecting `response_format` because
+   * the model has no structured-output support. It arrives as a 400, which is otherwise exactly
+   * the status that must never be retried — so the distinction has to be carried explicitly or
+   * a usable model is discarded over an optimisation it never needed.
+   */
+  readonly unsupportedFeature: boolean;
 
   constructor(
     message: string,
@@ -63,6 +72,7 @@ export class ProviderError extends Error {
       retryAfterMs?: number;
       retryable?: boolean;
       modelUnavailable?: boolean;
+      unsupportedFeature?: boolean;
       cause?: unknown;
     } = {},
   ) {
@@ -71,6 +81,7 @@ export class ProviderError extends Error {
     this.status = options.status;
     this.retryAfterMs = options.retryAfterMs;
     this.modelUnavailable = options.modelUnavailable ?? false;
+    this.unsupportedFeature = options.unsupportedFeature ?? false;
     // 429 and 5xx are worth waiting out. A 400 means the request itself is wrong and will be
     // wrong again in five seconds.
     this.retryable = options.retryable ?? isRetryableStatus(options.status);
