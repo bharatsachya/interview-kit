@@ -45,15 +45,32 @@ export class ProviderError extends Error {
   /** From the `Retry-After` header. Overrides the backoff schedule when the provider sends it. */
   readonly retryAfterMs: number | undefined;
   readonly retryable: boolean;
+  /**
+   * This *model* cannot answer, as opposed to this request being wrong or the account being out
+   * of quota — so a caller with another model configured should move on rather than fail.
+   *
+   * A status code alone cannot carry this. OpenRouter reports a free model that is retired or
+   * out of capacity as HTTP 200 with `error.code: 429` in the body, which is indistinguishable
+   * by status from an account-level rate limit that must be waited out instead. Only the
+   * transport knows which of the two it is looking at, so it says so here.
+   */
+  readonly modelUnavailable: boolean;
 
   constructor(
     message: string,
-    options: { status?: number; retryAfterMs?: number; retryable?: boolean; cause?: unknown } = {},
+    options: {
+      status?: number;
+      retryAfterMs?: number;
+      retryable?: boolean;
+      modelUnavailable?: boolean;
+      cause?: unknown;
+    } = {},
   ) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
     this.name = "ProviderError";
     this.status = options.status;
     this.retryAfterMs = options.retryAfterMs;
+    this.modelUnavailable = options.modelUnavailable ?? false;
     // 429 and 5xx are worth waiting out. A 400 means the request itself is wrong and will be
     // wrong again in five seconds.
     this.retryable = options.retryable ?? isRetryableStatus(options.status);

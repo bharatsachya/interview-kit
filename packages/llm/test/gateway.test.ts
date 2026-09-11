@@ -550,6 +550,34 @@ describe("falling back to another model", () => {
     expect(transport.requests.map((r) => r.model)).toEqual(["retired", "current"]);
   });
 
+  it("moves on from an out-of-capacity free model, which reports itself as a 429", async () => {
+    // The regression that made the whole list decorative. OpenRouter answers HTTP 200 with
+    // `error.code: 429` for a free model that is retired or out of capacity; keying "move on"
+    // off the status alone read that as an account rate limit, so the gateway threw instead of
+    // trying the next model — and every name in the shipped fallback list failed exactly here.
+    const outOfCapacity = new ProviderError("Provider returned error", {
+      status: 429,
+      retryable: false,
+      modelUnavailable: true,
+    });
+    const { gateway, transport } = withModels([outOfCapacity, OK], ["spent", "spare"]);
+
+    const result = await gateway.complete(ask({ tier: "quality" }));
+
+    expect(result.data).toEqual({ greeting: "hello" });
+    expect(transport.requests.map((r) => r.model)).toEqual(["spent", "spare"]);
+  });
+
+  it("still waits out an account-level 429 rather than burning the next model on it", async () => {
+    // The other side of the same coin: this 429 is the account's own limit, carries no
+    // modelUnavailable flag, and a second model would hit the identical wall. Retry, don't move.
+    const accountLimited = new ProviderError("429 Too Many Requests", { status: 429 });
+    const { gateway, transport } = withModels([accountLimited, OK], ["first", "second"]);
+
+    await gateway.complete(ask({ tier: "quality" }));
+    expect(transport.requests.map((r) => r.model)).toEqual(["first", "first"]);
+  });
+
   it("does not fall back on a malformed request — a second model fails the same way", async () => {
     const bad = new ProviderError("400 Bad Request", { status: 400 });
     const { gateway, transport } = withModels([bad, OK], ["first", "second"]);

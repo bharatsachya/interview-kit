@@ -41,13 +41,28 @@ interface OpenRouterResponse {
  *
  * The `:free` suffix is not decoration — it selects a zero-cost variant with its own, tighter
  * rate limits. These rotate as providers come and go, which is exactly why the gateway takes a
- * list: a retired free model 404s, and the next one answers.
+ * list: one model is out of capacity, and the next one answers.
+ *
+ * The previous four entries — deepseek-chat-v3-0324, llama-3.3-70b-instruct, qwen-2.5-72b-instruct
+ * and gemma-3-27b-it — had all been retired, so the default was four models that no longer
+ * existed and `OPENROUTER_MODELS` was mandatory without saying so. Each name below was probed
+ * against the live API before being put here, and ordered by whether it returned parseable JSON
+ * on repeated tries rather than by parameter count:
+ *
+ *   nex-n2.5-pro          clean JSON on every attempt
+ *   ling-3.0-flash-vl     clean, and the fastest of them at well under two seconds
+ *   laguna-s-2.1          clean
+ *   nemotron-3-super      largest, but sometimes answers with its reasoning; the gateway's
+ *                         repair round covers that, which is why it is last and not absent
+ *
+ * This list will rot the same way the last one did. When a kit comes back thin, check the models
+ * endpoint before suspecting the pipeline.
  */
 export const OPENROUTER_FREE_MODELS = [
-  "deepseek/deepseek-chat-v3-0324:free",
-  "meta-llama/llama-3.3-70b-instruct:free",
-  "qwen/qwen-2.5-72b-instruct:free",
-  "google/gemma-3-27b-it:free",
+  "nex-agi/nex-n2.5-pro:free",
+  "inclusionai/ling-3.0-flash-vl:free",
+  "poolside/laguna-s-2.1:free",
+  "nvidia/nemotron-3-super-120b-a12b:free",
 ] as const;
 
 /** See the note in gemini.ts: sixty seconds is far too long to wait for a free model. */
@@ -99,7 +114,7 @@ export class OpenRouterTransport implements ModelTransport {
         throw new ProviderError(
           `Model "${request.model}" is not available on OpenRouter right now. ` +
             `Free models rotate; set OPENROUTER_MODELS in .env to one that is. Provider said: ${detail}`,
-          { status: response.status, retryable: false },
+          { status: response.status, retryable: false, modelUnavailable: true },
         );
       }
 
@@ -112,11 +127,21 @@ export class OpenRouterTransport implements ModelTransport {
     const payload = (await response.json()) as OpenRouterResponse;
 
     // OpenRouter returns 200 with an error body when an upstream provider fails mid-request.
+    //
+    // A 429 *here* is not the same as a 429 in the HTTP status. The status carries the account's
+    // own rate limit, which is waited out. This carries the upstream provider's — a free model
+    // that is out of capacity or has been quietly retired — and waiting does not help, because
+    // nothing about this account changes when it clears. Every retired free model in this file's
+    // original fallback list reports itself exactly this way, which is how a four-model chain
+    // came to be inert: the gateway only moved on for 503 and 404, and it never saw either.
     if (payload.error !== undefined) {
       const status = typeof payload.error.code === "number" ? payload.error.code : undefined;
+      const upstreamOutOfCapacity = status === 429 || status === 502 || status === 503;
       throw new ProviderError(`OpenRouter error: ${payload.error.message ?? "unknown"}`, {
         ...(status !== undefined ? { status } : {}),
-        retryable: status === undefined || status >= 500,
+        // Not retryable and not the account's problem: try the next model instead of sleeping.
+        retryable: upstreamOutOfCapacity ? false : status === undefined || status >= 500,
+        modelUnavailable: upstreamOutOfCapacity,
       });
     }
 

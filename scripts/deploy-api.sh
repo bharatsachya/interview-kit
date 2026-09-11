@@ -32,6 +32,19 @@ cd "$here"
 : "${GEMINI_MODEL_FAST:=}"
 : "${GEMINI_RPM:=}"
 : "${GEMINI_TPM:=}"
+# Container Apps fixes the ratio at 1 vCPU : 2 GiB, so these move together.
+#
+# Measured on a real run rather than guessed. One kit costs ~1.0 CPU-second of actual work — the
+# rest of its ~40 seconds is waiting on a model or a socket, which costs no compute — and peaks
+# at ~56 MB of transient Cheerio DOM over a 70 MB idle process. The runner caps itself at two
+# concurrent jobs (`jobs.ts`, `concurrency ?? 2`), so the ceiling is ~0.1 core sustained and
+# ~182 MB resident, bursting to one core for the few hundred milliseconds of each page parse.
+#
+# 0.5 vCPU / 1 GiB is therefore ~5x headroom on both. Going higher buys nothing: Node runs this
+# on one thread, so anything above 1 vCPU cannot be used at all, and the memory rides along with
+# the CPU whether it is needed or not.
+: "${AZ_CPU:=0.5}"
+: "${AZ_MEMORY:=1Gi}"
 : "${FAKE_LLM:=false}"
 : "${FAKE_FETCH:=false}"
 : "${TAVILY_API_KEY:=}"
@@ -139,7 +152,10 @@ if az containerapp show -n "$AZ_APP" -g "$AZ_RESOURCE_GROUP" -o none 2>/dev/null
   say "Updating ${AZ_APP}"
   az containerapp secret set -n "$AZ_APP" -g "$AZ_RESOURCE_GROUP" --secrets "${secrets[@]}" -o none
   az containerapp update -n "$AZ_APP" -g "$AZ_RESOURCE_GROUP" \
-    --image "$image" --set-env-vars "${env_vars[@]}" -o none
+    --image "$image" --set-env-vars "${env_vars[@]}" \
+    `# Sizing is re-applied on every run, not only at create. It was create-only, which meant` \
+    `# changing AZ_CPU did nothing to an app that already existed and said nothing about it.` \
+    --cpu "$AZ_CPU" --memory "$AZ_MEMORY" -o none
 else
   say "Creating ${AZ_APP}"
   az containerapp create -n "$AZ_APP" -g "$AZ_RESOURCE_GROUP" \
@@ -147,7 +163,7 @@ else
     --image "$image" \
     --registry-server "${AZ_ACR}.azurecr.io" \
     --target-port 8080 --ingress external \
-    --cpu 1 --memory 2Gi \
+    --cpu "$AZ_CPU" --memory "$AZ_MEMORY" \
     --secrets "${secrets[@]}" \
     --env-vars "${env_vars[@]}" \
     `# One replica, and never zero.` \

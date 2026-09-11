@@ -296,14 +296,21 @@ export class LlmGateway implements LlmProvider {
 
     // 503 UNAVAILABLE and 404 "no longer available" both mean *this model*, not the provider.
     // Flagged so a caller with another model configured can move on rather than fail the case.
-    const status = lastError instanceof ProviderError ? lastError.status : undefined;
+    //
+    // The status is not always enough to tell. OpenRouter answers HTTP 200 with `error.code: 429`
+    // for a free model that is retired or out of capacity, which reads as an account rate limit
+    // and is not one, so the transport says outright when it knows. Trusting the status alone
+    // left the fallback chain inert against the commonest free-tier failure there is — and left
+    // 502, which this file's own transport already treats as unavailable, falling through too.
+    const providerError = lastError instanceof ProviderError ? lastError : undefined;
+    const status = providerError?.status;
     throw new KitError("LLM_UNAVAILABLE", describe(lastError), {
       retryable: true,
       cause: lastError,
       details: {
         attempts: this.#maxAttempts,
         ...(status !== undefined ? { status } : {}),
-        model_unavailable: status === 503 || status === 404,
+        model_unavailable: providerError?.modelUnavailable === true || status === 503 || status === 404,
       },
     });
   }

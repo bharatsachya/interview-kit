@@ -75,6 +75,19 @@ describe("OpenRouterTransport", () => {
     await expect(odd.send({ model: "m", prompt: "p" })).rejects.toThrow(/upstream exploded/);
   });
 
+  it("treats a 429 inside a 200 body as this model's capacity, not the account's quota", async () => {
+    // The failure every retired or busy free model actually produces. It is not an account rate
+    // limit — waiting changes nothing, because nothing about this account is what ran out — so
+    // it has to reach the gateway as "move on", not as "sleep and try again".
+    const busy = transport(async () => ok({ error: { message: "Provider returned error", code: 429 } }));
+
+    const error = await busy.send({ model: "m", prompt: "p" }).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ProviderError);
+    expect((error as ProviderError).modelUnavailable).toBe(true);
+    expect((error as ProviderError).retryable).toBe(false);
+  });
+
   it("rejects an empty completion rather than passing it on", async () => {
     const empty = transport(async () => ok({ choices: [{ message: { content: "" }, finish_reason: "length" }] }));
 
