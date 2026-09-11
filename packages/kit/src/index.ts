@@ -53,7 +53,7 @@ export {
   type SchedulePatch,
 } from "./edits";
 
-export { VersionConflictError, type MutationOptions } from "./version";
+export { commit, VersionConflictError, type MutationOptions } from "./version";
 
 export { MINUTES_BY_DIFFICULTY, minutesForDifficulty, minutesForQuestions } from "./minutes";
 
