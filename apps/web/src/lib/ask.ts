@@ -16,10 +16,26 @@ export type AskParts =
    * Kept as the sentence the composer already wrote. Turning six roles into six cards would put
    * the run itself off the screen, which is the problem the document card exists to solve.
    */
-  | { kind: "summary"; text: string };
+  | { kind: "summary"; text: string }
+  /**
+   * A change asked of a kit that already exists — a rewrite of one section.
+   *
+   * Its own kind rather than a `summary`, because the turn that follows it says something
+   * different: a first run reports a kit built, a rewrite reports one section replaced, and the
+   * conversation should not claim to have built a kit it only edited.
+   */
+  | { kind: "change"; text: string; section: string };
 
 /** An ask, plus when *you* sent it — captured at submit, not when the server got round to it. */
 export type Ask = AskParts & { at: number };
+
+/** What a rewrite of this section is called, in the conversation. */
+export function sectionLabel(section: string): string {
+  if (section === "company_brief") return "Rewrite the brief";
+  if (section === "schedule") return "Rebuild the schedule";
+  const [, category] = section.split(":");
+  return category === undefined ? "Rewrite the questions" : `Rewrite the ${category} questions`;
+}
 
 /** Narrowing helper, so callers read as prose rather than as a discriminant check. */
 export function isPosting(ask: Ask): ask is Extract<Ask, { kind: "posting" }> & { at: number } {

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import type { Span } from "@trao/contracts";
 import { api } from "@/lib/api/client";
-import { askTitle, isPosting, type Ask, type AskParts } from "@/lib/ask";
+import { askTitle, isPosting, sectionLabel, type Ask, type AskParts } from "@/lib/ask";
 import { kitsOf, mergeHistory, type HistoryEntry } from "@/lib/history";
 import { AskDocument } from "@/components/workspace/ask-document";
 import { KIT_OUTPUTS, seconds, type KitOutputId } from "@/lib/kit-outputs";
@@ -35,6 +35,13 @@ interface Run {
   kitId: string;
   spans: Span[];
   ask: string;
+  /**
+   * What this run did, when it was not a first generation.
+   *
+   * Absent for a build. Present for a rewrite, because "Built your kit in 4s" is a false claim
+   * about a run that replaced one section of a kit that already existed.
+   */
+  changed?: string;
 }
 
 /**
@@ -106,7 +113,25 @@ export function Workspace() {
 
   // One builder for the whole workspace, so the output grid counts the same kit the panel edits
   // and deleting a question updates the card in the conversation without a second fetch.
-  const builder = useBuilder(activeKitId, forgetStaleKit);
+  /**
+   * A rewrite, shown as a turn.
+   *
+   * The kit stays open and the panel stays where it is — this is a change to the thing you are
+   * looking at, not a navigation. What arrives is a turn in the conversation: what you asked
+   * for, the steps as they run, and a line saying what changed. `jobIds` is replaced rather than
+   * appended, because the previous run is finished business and two live traces read as two
+   * things happening at once.
+   */
+  const onRegenerating = useCallback((jobId: string, section: string) => {
+    setAsks((previous) => ({
+      ...previous,
+      [jobId]: { kind: "change", text: sectionLabel(section), section, at: Date.now() },
+    }));
+    setJobIds([jobId]);
+    setComparing(false);
+  }, []);
+
+  const builder = useBuilder(activeKitId, forgetStaleKit, onRegenerating);
   const { kit, loading: kitLoading, error: kitError } = builder;
   const retryKit = builder.refetch;
 
@@ -270,9 +295,11 @@ export function Workspace() {
   // history; opening and reopening the drawer under someone as each one lands would be hostile.
   const onKitReady = useCallback(
     (jobId: string, kitId: string, spans: Span[]) => {
+      const asked = asks[jobId];
+      const changed = asked !== undefined && asked.kind === "change" ? asked.section : undefined;
       setRuns((previous) => ({
         ...previous,
-        [jobId]: { jobId, kitId, spans, ask: askText(asks[jobId]) },
+        [jobId]: { jobId, kitId, spans, ask: askText(asked), ...(changed !== undefined ? { changed } : {}) },
       }));
       setKitsLoading(true);
       setHistoryNonce((nonce) => nonce + 1);
@@ -498,8 +525,17 @@ export function Workspace() {
                         {run ? (
                           <>
                             <Assistant>
-                              Built your kit in {seconds(totalMs(run.spans))} — {KIT_OUTPUTS.length}{" "}
-                              outputs, ready to open.
+                              {run.changed === undefined ? (
+                                <>
+                                  Built your kit in {seconds(totalMs(run.spans))} — {KIT_OUTPUTS.length}{" "}
+                                  outputs, ready to open.
+                                </>
+                              ) : (
+                                <>
+                                  {changedLabel(run.changed)} in {seconds(totalMs(run.spans))}. Your
+                                  edits elsewhere are untouched.
+                                </>
+                              )}
                             </Assistant>
                             <div className="md:ml-[38px]">
                               <Trace spans={run.spans} />
@@ -607,6 +643,19 @@ export function Workspace() {
  * you pasted existed nowhere you could reach it. If a run went wrong, getting your own posting
  * back meant finding the original tab again.
  */
+/**
+ * What a rewrite says it did, in the past tense.
+ *
+ * Deliberately narrower than "regenerated the kit". A rewrite replaces one section and leaves
+ * everything else byte-identical, and a sentence that overstated it would make people check.
+ */
+function changedLabel(section: string): string {
+  if (section === "company_brief") return "Rewrote the brief";
+  if (section === "schedule") return "Rebuilt the schedule";
+  const [, category] = section.split(":");
+  return category === undefined ? "Rewrote the questions" : `Rewrote the ${category} questions`;
+}
+
 /** Whatever was asked, as one line — for the run summary, which has no room for a document. */
 function askText(ask: Ask | undefined): string {
   if (ask === undefined) return "";

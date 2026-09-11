@@ -112,12 +112,29 @@ export function useBuilder(
    * render has to keep consulting.
    */
   onNotFound?: (kitId: string) => void,
+  /**
+   * Called when a regeneration is accepted, with the job it created.
+   *
+   * A regeneration is a job with an id and a trace, exactly like a first run — it was simply
+   * never shown as one. Polling it behind a spinner on a button meant the most interesting thing
+   * the app does to an existing kit happened silently: no record of having asked, no steps, and
+   * a kit that changed under you with nothing to say what had been done or why.
+   *
+   * The hook keeps polling (it owns the refetch); this only lets the conversation put the same
+   * job on screen as a turn.
+   */
+  onRegenerating?: (jobId: string, section: string) => void,
 ): BuilderState {
   // Held in a ref so a caller passing an inline function cannot restart the request.
   const notify = useRef(onNotFound);
   useEffect(() => {
     notify.current = onNotFound;
   }, [onNotFound]);
+
+  const announce = useRef(onRegenerating);
+  useEffect(() => {
+    announce.current = onRegenerating;
+  }, [onRegenerating]);
 
   const [kit, setKit] = useState<InternalKit | null>(null);
   const [loading, setLoading] = useState(false);
@@ -395,7 +412,10 @@ export function useBuilder(
       const section = target.section === "questions" ? `questions:${target.category}` : target.section;
       void api
         .regenerate(kitId, target)
-        .then((response) => watch(response.job_id, section))
+        .then((response) => {
+          announce.current?.(response.job_id, section);
+          return watch(response.job_id, section);
+        })
         .catch((cause: unknown) =>
           setError(cause instanceof Error ? cause.message : "Could not start the regeneration."),
         );
