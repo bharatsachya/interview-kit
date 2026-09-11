@@ -34,7 +34,8 @@ set one is authenticated only to people who use the frontend.
 
 ## What production requires, and what happens without it
 
-`apps/api` **refuses to start** under `NODE_ENV=production` without both of these:
+`apps/api` **refuses to start** under `NODE_ENV=production` without both of these, and
+`scripts/deploy-api.sh` refuses to deploy without a model key or an explicit `FAKE_LLM=true`:
 
 | Variable | Without it | Why it is a refusal and not a warning |
 |---|---|---|
@@ -184,9 +185,17 @@ not help with this; nothing does except a paid key. A demo link left open to the
 out of quota by the time anyone else opens it.
 
 `GEMINI_MODEL_QUALITY` and `GEMINI_MODEL_FAST` each take a comma-separated list, and the cap is
-per model, so listing more models buys more headroom. Setting `FAKE_LLM=true` on the deployed API
-turns the link into a demo that always works and never researches anything real — a legitimate
-choice for a graded submission, and one to state out loud rather than let someone discover.
+per model, so listing more models buys more headroom. `scripts/deploy-api.sh` passes both through.
+
+**The real answer is a second provider.** Set `OPENROUTER_API_KEY` in `.env.deploy` — free, no
+card, from https://openrouter.ai/keys — and its free models draw on a different bucket entirely.
+With both keys set, `LLM_PROVIDER` decides; the deploy script always sends it explicitly, so a
+Gemini secret left over from an earlier revision cannot silently win the choice back.
+
+Setting `FAKE_LLM=true` on the deployed API turns the link into a demo that always works and
+never researches anything real — a legitimate choice for a graded submission, and one to state
+out loud rather than let someone discover. The deploy script reports which of the three it used
+on every run.
 
 **Traces are not persisted.** They live in the API process, which is why the app runs on a single
 replica. A revision deployed mid-run loses that run's spans; the kit itself is already in Mongo.

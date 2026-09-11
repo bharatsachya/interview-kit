@@ -32,6 +32,12 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...except the template. Next's scaffold ignores every .env, which silently swallowed the one
+# file that exists to be read by someone who does not have the others: a clean clone had no
+# record of which variables this app needs, while README.md and docs/DEPLOYING.md both point at
+# it. Same shape as the unanchored `coverage/` that once excluded packages/coverage — an ignore
+# rule wide enough to catch something nobody meant to hide.
+!.env.example
 
 # vercel
 .vercel

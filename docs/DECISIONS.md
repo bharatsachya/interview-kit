@@ -525,7 +525,11 @@ command. Mongo adapters exist for the app. `pipeline` imports neither.
 
 ### Open, still to decide
 
-- Whether to build the creative feature at all — shares 10 points with practice mode.
+Nothing here any more. For the record, since this section was the place it was tracked: the
+creative feature was built, twice. A **weak-spots report** attributes card confidence back to
+question tracks through shared requirement ids, and a **cross-kit comparison** clusters the
+requirements that recur across several kits. Neither costs a model call, which is why both could
+be added without spending the day's quota to demonstrate them. See the README.
 
 ---
 

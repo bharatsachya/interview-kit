@@ -30,6 +30,34 @@ if (projects.length === 0) {
   process.exit(1);
 }
 
+/**
+ * Next generates the types for its own routes, layouts and pages, and writes them into
+ * `apps/web/.next/types/` — which is gitignored, because it is build output.
+ *
+ * So on a clean clone `apps/web/src/app/layout.tsx` refers to a `LayoutProps` that does not
+ * exist yet, and this script failed on a repository that was in no way broken. `next typegen`
+ * writes those types without doing a full build; it takes a second and it makes the first
+ * command a reviewer runs behave the same as the hundredth.
+ */
+function generateNextTypes() {
+  const web = join(repoRoot, "apps", "web");
+  if (!existsSync(join(web, "next.config.ts"))) return;
+
+  const started = Date.now();
+  const result = spawnSync("npx", ["--no-install", "next", "typegen"], { cwd: web, stdio: "pipe" });
+  const ms = Date.now() - started;
+
+  // Advisory, not fatal. If it fails, tsc reports the real error a moment later with a line
+  // number; swallowing the run here would turn that into "typecheck failed" with no location.
+  console.log(
+    result.status === 0
+      ? `  gen   apps/web route types  ${ms}ms`
+      : `  warn  could not generate apps/web route types — tsc may report missing LayoutProps`,
+  );
+}
+
+generateNextTypes();
+
 let failed = 0;
 for (const project of projects) {
   const label = relative(repoRoot, project);
