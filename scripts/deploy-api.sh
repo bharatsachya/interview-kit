@@ -96,8 +96,21 @@ image="${AZ_ACR}.azurecr.io/prep-kit-api:${tag}"
 
 say() { printf '\n\033[1m▸ %s\033[0m\n' "$*"; }
 
-say "Resource group ${AZ_RESOURCE_GROUP} in ${AZ_LOCATION}"
-az group create -n "$AZ_RESOURCE_GROUP" -l "$AZ_LOCATION" -o none
+# Created only when missing. A resource group's location is metadata — it records where the
+# group's own record lives, not where its contents run — and it cannot be changed afterwards, so
+# `az group create` on an existing group in another region is a hard error rather than a no-op.
+# Regions get revisited here more than one might expect: a subscription's allowed-region policy
+# and Container Apps' per-region environment capacity do not have to agree, and when they don't
+# the registry and the app end up in different places quite legitimately.
+existing_rg_location="$(az group show -n "$AZ_RESOURCE_GROUP" --query location -o tsv 2>/dev/null || true)"
+if [[ -z "$existing_rg_location" ]]; then
+  say "Resource group ${AZ_RESOURCE_GROUP} in ${AZ_LOCATION}"
+  az group create -n "$AZ_RESOURCE_GROUP" -l "$AZ_LOCATION" -o none
+elif [[ "$existing_rg_location" == "$AZ_LOCATION" ]]; then
+  say "Resource group ${AZ_RESOURCE_GROUP} in ${AZ_LOCATION}"
+else
+  say "Resource group ${AZ_RESOURCE_GROUP} (record in ${existing_rg_location}; deploying to ${AZ_LOCATION})"
+fi
 
 say "Registry ${AZ_ACR}"
 az acr show -n "$AZ_ACR" -g "$AZ_RESOURCE_GROUP" -o none 2>/dev/null ||
