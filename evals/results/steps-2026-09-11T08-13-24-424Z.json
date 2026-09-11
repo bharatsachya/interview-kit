@@ -1,0 +1,93 @@
+{
+  "run_id": "2026-09-11T08-13-24-424Z",
+  "generated_at": "2026-09-11T08:13:24.673Z",
+  "repeat": 1,
+  "steps": [
+    {
+      "step": "14",
+      "name": "API contract",
+      "target": "apps/api → createApp() on the memory adapter, fake Clerk verifier",
+      "kind": "integration",
+      "adapter": "Three fixtures the cases assume but do not ship. (1) `kit_base` with questions `q1`/`q2`: seeded as two must-have requirements of different kinds with one question each, so a technical regeneration leaves nothing uncovered and coverage has no gap to fill. (2) `https://x.example`, which `POST /kits` posts and the FakeFetcher has no mount for: mounted on the `sparse` fixture, so that case turns on idempotency rather than on how fast a fetch failed. (3) A 25ms latency on the fake provider: it otherwise answers in zero time, and the first regeneration then finishes before the second click has been parsed, which would make \"concurrent\" untestable rather than tested.",
+      "cases": [
+        {
+          "id": "signed-out-cannot-read",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "other-user-cannot-read",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "other-user-cannot-edit",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "list-shows-only-own-kits",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "regenerate-twice-joins-in-flight",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "create-duplicate-returns-existing",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "edit-with-stale-version",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "invalid-body-rejected-with-structure",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "job-progress-replays-completed-spans",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        },
+        {
+          "id": "expired-session-handled",
+          "runs": 1,
+          "passed": 1,
+          "pass_rate": 1,
+          "flaky": false
+        }
+      ],
+      "totals": {
+        "cases": 10,
+        "fully_passing": 10,
+        "runs": 10
+      },
+      "durationMs": 243
+    }
+  ],
+  "exit_code": 0
+}

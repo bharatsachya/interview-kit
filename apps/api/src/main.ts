@@ -14,10 +14,12 @@ import {
   type ModelTransport,
 } from "@trao/llm";
 import { MemoryJobStore, MemoryKitStore, connectMongo } from "@trao/persistence";
+import { regenerateSection } from "@trao/pipeline";
 import { NullSearchProvider, TavilySearchProvider } from "@trao/research";
 import { FakeFetcher, LiveHttpFetcher, fixtureMounts } from "@trao/retrieval";
 import { createApp } from "./app";
 import { DEFAULT_JOB_TIMEOUT_MS, JobRunner } from "./jobs";
+import { JobSpanFeed } from "./spans";
 import { fakeLlmResponses, gapFillResponse } from "../../../fixtures/fake-llm-responses";
 import { loadEnv } from "../../../scripts/load-env";
 
@@ -184,13 +186,37 @@ async function main(): Promise<void> {
     };
   };
 
-  const runner = new JobRunner({ jobs, kits, ids: new RandomIdGenerator(), clock, makeDeps, timeoutMs: jobTimeoutMs });
+  // Ids for things that outlive a run — jobs, kits, and the questions and cards the user adds
+  // by hand in the builder. Random rather than sequential: a builder id has to be unique against
+  // everything already in the document, including the archived items a sequential counter
+  // restarted from zero would happily collide with.
+  const ids = new RandomIdGenerator();
+
+  // One feed for the process. The runner publishes into it and `/jobs/:id/events` reads out of
+  // it, which is what lets a page reloaded mid-run replay the steps it missed.
+  const feed = new JobSpanFeed();
+
+  const runner = new JobRunner({
+    jobs,
+    kits,
+    ids,
+    clock,
+    makeDeps,
+    feed,
+    // `RegenerateDeps` is structurally satisfied by what `makeDeps` already builds, so the
+    // builder's regenerate button and first generation share one wiring rather than two.
+    regenerate: regenerateSection,
+    timeoutMs: jobTimeoutMs,
+  });
 
   const app = createApp({
     auth,
     jobs,
     kits,
     runner,
+    feed,
+    ids,
+    clock,
     ...(env("CORS_ORIGINS") !== "" ? { corsOrigins: env("CORS_ORIGINS").split(",").map((o) => o.trim()) } : {}),
   });
 

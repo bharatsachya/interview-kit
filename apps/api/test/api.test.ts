@@ -1,16 +1,20 @@
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { resolve } from "node:path";
 import request from "supertest";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DevAuthenticator, ClerkAuthenticator } from "@trao/auth";
-import type { Budget, JobStore, KitStore } from "@trao/contracts";
+import type { Budget, JobStore, KitStore, LlmRequest } from "@trao/contracts";
 import { InMemoryTracer, RandomIdGenerator, RoutedIdGenerator, SequentialIdGenerator, SystemClock } from "@trao/kernel";
-import type { InternalKit } from "@trao/kit";
+import { validateKitJSON, type InternalKit } from "@trao/kit";
 import { FakeLlmProvider, unlimitedBudget } from "@trao/llm";
 import { MemoryJobStore, MemoryKitStore } from "@trao/persistence";
+import { regenerateSection } from "@trao/pipeline";
 import { NullSearchProvider } from "@trao/research";
 import { FakeFetcher, fixtureMounts } from "@trao/retrieval";
 import { createApp } from "../src/app";
 import { JobRunner } from "../src/jobs";
+import { JobSpanFeed } from "../src/spans";
 import { fakeLlmResponses, gapFillResponse } from "../../../fixtures/fake-llm-responses";
 
 const clock = new SystemClock();
@@ -32,7 +36,19 @@ interface Harness {
   kits: KitStore<InternalKit>;
   jobs: JobStore;
   runner: JobRunner;
+  feed: JobSpanFeed;
+  ids: RandomIdGenerator;
 }
+
+/**
+ * How long the fake takes to answer, in milliseconds.
+ *
+ * Zero for every test but one. The fake is instant, and a job that starts and finishes inside a
+ * single millisecond leaves no window for a second request to arrive *during* — which is the
+ * only thing the double-click test is about. Raising this models the one property a real
+ * provider has that the fake does not.
+ */
+let modelLatencyMs = 0;
 
 function harness(): Harness {
   const kits = new MemoryKitStore<InternalKit>();
@@ -44,7 +60,13 @@ function harness(): Harness {
     const budget: Budget = unlimitedBudget(clock);
 
     return {
-      llm: fake,
+      llm: {
+        name: fake.name,
+        complete: async <T,>(request: LlmRequest<T>) => {
+          if (modelLatencyMs > 0) await new Promise((r) => setTimeout(r, modelLatencyMs));
+          return fake.complete(request);
+        },
+      },
       fetcher: new FakeFetcher({ root: FIXTURE_ROOT, mounts: fixtureMounts() }),
       search: new NullSearchProvider(),
       tracer: new InMemoryTracer(clock),
@@ -55,10 +77,12 @@ function harness(): Harness {
     };
   };
 
-  const runner = new JobRunner({ jobs, kits, ids: new RandomIdGenerator(), clock, makeDeps });
-  const app = createApp({ auth: new DevAuthenticator(), jobs, kits, runner });
+  const feed = new JobSpanFeed();
+  const ids = new RandomIdGenerator();
+  const runner = new JobRunner({ jobs, kits, ids, clock, makeDeps, feed, regenerate: regenerateSection });
+  const app = createApp({ auth: new DevAuthenticator(), jobs, kits, runner, feed, ids, clock, heartbeatMs: 50 });
 
-  return { app, kits, jobs, runner };
+  return { app, kits, jobs, runner, feed, ids };
 }
 
 /** Poll the way the browser does, rather than reaching into the runner. */
@@ -74,6 +98,7 @@ async function waitForJob(h: Harness, jobId: string, user = "alice"): Promise<Re
 
 let h: Harness;
 beforeEach(() => {
+  modelLatencyMs = 0;
   h = harness();
 });
 
@@ -84,6 +109,9 @@ describe("auth", () => {
       jobs: h.jobs,
       kits: h.kits,
       runner: h.runner,
+      feed: h.feed,
+      ids: h.ids,
+      clock,
     });
 
     const response = await request(app).get("/kits");
@@ -97,6 +125,9 @@ describe("auth", () => {
       jobs: h.jobs,
       kits: h.kits,
       runner: h.runner,
+      feed: h.feed,
+      ids: h.ids,
+      clock,
     });
 
     const response = await request(app).get("/kits").set("authorization", "Bearer anything");
@@ -114,6 +145,9 @@ describe("auth", () => {
       jobs: h.jobs,
       kits: h.kits,
       runner: h.runner,
+      feed: h.feed,
+      ids: h.ids,
+      clock,
     });
 
     const response = await request(app).get("/kits").set("authorization", "Bearer stale");
@@ -139,15 +173,17 @@ describe("POST /kits", () => {
     expect((response.body as { job_ids: string[] }).job_ids).toHaveLength(1);
   });
 
-  it("rejects a malformed role with the reason", async () => {
+  it("rejects a malformed role, naming the field that was wrong", async () => {
     const response = await request(h.app)
       .post("/kits")
       .set("authorization", "Bearer alice")
       .send({ jd: "", company_url: "not-a-url", days: 0 });
 
-    expect(response.status).toBe(422);
-    expect((response.body as { code: string }).code).toBe("INVALID_ROLE");
-    expect((response.body as { message: string }).message).toMatch(/jd|company_url|days/);
+    // 400 and a named field, the same shape every write on the builder uses: a client with one
+    // branch for validation failures is a client that can put the message next to the input.
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ code: "INVALID_BODY" });
+    expect((response.body as { field: string }).field).toMatch(/^(jd|company_url|days)$/);
   });
 
   it("runs the real pipeline through to a stored kit", async () => {
@@ -314,5 +350,259 @@ describe("unknown routes", () => {
     const response = await request(h.app).get("/nope").set("authorization", "Bearer alice");
     expect(response.status).toBe(404);
     expect(response.body).toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+/**
+ * A small kit, written straight into the store.
+ *
+ * The builder tests are about routing, ownership, versions and error shapes, none of which get
+ * more true for having run a ninety-step pipeline first. What each transition *does* to a kit is
+ * tested in `packages/kit`, without an HTTP server in front of it.
+ */
+async function seed(owner = "alice", version = 1): Promise<InternalKit> {
+  const flags = { origin: "generated" as const, pinned: false, active: true };
+  const kit: InternalKit = {
+    id: "kit_seed",
+    createdAt: 0,
+    version,
+    role: { title: "Backend Engineer", company: "Northwind", location: "Berlin", summary: "Routing services.", responsibilities: [] },
+    companyBrief: { summary: "Routing software.", whatTheyDo: "Routing.", hiringProcess: "", sources: [], pagesUsed: [], gaps: [], origin: "generated", edited: false },
+    requirements: [{ id: "r1", text: "PostgreSQL query tuning", kind: "technical", priority: "must" }],
+    questions: [
+      { ...flags, id: "q1", category: "technical", prompt: "Tune this query.", answerOutline: "Read the plan.", difficulty: 2, requirementIds: ["r1"], order: 0 },
+      { ...flags, id: "q2", category: "technical", prompt: "Index this table.", answerOutline: "Measure first.", difficulty: 1, requirementIds: ["r1"], order: 1 },
+    ],
+    flashcards: [{ ...flags, id: "f1", front: "Query plans", back: "Read them.", requirementIds: ["r1"], questionId: "q1", order: 0 }],
+    schedule: { daysAvailable: 2, days: [{ day: 1, focus: "Postgres", questionIds: ["q1", "q2"], minutes: 30, edited: false }, { day: 2, focus: "Review", questionIds: [], minutes: 0, edited: false }] },
+    coverage: { passes: 1, uncoveredRequirementIds: [] },
+  };
+
+  await h.kits.save({ id: kit.id, userId: owner, hash: "hash_seed", createdAt: 0, updatedAt: 0, kit });
+  return kit;
+}
+
+const alice = (): [string, string] => ["authorization", "Bearer alice"];
+
+describe("the builder", () => {
+  it("answers every write with the projection and the new version in an ETag", async () => {
+    await seed();
+    const response = await request(h.app)
+      .patch("/kits/kit_seed/questions/q1")
+      .set(...alice())
+      .set("If-Match", '"1"')
+      .send({ prompt: "Tune this query, and say how you knew it worked." });
+
+    expect(response.status).toBe(200);
+    expect(response.headers["etag"]).toBe('"2"');
+    const kit = (response.body as { kit: InternalKit }).kit;
+    expect(kit.questions.find((q) => q.id === "q1")?.origin).toBe("edited");
+  });
+
+  it("refuses a write carrying a version the kit has moved past", async () => {
+    await seed("alice", 7);
+    const response = await request(h.app).patch("/kits/kit_seed/brief").set(...alice()).set("If-Match", '"5"').send({ summary: "Stale." });
+
+    expect(response.status).toBe(409);
+    expect(response.body).toMatchObject({ code: "VERSION_CONFLICT", current_version: 7 });
+    expect((await h.kits.findById("kit_seed"))?.kit.companyBrief.summary).toBe("Routing software.");
+  });
+
+  it("accepts a write with no If-Match at all — a caller with no opinion is not a conflict", async () => {
+    await seed();
+    const response = await request(h.app).patch("/kits/kit_seed/brief").set(...alice()).send({ summary: "Rewritten by hand." });
+
+    expect(response.status).toBe(200);
+    expect(response.headers["etag"]).toBe('"2"');
+  });
+
+  it("refuses a malformed If-Match rather than treating it as no opinion", async () => {
+    await seed();
+    const response = await request(h.app).patch("/kits/kit_seed/brief").set(...alice()).set("If-Match", "banana").send({ summary: "x" });
+
+    expect(response.status).toBe(409);
+  });
+
+  it("names the field a body got wrong", async () => {
+    await seed();
+    const response = await request(h.app).patch("/kits/kit_seed/questions/q1").set(...alice()).send({ difficulty: 9 });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ code: "INVALID_BODY", field: "difficulty" });
+    expect((response.body as { message: string }).message).toBeTypeOf("string");
+  });
+
+  it("rejects a field the route does not accept instead of ignoring it", async () => {
+    await seed();
+    // Retagging a question by hand would close a coverage gap by relabelling rather than by
+    // answering it. `QuestionPatch` has no `requirementIds`, so this must fail loudly.
+    const response = await request(h.app).patch("/kits/kit_seed/questions/q1").set(...alice()).send({ requirement_ids: ["r1", "r9"] });
+
+    expect(response.status).toBe(400);
+  });
+
+  it("moves a question between categories and reorders within one", async () => {
+    await seed();
+    const moved = await request(h.app).post("/kits/kit_seed/questions/q2/move").set(...alice()).send({ to_category: "system-design" });
+    expect(moved.status).toBe(200);
+    expect((moved.body as { kit: InternalKit }).kit.questions.find((q) => q.id === "q2")?.category).toBe("system-design");
+
+    const reordered = await request(h.app).post("/kits/kit_seed/questions/reorder").set(...alice()).send({ category: "technical", ids: ["q1"] });
+    expect(reordered.status).toBe(200);
+  });
+
+  it("adds a question by hand, with a card, and marks it manual", async () => {
+    await seed();
+    const response = await request(h.app)
+      .post("/kits/kit_seed/questions")
+      .set(...alice())
+      .send({ category: "behavioural", prompt: "Tell me about an RFC you had to defend.", answer_outline: "Mine." });
+
+    expect(response.status).toBe(200);
+    const kit = (response.body as { kit: InternalKit }).kit;
+    const added = kit.questions.find((q) => q.prompt.startsWith("Tell me about an RFC"));
+    expect(added?.origin).toBe("manual");
+    expect(kit.flashcards.some((f) => f.questionId === added?.id)).toBe(true);
+  });
+
+  it("deletes a question out of both projections and off its day", async () => {
+    await seed();
+    const response = await request(h.app).delete("/kits/kit_seed/questions/q1").set(...alice()).send();
+
+    expect(response.status).toBe(200);
+    const kit = (response.body as { kit: InternalKit }).kit;
+    expect(kit.questions.some((q) => q.id === "q1")).toBe(false);
+    expect(kit.schedule.days.flatMap((d) => d.questionIds)).not.toContain("q1");
+    // Soft, not gone: the record survives so its id can never be handed out again.
+    expect((await h.kits.findById("kit_seed"))?.kit.questions.find((q) => q.id === "q1")?.active).toBe(false);
+  });
+
+  it("pins a question, and edits and deletes flashcards", async () => {
+    await seed();
+    expect((await request(h.app).post("/kits/kit_seed/questions/q1/pin").set(...alice()).send({})).status).toBe(200);
+    expect((await request(h.app).patch("/kits/kit_seed/flashcards/f1").set(...alice()).send({ back: "Always." })).status).toBe(200);
+    expect((await request(h.app).delete("/kits/kit_seed/flashcards/f1").set(...alice()).send()).status).toBe(200);
+    expect((await request(h.app).post("/kits/kit_seed/flashcards").set(...alice()).send({ front: "Mine", back: "Also mine" })).status).toBe(200);
+  });
+
+  it("marks a day the user rewrote as edited, so allocation steps around it", async () => {
+    await seed();
+    const response = await request(h.app).patch("/kits/kit_seed/schedule/days/1").set(...alice()).send({ focus: "I renamed this day" });
+
+    expect(response.status).toBe(200);
+    const day = (response.body as { kit: InternalKit }).kit.schedule.days.find((d) => d.day === 1);
+    expect(day).toMatchObject({ focus: "I renamed this day", edited: true });
+  });
+
+  it("404s an item the kit does not have, and a day that is not in the schedule", async () => {
+    await seed();
+    expect((await request(h.app).patch("/kits/kit_seed/questions/q99").set(...alice()).send({ prompt: "x" })).status).toBe(404);
+    expect((await request(h.app).patch("/kits/kit_seed/flashcards/f99").set(...alice()).send({ back: "x" })).status).toBe(404);
+    expect((await request(h.app).patch("/kits/kit_seed/schedule/days/9").set(...alice()).send({ focus: "x" })).status).toBe(404);
+  });
+
+  it("shows a stranger a 404 rather than confirming the kit exists", async () => {
+    await seed("alice");
+    for (const path of ["/kits/kit_seed", "/kits/kit_seed/export"]) {
+      expect((await request(h.app).get(path).set("authorization", "Bearer bob")).status).toBe(404);
+    }
+    const write = await request(h.app).patch("/kits/kit_seed/questions/q1").set("authorization", "Bearer bob").send({ prompt: "hijacked" });
+    expect(write.status).toBe(404);
+    expect((await h.kits.findById("kit_seed"))?.kit.questions[0]?.prompt).toBe("Tune this query.");
+  });
+
+  it("exports Appendix A, with no internal fields on it", async () => {
+    await seed();
+    const response = await request(h.app).get("/kits/kit_seed/export").set(...alice());
+
+    expect(response.status).toBe(200);
+    expect(validateKitJSON(response.body).ok).toBe(true);
+    expect(JSON.stringify(response.body)).not.toContain('"pinned"');
+    expect(response.headers["content-disposition"]).toContain("kit-kit_seed.json");
+  });
+
+  it("runs a regeneration once, however many times the button is clicked", async () => {
+    await seed();
+    // The two clicks have to land while the first run is still going; see `modelLatencyMs`.
+    modelLatencyMs = 100;
+    const [first, second] = await Promise.all([
+      request(h.app).post("/kits/kit_seed/regenerate").set(...alice()).send({ section: "questions", category: "technical" }),
+      request(h.app).post("/kits/kit_seed/regenerate").set(...alice()).send({ section: "questions", category: "technical" }),
+    ]);
+
+    expect([first.status, second.status]).toEqual([202, 202]);
+    expect((first.body as { job_id: string }).job_id).toBe((second.body as { job_id: string }).job_id);
+    expect((second.body as { existing: boolean }).existing).toBe(true);
+  });
+
+  it("refuses a regeneration of questions with no category, and a category on the others", async () => {
+    await seed();
+    expect((await request(h.app).post("/kits/kit_seed/regenerate").set(...alice()).send({ section: "questions" })).status).toBe(400);
+    expect(
+      (await request(h.app).post("/kits/kit_seed/regenerate").set(...alice()).send({ section: "schedule", category: "technical" })).status,
+    ).toBe(400);
+    expect((await request(h.app).post("/kits/kit_seed/regenerate").set(...alice()).send({ section: "schedule" })).status).toBe(202);
+  });
+});
+
+/** Open the stream on a real port, take what has arrived, and hang up. */
+async function readStream(path: string, user: string): Promise<string> {
+  const server = await new Promise<Server>((ready) => {
+    const listening = h.app.listen(0, "127.0.0.1", () => ready(listening));
+  });
+  const port = (server.address() as AddressInfo).port;
+  const controller = new AbortController();
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+      headers: { authorization: `Bearer ${user}` },
+      signal: controller.signal,
+    });
+    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+    const chunk = await Promise.race([
+      reader.read(),
+      new Promise<{ value: undefined }>((r) => setTimeout(() => r({ value: undefined }), 500)),
+    ]);
+    await reader.cancel().catch(() => {});
+    return chunk.value === undefined ? "" : new TextDecoder().decode(chunk.value);
+  } finally {
+    controller.abort();
+    await new Promise<void>((done) => server.close(() => done()));
+  }
+}
+
+describe("the event stream", () => {
+  it("replays the steps a job has already finished before streaming live ones", async () => {
+    await h.jobs.create({
+      id: "job_watch",
+      userId: "alice",
+      kitId: null,
+      label: "Backend Engineer",
+      status: "running",
+      progress: null,
+      error: null,
+      createdAt: 0,
+      updatedAt: 0,
+    });
+    h.feed.publish("job_watch", [
+      { id: "s1", parentId: null, step: "extract_requirements", startedAt: 1, endedAt: 2, durationMs: 1, status: "ok", attrs: {} },
+      { id: "s2", parentId: null, step: "fetch_homepage", startedAt: 2, endedAt: 3, durationMs: 1, status: "ok", attrs: {} },
+      { id: "s3", parentId: null, step: "crawl_site", startedAt: 3, endedAt: 3, durationMs: 0, status: "running", attrs: {} },
+    ]);
+
+    // A page reloaded mid-run must be told what it missed, not handed an empty stream. Read
+    // through a real socket rather than through supertest: a stream that never ends has no
+    // response to buffer, and the assertion is about what arrives first.
+    const text = await readStream("/jobs/job_watch/events", "alice");
+
+    expect(text).toContain("extract_requirements");
+    expect(text.indexOf("extract_requirements")).toBeLessThan(text.indexOf("fetch_homepage"));
+    expect(text).toContain("crawl_site");
+  });
+
+  it("shows a stranger a 404 rather than another user's trace", async () => {
+    await h.jobs.create({ id: "job_watch", userId: "alice", kitId: null, label: "x", status: "running", progress: null, error: null, createdAt: 0, updatedAt: 0 });
+    const response = await request(h.app).get("/jobs/job_watch/events").set("authorization", "Bearer bob");
+    expect(response.status).toBe(404);
   });
 });

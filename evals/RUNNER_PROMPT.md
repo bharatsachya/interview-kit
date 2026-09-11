@@ -30,3 +30,12 @@ Rules:
 
 Do not modify any cases.json to make a step pass. If a case's expectation looks wrong,
 say so and stop.
+
+Step 13 loads evals/steps/13-builder-regeneration/_fixtures/base-kit.json as the starting
+kit for every case, applies `input.operations` in order through the same functions the API
+routes call (never a test-only path), scripts FakeLlmProvider with `input.fake_responses`,
+and asserts on both the internal result and toKitJSON(result). "untouched" means deep-equal
+to the base fixture record.
+
+Step 14 boots the Express app against the memory adapter with a fake Clerk verifier that
+maps tokens "user-a" / "user-b" to user ids and "user-a-expired" to an expired session.

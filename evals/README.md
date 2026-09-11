@@ -24,6 +24,8 @@ because every later step consumes its output.
 | 10 | deriveFlashcards | pure | 5 |
 | 11 | allocateSchedule + repair | pure | 7 |
 | 12 | toKitJSON | pure | 3 |
+| 13 | builder: edit/delete/move/reorder/regenerate | pure+fake | 13 |
+| 14 | API contract: ownership, idempotency, versions | integration | 10 |
 
 A step is done when every case passes and the trace for that step records the attrs
 the case names.

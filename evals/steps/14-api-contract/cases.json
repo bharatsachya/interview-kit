@@ -1,0 +1,58 @@
+[
+  {
+    "id": "signed-out-cannot-read",
+    "input": { "as": null, "request": { "method": "GET", "path": "/kits/kit_base" } },
+    "expected": { "status": 401 }
+  },
+  {
+    "id": "other-user-cannot-read",
+    "input": { "as": "user-b", "owner": "user-a", "request": { "method": "GET", "path": "/kits/kit_base" } },
+    "expected": { "status": 404, "note": "404, not 403 — do not confirm the kit exists to someone who doesn't own it." }
+  },
+  {
+    "id": "other-user-cannot-edit",
+    "input": { "as": "user-b", "owner": "user-a", "request": { "method": "PATCH", "path": "/kits/kit_base/questions/q1", "body": { "prompt": "hijacked" } } },
+    "expected": { "status": 404, "kit_unchanged": true }
+  },
+  {
+    "id": "list-shows-only-own-kits",
+    "input": { "as": "user-a", "kits": [ { "id": "k1", "owner": "user-a" }, { "id": "k2", "owner": "user-b" }, { "id": "k3", "owner": "user-a" } ], "request": { "method": "GET", "path": "/kits" } },
+    "expected": { "status": 200, "ids": ["k1", "k3"] }
+  },
+  {
+    "id": "regenerate-twice-joins-in-flight",
+    "input": { "as": "user-a", "owner": "user-a", "requests": [
+      { "method": "POST", "path": "/kits/kit_base/regenerate", "body": { "section": "questions", "category": "technical" } },
+      { "method": "POST", "path": "/kits/kit_base/regenerate", "body": { "section": "questions", "category": "technical" } }
+    ], "concurrent": true },
+    "expected": { "statuses": [202, 202], "same_job_id": true, "llm_calls": 1, "note": "Two clicks on Regenerate. One job, one set of LLM calls, both responses carry the same job_id." }
+  },
+  {
+    "id": "create-duplicate-returns-existing",
+    "input": { "as": "user-a", "requests": [
+      { "method": "POST", "path": "/kits", "body": { "jd": "Backend engineer. Python and Postgres. Remote.", "company_url": "https://x.example", "days": 3 } },
+      { "method": "POST", "path": "/kits", "body": { "jd": "Backend engineer. Python and Postgres. Remote.", "company_url": "https://x.example", "days": 3 } }
+    ] },
+    "expected": { "statuses": [202, 200], "same_kit_id": true, "second_response_flag": "existing", "note": "Same JD + URL + days from the same user → the existing kit, no second generation." }
+  },
+  {
+    "id": "edit-with-stale-version",
+    "input": { "as": "user-a", "owner": "user-a", "kit_version": 7, "request": { "method": "PATCH", "path": "/kits/kit_base/questions/q1", "headers": { "If-Match": "5" }, "body": { "prompt": "stale" } } },
+    "expected": { "status": 409, "body_has": ["code", "current_version"], "kit_unchanged": true }
+  },
+  {
+    "id": "invalid-body-rejected-with-structure",
+    "input": { "as": "user-a", "owner": "user-a", "request": { "method": "PATCH", "path": "/kits/kit_base/questions/q1", "body": { "difficulty": 9 } } },
+    "expected": { "status": 400, "body_has": ["code", "field", "message"], "field": "difficulty" }
+  },
+  {
+    "id": "job-progress-replays-completed-spans",
+    "input": { "as": "user-a", "owner": "user-a", "job_state": { "completed_spans": ["extract_requirements", "fetch_homepage", "crawl_site"], "running": "generate_brief" }, "request": { "method": "GET", "path": "/jobs/job_1/events" } },
+    "expected": { "status": 200, "first_events_are": ["extract_requirements", "fetch_homepage", "crawl_site"], "note": "A client connecting mid-run (page reload) must receive already-completed steps first, not an empty stream." }
+  },
+  {
+    "id": "expired-session-handled",
+    "input": { "as": "user-a-expired", "request": { "method": "GET", "path": "/kits" } },
+    "expected": { "status": 401, "body_has": ["code"], "code": "SESSION_EXPIRED", "note": "The brief asks for 'sensible handling of expired or invalid sessions'. A structured code lets the UI redirect to sign-in instead of showing a generic error." }
+  }
+]

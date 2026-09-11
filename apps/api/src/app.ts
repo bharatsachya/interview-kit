@@ -1,10 +1,15 @@
 import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
-import type { CreateJobsResponse, JobListView, KitListView, KitView } from "@trao/api-contract";
-import { isKitError, type JobStore, type KitStore } from "@trao/contracts";
-import type { Authenticator } from "@trao/auth";
-import { getKitForBuilder, parseCases, type EvaluationCase, type InternalKit } from "@trao/kit";
+import type { CreateJobsResponse, CreateKitResponse, JobListView, KitListView } from "@trao/api-contract";
+import { isKitError, type Clock, type IdGenerator, type JobStore, type KitStore } from "@trao/contracts";
+import { isAuthError, type Authenticator } from "@trao/auth";
+import { parseCases, type EvaluationCase, type InternalKit } from "@trao/kit";
+import { builderRoutes } from "./builder";
+import { eventRoutes } from "./events";
+import { guarded, notFound, unauthenticated } from "./http";
 import type { JobRunner } from "./jobs";
+import { createKitSchema, parseBody } from "./schemas";
+import type { JobSpanFeed } from "./spans";
 
 /**
  * The Express API.
@@ -15,6 +20,10 @@ import type { JobRunner } from "./jobs";
  *
  * Ownership is enforced on every read. A kit id is not a secret, and "users see only their own
  * kits" has to be a check rather than a convention.
+ *
+ * The builder's fourteen routes are in `builder.ts` and the event stream is in `events.ts`, for
+ * no better reason than that one file of twenty routes stops being readable. What is here is the
+ * composition: creating work, listing it, and the one error handler everything falls through to.
  */
 
 export interface ApiOptions {
@@ -22,7 +31,12 @@ export interface ApiOptions {
   jobs: JobStore;
   kits: KitStore<InternalKit>;
   runner: JobRunner;
+  feed: JobSpanFeed;
+  ids: IdGenerator;
+  clock: Clock;
   corsOrigins?: string[];
+  /** Passed through to the event stream so tests do not wait fifteen seconds for a keep-alive. */
+  heartbeatMs?: number;
 }
 
 export function createApp(options: ApiOptions): express.Express {
@@ -33,6 +47,10 @@ export function createApp(options: ApiOptions): express.Express {
     cors({
       origin: options.corsOrigins ?? true,
       credentials: true,
+      // The builder's concurrency control travels in these two, and a cross-origin client
+      // cannot read a response header it was not offered.
+      allowedHeaders: ["authorization", "content-type", "if-match"],
+      exposedHeaders: ["etag"],
     }),
   );
 
@@ -41,24 +59,33 @@ export function createApp(options: ApiOptions): express.Express {
     res.json({ ok: true });
   });
 
+  /**
+   * Start one generation, or hand back the one already doing this exact work.
+   *
+   * 202 with a job id and the kit id it will occupy; 200 when the answer already existed. The
+   * kit id is in both, so a double-submitted form has one destination rather than two.
+   */
   app.post(
     "/kits",
-    guarded(options, async (req, res, userId) => {
-      const parsed = parseCases([{ id: `role-${Date.now().toString(36)}`, ...(req.body as object) }]);
-      if (!parsed.ok) {
-        res.status(422).json({ code: "INVALID_ROLE", message: parsed.errors.join("; ") });
-        return;
-      }
+    guarded(options.auth, async (req, res, userId) => {
+      const parsed = parseBody(createKitSchema, req.body);
+      if (!parsed.ok) return void res.status(400).json(parsed.error);
 
-      const only = parsed.cases[0] as EvaluationCase;
-      const { jobId } = await options.runner.start(userId, only);
-      res.status(202).json({ job_ids: [jobId] } satisfies CreateJobsResponse);
+      const testCase: EvaluationCase = { id: options.ids.next("case_"), ...parsed.value };
+      const started = await options.runner.start(userId, testCase);
+
+      res.status(started.existing ? 200 : 202).json({
+        job_id: started.jobId,
+        kit_id: started.kitId,
+        existing: started.existing,
+        job_ids: [started.jobId],
+      } satisfies CreateKitResponse);
     }),
   );
 
   app.post(
     "/kits/batch",
-    guarded(options, async (req, res, userId) => {
+    guarded(options.auth, async (req, res, userId) => {
       const body = req.body as { cases?: unknown };
       const parsed = parseCases(body.cases);
       if (!parsed.ok) {
@@ -79,7 +106,7 @@ export function createApp(options: ApiOptions): express.Express {
 
   app.get(
     "/jobs",
-    guarded(options, async (_req, res, userId) => {
+    guarded(options.auth, async (_req, res, userId) => {
       // Everything the user has run, finished or not. A queued job appears here immediately,
       // which is what lets the history list survive navigating away mid-run.
       const jobs = await options.jobs.listByUser(userId);
@@ -99,13 +126,10 @@ export function createApp(options: ApiOptions): express.Express {
 
   app.get(
     "/jobs/:jobId",
-    guarded(options, async (req, res, userId) => {
+    guarded(options.auth, async (req, res, userId) => {
       const job = await options.jobs.findById(req.params["jobId"] as string);
       // 404 rather than 403 for someone else's job: confirming it exists leaks that it does.
-      if (job === null || job.userId !== userId) {
-        res.status(404).json({ code: "NOT_FOUND", message: "No such job." });
-        return;
-      }
+      if (job === null || job.userId !== userId) return notFound(res, "job");
 
       res.set("cache-control", "no-store").json({
         job,
@@ -117,9 +141,11 @@ export function createApp(options: ApiOptions): express.Express {
     }),
   );
 
+  app.use(eventRoutes({ auth: options.auth, jobs: options.jobs, runner: options.runner, feed: options.feed, ...(options.heartbeatMs !== undefined ? { heartbeatMs: options.heartbeatMs } : {}) }));
+
   app.get(
     "/kits",
-    guarded(options, async (_req, res, userId) => {
+    guarded(options.auth, async (_req, res, userId) => {
       const records = await options.kits.listByUser(userId);
       res.set("cache-control", "no-store").json({
         kits: records.map((record) => ({
@@ -133,17 +159,14 @@ export function createApp(options: ApiOptions): express.Express {
     }),
   );
 
-  app.get(
-    "/kits/:kitId",
-    guarded(options, async (req, res, userId) => {
-      const record = await options.kits.findById(req.params["kitId"] as string);
-      if (record === null || record.userId !== userId) {
-        res.status(404).json({ code: "NOT_FOUND", message: "No such kit." });
-        return;
-      }
-
-      // The builder projection: active items only, provenance flags intact, schedule repaired.
-      res.set("cache-control", "no-store").json({ kit: getKitForBuilder(record.kit) } satisfies KitView);
+  // Last, because `/kits/:kitId` would otherwise shadow `/kits/batch`.
+  app.use(
+    builderRoutes({
+      auth: options.auth,
+      kits: options.kits,
+      runner: options.runner,
+      ids: options.ids,
+      clock: options.clock,
     }),
   );
 
@@ -152,37 +175,23 @@ export function createApp(options: ApiOptions): express.Express {
   });
 
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    if (isKitError(error) && error.details["status"] === 401) {
-      res.status(401).json({ code: "UNAUTHENTICATED", message: error.message });
-      return;
+    if (res.headersSent) return;
+
+    // The only error the API layer produces on purpose. Its code is what the UI branches on:
+    // an expired session gets sent back to sign-in, anything else gets the generic page.
+    if (isAuthError(error)) return unauthenticated(res, error);
+
+    if (isKitError(error)) {
+      // A kit that fails its own Appendix A validation on the way out is our bug, not the
+      // caller's — but the code is worth naming so the failure is legible in a log.
+      process.stderr.write(`kit error: ${error.code} ${error.message}\n`);
+      return void res.status(500).json({ code: error.code, message: "The kit could not be produced." });
     }
+
     // Nothing internal reaches the client. The message could name a file path or a query.
     process.stderr.write(`unhandled: ${error instanceof Error ? error.stack : String(error)}\n`);
     res.status(500).json({ code: "INTERNAL", message: "Something went wrong." });
   });
 
   return app;
-}
-
-/**
- * Authenticate, then run the handler.
- *
- * Wrapping rather than `app.use` middleware so no route can be added without one: a route that
- * forgets to authenticate is a route that does not compile, because the handler signature
- * demands a `userId`.
- */
-function guarded(
-  options: ApiOptions,
-  handler: (req: Request, res: Response, userId: string) => Promise<void>,
-): (req: Request, res: Response, next: NextFunction) => void {
-  return (req, res, next) => {
-    void (async () => {
-      try {
-        const user = await options.auth.authenticate(req.header("authorization"));
-        await handler(req, res, user.id);
-      } catch (error) {
-        next(error);
-      }
-    })();
-  };
 }

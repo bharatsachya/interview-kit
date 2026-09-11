@@ -1,5 +1,4 @@
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
-import { KitError } from "@trao/contracts";
 
 /**
  * @trao/auth — verifying a Clerk session token.
@@ -20,8 +19,40 @@ export interface AuthenticatedUser {
   email: string | null;
 }
 
+/**
+ * Why a request has no user.
+ *
+ * Two codes rather than one, because the UI has two different things to do. `SESSION_EXPIRED`
+ * means the credentials were ours and simply ran out: send the user back to sign in and return
+ * them to the page they were on. `UNAUTHENTICATED` means there was nothing usable to check at
+ * all — no header, a foreign issuer, a bad signature — and the honest response is the sign-in
+ * page with no promise of coming back.
+ *
+ * Distinguishing the two does leak that a token was well-formed and expired. That is not a
+ * secret worth keeping: the client already holds the token and can read its own `exp`. What is
+ * still withheld is everything on the other side of the line — a bad signature, an unknown key
+ * id and a wrong issuer all collapse into the one generic code, so an attacker probing with
+ * forged tokens learns nothing about which half of the forgery failed.
+ */
+export type AuthFailureCode = "UNAUTHENTICATED" | "SESSION_EXPIRED";
+
+export class AuthError extends Error {
+  constructor(
+    readonly code: AuthFailureCode,
+    message: string,
+    options?: { cause?: unknown },
+  ) {
+    super(message, options?.cause === undefined ? undefined : { cause: options.cause });
+    this.name = "AuthError";
+  }
+}
+
+export function isAuthError(value: unknown): value is AuthError {
+  return value instanceof AuthError;
+}
+
 export interface Authenticator {
-  /** Throws `KitError("INVALID_INPUT")` on a missing or unusable token. */
+  /** Throws `AuthError` on a missing, expired or unusable token. */
   authenticate(authorizationHeader: string | undefined): Promise<AuthenticatedUser>;
 }
 
@@ -32,12 +63,17 @@ export interface ClerkAuthOptions {
   jwksUrl?: string;
   /** Injected in tests so the suite never reaches the network. */
   verify?: (token: string) => Promise<JWTPayload>;
+  /** Injected so an expiry check is testable without waiting. Defaults to `Date.now`. */
+  now?: () => number;
 }
 
 export class ClerkAuthenticator implements Authenticator {
   readonly #verify: (token: string) => Promise<JWTPayload>;
+  readonly #now: () => number;
 
   constructor(options: ClerkAuthOptions) {
+    this.#now = options.now ?? (() => Date.now());
+
     if (options.verify !== undefined) {
       this.#verify = options.verify;
     } else {
@@ -53,19 +89,26 @@ export class ClerkAuthenticator implements Authenticator {
 
   async authenticate(authorizationHeader: string | undefined): Promise<AuthenticatedUser> {
     const token = bearerToken(authorizationHeader);
-    if (token === null) throw unauthorised("No bearer token.");
+    if (token === null) throw new AuthError("UNAUTHENTICATED", "No bearer token.");
 
     let payload: JWTPayload;
     try {
       payload = await this.#verify(token);
     } catch (error) {
-      // The reason is deliberately not passed back to the caller — "expired" versus "bad
-      // signature" tells an attacker which half of the problem to work on.
-      throw unauthorised("Token could not be verified.", error);
+      // `jose` rejects an expired token before we ever see a payload, so expiry has to be
+      // recognised from the error. Everything else collapses into the generic code.
+      if (isExpiry(error)) throw new AuthError("SESSION_EXPIRED", "The session has expired.", { cause: error });
+      throw new AuthError("UNAUTHENTICATED", "Token could not be verified.", { cause: error });
     }
 
+    // Checked again on the payload, because an injected verifier — the dev bypass, a test —
+    // does not run `jose`'s clock. A verifier that hands back an expired claim set must not
+    // produce a longer-lived session than the real one does.
+    const exp = typeof payload.exp === "number" ? payload.exp * 1000 : null;
+    if (exp !== null && exp <= this.#now()) throw new AuthError("SESSION_EXPIRED", "The session has expired.");
+
     const id = typeof payload.sub === "string" ? payload.sub : "";
-    if (id === "") throw unauthorised("Token has no subject.");
+    if (id === "") throw new AuthError("UNAUTHENTICATED", "Token has no subject.");
 
     const email = typeof payload["email"] === "string" ? payload["email"] : null;
     return { id, email };
@@ -89,12 +132,14 @@ export class DevAuthenticator implements Authenticator {
   }
 }
 
+/** `jose` throws `JWTExpired` with `code: "ERR_JWT_EXPIRED"`; both are checked so neither alone matters. */
+function isExpiry(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.name === "JWTExpired" || (error as { code?: unknown }).code === "ERR_JWT_EXPIRED";
+}
+
 function bearerToken(header: string | undefined): string | null {
   if (header === undefined) return null;
   const match = /^Bearer\s+(.+)$/i.exec(header.trim());
   return match?.[1]?.trim() ?? null;
-}
-
-function unauthorised(message: string, cause?: unknown): KitError {
-  return new KitError("INVALID_INPUT", message, { ...(cause !== undefined ? { cause } : {}), details: { status: 401 } });
 }

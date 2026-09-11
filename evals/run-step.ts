@@ -13,13 +13,32 @@
  * cleaned up — each run gets its own directory.
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { join, resolve } from "node:path";
 import type { IdGenerator, LlmProvider, Span, Tracer } from "@trao/contracts";
-import { InMemoryTracer, SequentialIdGenerator, SystemClock, formatTrace } from "@trao/kernel";
-import { FakeLlmProvider } from "@trao/llm";
+import { ClerkAuthenticator } from "@trao/auth";
+import {
+  InMemoryTracer,
+  RandomIdGenerator,
+  RoutedIdGenerator,
+  SequentialIdGenerator,
+  SystemClock,
+  formatTrace,
+} from "@trao/kernel";
+import { FakeLlmProvider, unlimitedBudget } from "@trao/llm";
+import { MemoryJobStore, MemoryKitStore } from "@trao/persistence";
 import { extractRequirements } from "@trao/extraction";
-import { DEFAULT_PER_SCORER, DEFAULT_EXTERNAL_HIRING_THRESHOLD, mergeCandidates, normaliseUrl, rankLinks } from "@trao/retrieval";
-import { filterRelevant } from "@trao/research";
+import {
+  DEFAULT_PER_SCORER,
+  DEFAULT_EXTERNAL_HIRING_THRESHOLD,
+  FakeFetcher,
+  fixtureMounts,
+  mergeCandidates,
+  normaliseUrl,
+  rankLinks,
+} from "@trao/retrieval";
+import { NullSearchProvider, filterRelevant } from "@trao/research";
 import { deriveFlashcards, generateBrief, generateQuestions } from "@trao/generation";
 import { detectGaps, fallbackQuestion, gateQuestionTags, runCoverage } from "@trao/coverage";
 import { allocateSchedule } from "@trao/scheduling";
@@ -40,8 +59,13 @@ import {
   reorderQuestions,
   toKitJSON,
   validateKitJSON,
+  type InternalKit,
 } from "@trao/kit";
 import { regenerateSection } from "@trao/pipeline";
+import { createApp } from "../apps/api/src/app";
+import { JobRunner } from "../apps/api/src/jobs";
+import { JobSpanFeed } from "../apps/api/src/spans";
+import { fakeLlmResponses, gapFillResponse } from "../fixtures/fake-llm-responses";
 import { wire } from "../scripts/composition";
 import { loadEnv } from "../scripts/load-env";
 import { Checks, assignMatches, normalise, requirementMatches, toInternalQuestion, toRequirement } from "./harness";
@@ -55,7 +79,7 @@ interface StepDefinition {
   dir: string;
   name: string;
   target: string;
-  kind: "pure" | "pure+fake" | "llm" | "llm+fake" | "unimplemented";
+  kind: "pure" | "pure+fake" | "llm" | "llm+fake" | "integration" | "unimplemented";
   /** Where the eval spec's function name differs from the implementation's. */
   adapter?: string;
   run: (cases: Case[], deps: Deps) => Promise<CaseOutcome[]>;
@@ -1752,7 +1776,452 @@ const step13: StepDefinition = {
   },
 };
 
-const STEPS: StepDefinition[] = [step01, step02, step03, step04, step05, step06, step07, step08, step09, step10, step11, step12, step13];
+// ── 14 api contract (integration) ────────────────────────────────────────────────────────
+
+/**
+ * The whole API, booted on a loopback port, against the memory adapter.
+ *
+ * Not supertest: one case reads an event stream, and a stream needs a real socket. Booting the
+ * app on port 0 costs a millisecond and means every case goes through the same door a browser
+ * does — Express routing, JSON parsing, CORS, the error handler — rather than through a handler
+ * called directly.
+ *
+ * A fresh harness per case. These cases seed conflicting worlds (three kits here, one at version
+ * 7 there) and count model calls, and a shared store would make each case's result depend on the
+ * order the ones before it ran in.
+ */
+interface ApiHarness {
+  base: string;
+  kits: MemoryKitStore<InternalKit>;
+  jobs: MemoryJobStore;
+  feed: JobSpanFeed;
+  llm: FakeLlmProvider;
+  close: () => Promise<void>;
+}
+
+/**
+ * The fake Clerk verifier the step's README asks for.
+ *
+ * `user-a-expired` returns a well-formed payload whose `exp` is in the past rather than throwing,
+ * because that is the interesting case: it proves the expiry check is the API's own and not
+ * something delegated to `jose`'s clock. An unknown token throws, which is what a forged one does.
+ */
+function fakeClerk(): ClerkAuthenticator {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const payloads: Record<string, Record<string, unknown>> = {
+    "user-a": { sub: "user-a" },
+    "user-b": { sub: "user-b" },
+    "user-a-expired": { sub: "user-a", exp: nowSeconds - 60 },
+  };
+
+  return new ClerkAuthenticator({
+    issuer: "https://fake.clerk.test",
+    verify: async (token: string) => {
+      const payload = payloads[token];
+      if (payload === undefined) throw new Error("unknown token");
+      return payload;
+    },
+  });
+}
+
+/**
+ * How long a model call takes here.
+ *
+ * The fake answers in zero time, and `regenerate-twice-joins-in-flight` is a case about what
+ * happens *during* a run. With an instant provider the first regeneration is finished four
+ * milliseconds after it starts — before the second click's request has been parsed — so the two
+ * clicks are never concurrent and the case tests nothing. A real provider takes seconds; twenty
+ * five milliseconds is the smallest number that models "this takes time" without making the step
+ * slow. Nothing else in the step depends on it.
+ */
+const MODEL_LATENCY_MS = 25;
+
+/** The fake, with the one property a real provider has that it lacks: a duration. */
+function withLatency(provider: FakeLlmProvider, ms: number): LlmProvider {
+  return {
+    name: provider.name,
+    complete: async (request) => {
+      await new Promise((resolve) => setTimeout(resolve, ms));
+      return provider.complete(request);
+    },
+  };
+}
+
+async function bootApi(): Promise<ApiHarness> {
+  const clock = new SystemClock();
+  const kits = new MemoryKitStore<InternalKit>();
+  const jobs = new MemoryJobStore(clock);
+  const feed = new JobSpanFeed();
+  const ids = new RandomIdGenerator();
+
+  // One provider across the whole case, because `llm_calls` is an assertion about the case and
+  // not about one job.
+  const llm = new FakeLlmProvider({ responses: fakeLlmResponses() });
+  llm.respondWith("gap_fill", gapFillResponse);
+  const provider = withLatency(llm, MODEL_LATENCY_MS);
+
+  const runner = new JobRunner({
+    jobs,
+    kits,
+    ids,
+    clock,
+    feed,
+    regenerate: regenerateSection,
+    makeDeps: () => ({
+      llm: provider,
+      fetcher: new FakeFetcher({
+        root: resolve(process.cwd(), "fixtures", "sites"),
+        // `x.example` is the host `create-duplicate-returns-existing` posts. Mounting it on the
+        // sparse fixture makes that case exercise a generation that actually succeeds; without a
+        // mount the run fails on the first fetch, and the case would pass or fail on how fast it
+        // failed rather than on the idempotency it is about.
+        mounts: { ...fixtureMounts(), "https://x.example": "sparse" },
+      }),
+      search: new NullSearchProvider(),
+      tracer: new InMemoryTracer(clock),
+      clock,
+      ids: new RoutedIdGenerator(new SequentialIdGenerator(), { kit_: new RandomIdGenerator() }),
+      budget: unlimitedBudget(clock),
+      requestsPerSecond: 1_000,
+    }),
+  });
+
+  const app = createApp({ auth: fakeClerk(), jobs, kits, runner, feed, ids, clock, heartbeatMs: 200 });
+
+  const server = await new Promise<Server>((ready) => {
+    const listening = app.listen(0, "127.0.0.1", () => ready(listening));
+  });
+  const address = server.address() as AddressInfo;
+
+  return {
+    base: `http://127.0.0.1:${address.port}`,
+    kits,
+    jobs,
+    feed,
+    llm,
+    close: () => new Promise<void>((done) => server.close(() => done())),
+  };
+}
+
+/**
+ * A kit with just enough in it to be edited, regenerated and listed.
+ *
+ * Two must-have requirements of different kinds, one question covering each. That shape is what
+ * makes `regenerate-twice-joins-in-flight` a clean assertion about idempotency: regenerating the
+ * technical category archives the only technical question, the one generated replacement is
+ * tagged with the requirement it was seeded from, and coverage therefore finds nothing to fill.
+ * One model call, because one call is all the work there is — not because the second was
+ * suppressed.
+ */
+function seedKit(id: string, version = 1): InternalKit {
+  const provenance = { origin: "generated" as const, pinned: false, active: true };
+
+  return {
+    id,
+    createdAt: 0,
+    version,
+    role: {
+      title: "Senior Backend Engineer",
+      company: "Northwind",
+      location: "Berlin",
+      summary: "Owns the routing services behind a parcel network.",
+      responsibilities: ["Own routing services"],
+    },
+    companyBrief: {
+      summary: "Northwind builds routing software for parcel networks.",
+      whatTheyDo: "Routing software for parcel carriers.",
+      hiringProcess: "",
+      sources: ["https://northwind.test/"],
+      pagesUsed: ["https://northwind.test/"],
+      gaps: [],
+      origin: "generated",
+      edited: false,
+    },
+    requirements: [
+      { id: "r1", text: "PostgreSQL query tuning", kind: "technical", priority: "must", sourceSpan: "Production experience with PostgreSQL, including query tuning" },
+      { id: "r2", text: "written communication", kind: "behavioural", priority: "must", sourceSpan: "Strong written communication; most design work happens in RFCs" },
+    ],
+    questions: [
+      { ...provenance, id: "q1", category: "technical", prompt: "Walk me through a PostgreSQL query you had to tune.", answerOutline: "The plan, the fix, the result.", difficulty: 2, requirementIds: ["r1"], order: 0 },
+      { ...provenance, id: "q2", category: "behavioural", prompt: "Tell me about a design you had to argue for in writing.", answerOutline: "The RFC, the objection, the outcome.", difficulty: 2, requirementIds: ["r2"], order: 0 },
+    ],
+    flashcards: [
+      { ...provenance, id: "f1", front: "PostgreSQL query tuning", back: "Read the plan first.", requirementIds: ["r1"], questionId: "q1", order: 0 },
+      { ...provenance, id: "f2", front: "Written communication", back: "Write the RFC before the meeting.", requirementIds: ["r2"], questionId: "q2", order: 1 },
+    ],
+    schedule: {
+      daysAvailable: 3,
+      days: [
+        { day: 1, focus: "Postgres", questionIds: ["q1"], minutes: 20, edited: false },
+        { day: 2, focus: "Communication", questionIds: ["q2"], minutes: 20, edited: false },
+        { day: 3, focus: "Review", questionIds: [], minutes: 0, edited: false },
+      ],
+    },
+    coverage: { passes: 1, uncoveredRequirementIds: [] },
+  };
+}
+
+async function seedRecord(h: ApiHarness, id: string, owner: string, version: number): Promise<void> {
+  const kit = seedKit(id, version);
+  await h.kits.save({ id, userId: owner, hash: `hash-${id}`, createdAt: 0, updatedAt: 0, kit });
+}
+
+interface RawRequest {
+  method: string;
+  path: string;
+  headers?: Record<string, string>;
+  body?: unknown;
+}
+
+interface CallResult {
+  status: number;
+  body: Record<string, any>;
+  events: { event: string; data: Record<string, any> }[];
+}
+
+/** One request, as a browser would make it. Streams are read; everything else is parsed as JSON. */
+async function call(h: ApiHarness, as: string | null, request: RawRequest): Promise<CallResult> {
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    ...(as === null ? {} : { authorization: `Bearer ${as}` }),
+    ...(request.headers ?? {}),
+  };
+
+  if (request.path.endsWith("/events")) return readStream(`${h.base}${request.path}`, headers);
+
+  const response = await fetch(`${h.base}${request.path}`, {
+    method: request.method,
+    headers,
+    ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+  });
+
+  const text = await response.text();
+  let body: Record<string, any> = {};
+  try {
+    body = text === "" ? {} : (JSON.parse(text) as Record<string, any>);
+  } catch {
+    body = { raw: text };
+  }
+  return { status: response.status, body, events: [] };
+}
+
+/**
+ * Read an event stream until it goes quiet.
+ *
+ * A run in flight never ends the stream, so the read is bounded by a timer rather than by EOF.
+ * That is the same shape a browser's `EventSource` has: it takes what has arrived and stays
+ * connected. The assertion is about what arrives first, so a short window is enough.
+ */
+async function readStream(url: string, headers: Record<string, string>): Promise<CallResult> {
+  const controller = new AbortController();
+  const response = await fetch(url, { headers, signal: controller.signal });
+
+  if (!(response.headers.get("content-type") ?? "").includes("text/event-stream")) {
+    const text = await response.text();
+    return { status: response.status, body: text === "" ? {} : (JSON.parse(text) as Record<string, any>), events: [] };
+  }
+
+  const events: { event: string; data: Record<string, any> }[] = [];
+  const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+  const decoder = new TextDecoder();
+  const deadline = Date.now() + 1_500;
+  let buffer = "";
+
+  try {
+    while (Date.now() < deadline) {
+      const next = await Promise.race([
+        reader.read(),
+        new Promise<{ done: true; value: undefined }>((r) => setTimeout(() => r({ done: true, value: undefined }), 200)),
+      ]);
+      if (next.value !== undefined) buffer += decoder.decode(next.value, { stream: true });
+
+      const frames = buffer.split("\n\n");
+      buffer = frames.pop() ?? "";
+      for (const frame of frames) {
+        const event = /^event: (.+)$/m.exec(frame)?.[1];
+        const data = /^data: (.+)$/m.exec(frame)?.[1];
+        if (event === undefined || data === undefined) continue;
+        events.push({ event, data: JSON.parse(data) as Record<string, any> });
+      }
+      // Everything a mid-run connection replays arrives in one write; a pause with frames in
+      // hand means the replay is over and the rest is live.
+      if (events.length > 0 && (next.done === true || buffer === "")) break;
+    }
+  } finally {
+    controller.abort();
+    await reader.cancel().catch(() => {});
+  }
+
+  return { status: response.status, body: {}, events };
+}
+
+/** Wait for every job a set of responses started, so `llm_calls` counts finished work. */
+async function settleJobs(h: ApiHarness, results: CallResult[]): Promise<void> {
+  const jobIds = [...new Set(results.map((r) => r.body["job_id"]).filter((id): id is string => typeof id === "string"))];
+
+  for (let attempt = 0; attempt < 400 && jobIds.length > 0; attempt += 1) {
+    const records = await Promise.all(jobIds.map((id) => h.jobs.findById(id)));
+    if (records.every((job) => job !== null && (job.status === "done" || job.status === "failed"))) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
+const step14: StepDefinition = {
+  id: "14",
+  dir: "14-api-contract",
+  name: "API contract",
+  target: "apps/api → createApp() on the memory adapter, fake Clerk verifier",
+  kind: "integration",
+  adapter:
+    'Three fixtures the cases assume but do not ship. (1) `kit_base` with questions `q1`/`q2`: seeded as two must-have requirements of different kinds with one question each, so a technical regeneration leaves nothing uncovered and coverage has no gap to fill. (2) `https://x.example`, which `POST /kits` posts and the FakeFetcher has no mount for: mounted on the `sparse` fixture, so that case turns on idempotency rather than on how fast a fetch failed. (3) A 25ms latency on the fake provider: it otherwise answers in zero time, and the first regeneration then finishes before the second click has been parsed, which would make "concurrent" untestable rather than tested.',
+  run: async (cases, deps) => {
+    const outcomes: CaseOutcome[] = [];
+
+    for (const kase of cases) {
+      const runs = await repeatCase(1, async (c) => {
+        const h = await bootApi();
+        try {
+          return await deps.tracer.span(`case:${kase.id}`, async (span) => {
+            const input = kase.input;
+            const expected = kase.expected;
+
+            // ── the world this case runs in ──────────────────────────────────────────
+            const owner = typeof input["owner"] === "string" ? (input["owner"] as string) : null;
+            const version = typeof input["kit_version"] === "number" ? (input["kit_version"] as number) : 1;
+            if (owner !== null) await seedRecord(h, "kit_base", owner, version);
+
+            for (const seed of (input["kits"] ?? []) as { id: string; owner: string }[]) {
+              await seedRecord(h, seed.id, seed.owner, version);
+            }
+
+            const jobState = input["job_state"] as { completed_spans?: string[]; running?: string } | undefined;
+            if (jobState !== undefined) await seedJob(h, input, jobState);
+
+            const before = JSON.stringify(await h.kits.findById("kit_base"));
+
+            // ── the requests ─────────────────────────────────────────────────────────
+            const as = (input["as"] ?? null) as string | null;
+            const requests = (input["requests"] ?? [input["request"]]) as RawRequest[];
+            const results =
+              input["concurrent"] === true
+                ? await Promise.all(requests.map((r) => call(h, as, r)))
+                : await series(requests, (r) => call(h, as, r));
+
+            await settleJobs(h, results);
+            const last = results[results.length - 1] as CallResult;
+            span.setAll({ statuses: results.map((r) => r.status), llm_calls: h.llm.calls.length });
+
+            // ── the assertions the case names ────────────────────────────────────────
+            if (expected["status"] !== undefined) c.eq("status", last.status, expected["status"]);
+            if (expected["statuses"] !== undefined) c.eq("statuses", results.map((r) => r.status), expected["statuses"]);
+
+            if (expected["ids"] !== undefined) {
+              const ids = (last.body["kits"] ?? []).map((kit: { id: string }) => kit.id);
+              c.sameSet("owner-filtered ids", ids, expected["ids"] as string[]);
+            }
+
+            if (expected["same_job_id"] === true) {
+              const jobIds = results.map((r) => r.body["job_id"]);
+              c.ok("one job id for both requests", new Set(jobIds).size === 1 && jobIds[0] !== undefined, JSON.stringify(jobIds));
+            }
+
+            if (expected["same_kit_id"] === true) {
+              const kitIds = results.map((r) => r.body["kit_id"]);
+              c.ok("one kit id for both requests", new Set(kitIds).size === 1 && kitIds[0] !== undefined, JSON.stringify(kitIds));
+            }
+
+            if (typeof expected["second_response_flag"] === "string") {
+              const flag = expected["second_response_flag"] as string;
+              const second = results[1]?.body[flag];
+              c.ok(`second response carries ${flag}`, second === true, `got ${JSON.stringify(second)}`);
+            }
+
+            if (expected["llm_calls"] !== undefined) {
+              c.eq("llm calls", h.llm.calls.length, expected["llm_calls"]);
+            }
+
+            for (const field of (expected["body_has"] ?? []) as string[]) {
+              c.ok(`body has ${field}`, Object.prototype.hasOwnProperty.call(last.body, field), JSON.stringify(last.body));
+            }
+            if (expected["field"] !== undefined) c.eq("field", last.body["field"], expected["field"]);
+            if (expected["code"] !== undefined) c.eq("code", last.body["code"], expected["code"]);
+
+            if (expected["kit_unchanged"] === true) {
+              const after = JSON.stringify(await h.kits.findById("kit_base"));
+              c.ok("the kit is byte-identical afterwards", after === before, diffHint(before, after));
+            }
+
+            if (expected["first_events_are"] !== undefined) {
+              const steps = last.events.filter((e) => e.event === "step").map((e) => e.data["step"]);
+              c.eq("replayed steps, in order", steps.slice(0, (expected["first_events_are"] as string[]).length), expected["first_events_are"]);
+            }
+
+            return { statuses: results.map((r) => r.status), llmCalls: h.llm.calls.length, body: last.body };
+          });
+        } finally {
+          await h.close();
+        }
+      });
+      outcomes.push({ id: kase.id, runs });
+    }
+    return outcomes;
+  },
+};
+
+/**
+ * A job caught mid-run, as the case describes it.
+ *
+ * The spans are published through the same `JobSpanFeed` the runner writes to — there is no
+ * back door into the stream, which is the point: if a reload could only be served by a test-only
+ * path, a reload in the browser would be served by nothing.
+ */
+async function seedJob(
+  h: ApiHarness,
+  input: Record<string, any>,
+  state: { completed_spans?: string[]; running?: string },
+): Promise<void> {
+  const jobId = /\/jobs\/([^/]+)\/events/.exec(String(input["request"]?.path ?? ""))?.[1] ?? "job_1";
+
+  await h.jobs.create({
+    id: jobId,
+    userId: (input["as"] ?? "user-a") as string,
+    kitId: null,
+    label: "Senior Backend Engineer",
+    status: "running",
+    progress: null,
+    error: null,
+    createdAt: 0,
+    updatedAt: 0,
+  });
+
+  const spans: Span[] = [];
+  let at = 1_000;
+  for (const step of state.completed_spans ?? []) {
+    spans.push({ id: `s${spans.length + 1}`, parentId: null, step, startedAt: at, endedAt: at + 100, durationMs: 100, status: "ok", attrs: {} });
+    at += 100;
+  }
+  if (state.running !== undefined) {
+    spans.push({ id: `s${spans.length + 1}`, parentId: null, step: state.running, startedAt: at, endedAt: at, durationMs: 0, status: "running", attrs: {} });
+  }
+  h.feed.publish(jobId, spans);
+}
+
+/** Sequential, because "the second request" only means something if the first one finished. */
+async function series<T, R>(items: readonly T[], run: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = [];
+  for (const item of items) results.push(await run(item));
+  return results;
+}
+
+/** Enough of the difference to see what a supposedly rejected write actually changed. */
+function diffHint(before: string, after: string): string {
+  for (let i = 0; i < Math.min(before.length, after.length); i += 1) {
+    if (before[i] !== after[i]) return `diverges at ${i}: ...${before.slice(i, i + 80)} | ...${after.slice(i, i + 80)}`;
+  }
+  return `length ${before.length} → ${after.length}`;
+}
+
+const STEPS: StepDefinition[] = [step01, step02, step03, step04, step05, step06, step07, step08, step09, step10, step11, step12, step13, step14];
 
 // ── reporting ────────────────────────────────────────────────────────────────────────────
 
