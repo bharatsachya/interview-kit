@@ -1,0 +1,14 @@
+{
+  "//": [
+    "The web app's tests, type-checked separately from the app.",
+    "",
+    "`tsconfig.json` excludes `test` because `next build` type-checks the app against it and a",
+    "production build has no test runner to resolve. Splitting the tests out here keeps them",
+    "under `npm run typecheck` — scripts/typecheck.mjs picks up tsconfig.test.json alongside",
+    "tsconfig.json — so nothing stops being checked, it is just checked by the command that has",
+    "vitest available."
+  ],
+  "extends": "./tsconfig.json",
+  "include": ["test"],
+  "exclude": ["node_modules", ".next"]
+}

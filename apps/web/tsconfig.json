@@ -31,5 +31,13 @@
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules", ".next"]
+  "//exclude": [
+    "`test` is excluded here and type-checked by tsconfig.test.json instead. This is the one",
+    "workspace whose tsconfig is read by something other than `npm run typecheck`: `next build`",
+    "type-checks the app against it. Every other package can say `include: [src, test]` because",
+    "vitest is a root devDependency and only the typecheck script ever looks. A production build",
+    "resolves from apps/web, does not have the root test runner, and failed on Vercel with",
+    "`Cannot find module vitest` — a deployment broken by files that are not deployed."
+  ],
+  "exclude": ["node_modules", ".next", "test"]
 }

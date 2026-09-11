@@ -79,12 +79,23 @@ if (failed > 0) {
 }
 console.log(`\n${projects.length} project(s) type-check clean.`);
 
+/**
+ * Every workspace's tsconfig.json, plus a tsconfig.test.json where one exists.
+ *
+ * Only apps/web has the second. Its tsconfig.json is read by `next build` as well as by this
+ * script, so it cannot include `test` — a production build has no vitest to resolve. The tests
+ * are checked through the sibling config instead, which keeps them under this command rather
+ * than quietly unchecked.
+ */
 function workspacesIn(dir) {
   const root = join(repoRoot, dir);
   if (!existsSync(root)) return [];
   return readdirSync(root, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
-    .map((entry) => join(root, entry.name, "tsconfig.json"))
+    .flatMap((entry) => [
+      join(root, entry.name, "tsconfig.json"),
+      join(root, entry.name, "tsconfig.test.json"),
+    ])
     .filter(existsSync)
     .sort();
 }
