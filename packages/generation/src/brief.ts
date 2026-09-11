@@ -106,6 +106,7 @@ export async function generateBrief(input: BriefInput): Promise<BriefResult> {
       pagesUsed,
       gaps,
       edited: false,
+      origin: "generated",
     },
     hadHiringPage,
     sourcesUsed: sources.length,
@@ -124,6 +125,7 @@ function honestlyEmpty(company: string, gaps: string[]): CompanyBrief {
     pagesUsed: [],
     gaps,
     edited: false,
+    origin: "generated",
   };
 }
 

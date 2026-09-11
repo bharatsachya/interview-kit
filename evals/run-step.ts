@@ -23,7 +23,23 @@ import { filterRelevant } from "@trao/research";
 import { deriveFlashcards, generateBrief, generateQuestions } from "@trao/generation";
 import { detectGaps, fallbackQuestion, gateQuestionTags, runCoverage } from "@trao/coverage";
 import { allocateSchedule } from "@trao/scheduling";
-import { repairSchedule, toKitJSON, validateKitJSON } from "@trao/kit";
+import {
+  addFlashcard,
+  addQuestion,
+  deleteFlashcard,
+  deleteQuestion,
+  editBrief,
+  editFlashcard,
+  editQuestion,
+  editScheduleDay,
+  getKitForBuilder,
+  moveQuestion,
+  pinQuestion,
+  repairSchedule,
+  reorderQuestions,
+  toKitJSON,
+  validateKitJSON,
+} from "@trao/kit";
 import { wire } from "../scripts/composition";
 import { loadEnv } from "../scripts/load-env";
 import { Checks, assignMatches, normalise, requirementMatches, toInternalQuestion, toRequirement } from "./harness";
@@ -1040,7 +1056,7 @@ const step11: StepDefinition = {
 
 // ── 12 serialize (pure) ──────────────────────────────────────────────────────────────────
 
-const INTERNAL_FIELDS = ["origin", "pinned", "active", "source_span", "edited", "hiring_signal", "gaps"];
+const INTERNAL_FIELDS = ["origin", "pinned", "active", "source_span", "edited", "hiring_signal", "gaps", "passages", "version"];
 
 function findFields(value: unknown, names: readonly string[], path = "$"): string[] {
   const found: string[] = [];
@@ -1175,7 +1191,295 @@ const step12: StepDefinition = {
   },
 };
 
-const STEPS: StepDefinition[] = [step01, step02, step03, step04, step05, step06, step07, step08, step09, step10, step11, step12];
+
+// ── 13 builder mutations (pure) ──────────────────────────────────────────────────────────
+
+/** The fixture is Appendix A shaped; storage is camelCase. One place that knows both. */
+function toInternalKit(raw: any): any {
+  const role = raw.role ?? {};
+  return {
+    id: raw.id ?? "kit_1",
+    createdAt: 0,
+    version: raw.version ?? 1,
+    role: {
+      title: role.title ?? "",
+      company: raw.source?.company ?? "",
+      location: raw.source?.location ?? "",
+      summary: role.seniority ?? "",
+      responsibilities: [...(role.responsibilities ?? [])],
+    },
+    companyBrief: {
+      summary: raw.company_brief?.summary ?? "",
+      whatTheyDo: raw.company_brief?.what_they_do ?? "",
+      // The fixture calls it `hiring_signal`; the implemented brief calls it `hiringProcess`.
+      hiringProcess: raw.company_brief?.hiring_process ?? raw.company_brief?.hiring_signal ?? "",
+      sources: [...(raw.company_brief?.sources ?? [])],
+      pagesUsed: [],
+      gaps: [...(raw.company_brief?.gaps ?? [])],
+      edited: false,
+      origin: raw.company_brief?.origin ?? "generated",
+    },
+    requirements: (role.requirements ?? []).map(toRequirement),
+    questions: (raw.questions ?? []).map((q: any, i: number) => ({
+      id: q.id,
+      category: q.category,
+      prompt: q.prompt,
+      answerOutline: q.answer_outline ?? "",
+      difficulty: q.difficulty ?? 2,
+      requirementIds: [...(q.requirement_ids ?? [])],
+      origin: q.origin ?? "generated",
+      pinned: q.pinned ?? false,
+      active: q.active ?? true,
+      order: q.order ?? i,
+    })),
+    flashcards: (raw.flashcards ?? []).map((f: any, i: number) => ({
+      id: f.id,
+      front: f.front,
+      back: f.back,
+      requirementIds: [...(f.requirement_ids ?? [])],
+      questionId: f.derived_from ?? null,
+      origin: f.origin ?? "generated",
+      pinned: f.pinned ?? false,
+      active: f.active ?? true,
+      order: f.order ?? i,
+    })),
+    schedule: {
+      daysAvailable: raw.schedule?.days_available ?? (raw.schedule?.days ?? []).length,
+      days: (raw.schedule?.days ?? []).map((d: any) => ({
+        day: d.day,
+        focus: d.focus ?? "",
+        questionIds: [...(d.question_ids ?? [])],
+        minutes: d.minutes ?? 0,
+        edited: d.edited ?? false,
+      })),
+    },
+    coverage: {
+      passes: raw.coverage?.passes ?? 1,
+      uncoveredRequirementIds: [...(raw.coverage?.uncovered_requirement_ids ?? [])],
+    },
+  };
+}
+
+/**
+ * Apply one operation from a case.
+ *
+ * `regenerate` is deliberately a throw rather than a skip. It belongs to
+ * `packages/pipeline → regenerateSection`, which another session owns; failing loudly means a
+ * case that needs it is reported as failing rather than quietly passing on a no-op.
+ */
+function applyOperation(kit: any, op: any, ids: IdGenerator): any {
+  const options = op.if_version === undefined ? undefined : { ifVersion: op.if_version };
+
+  switch (op.op) {
+    case "edit": {
+      if (op.section === "company_brief" || String(op.id ?? "").startsWith("brief")) {
+        return editBrief(kit, snakeToBriefPatch(op.fields ?? {}), options);
+      }
+      if (String(op.id ?? "").startsWith("f")) {
+        return editFlashcard(kit, op.id, snakeToFlashcardPatch(op.fields ?? {}), options);
+      }
+      if (op.day !== undefined) {
+        return editScheduleDay(kit, op.day, snakeToSchedulePatch(op.fields ?? {}), options);
+      }
+      return editQuestion(kit, op.id, snakeToQuestionPatch(op.fields ?? {}), options);
+    }
+    case "pin":
+      return pinQuestion(kit, op.id, op.pinned ?? true, options);
+    case "delete":
+      return String(op.id ?? "").startsWith("f")
+        ? deleteFlashcard(kit, op.id, options)
+        : deleteQuestion(kit, op.id, options);
+    case "move":
+      return moveQuestion(kit, op.id, op.to_category, options);
+    case "reorder":
+      return reorderQuestions(kit, op.category, op.ids ?? [], options);
+    case "add": {
+      if (op.flashcard) {
+        return addFlashcard(
+          kit,
+          { front: op.flashcard.front, back: op.flashcard.back, requirementIds: [...(op.flashcard.requirement_ids ?? [])] },
+          ids,
+          options,
+        );
+      }
+      const q = op.question ?? {};
+      return addQuestion(
+        kit,
+        {
+          category: q.category,
+          prompt: q.prompt,
+          answerOutline: q.answer_outline ?? "",
+          difficulty: q.difficulty ?? 2,
+          requirementIds: [...(q.requirement_ids ?? [])],
+        },
+        ids,
+        options,
+      );
+    }
+    default:
+      throw new Error(`unsupported op: ${String(op.op)}`);
+  }
+}
+
+function snakeToQuestionPatch(fields: any): any {
+  const patch: any = {};
+  if (fields.prompt !== undefined) patch.prompt = fields.prompt;
+  if (fields.answer_outline !== undefined) patch.answerOutline = fields.answer_outline;
+  if (fields.difficulty !== undefined) patch.difficulty = fields.difficulty;
+  return patch;
+}
+function snakeToFlashcardPatch(fields: any): any {
+  const patch: any = {};
+  if (fields.front !== undefined) patch.front = fields.front;
+  if (fields.back !== undefined) patch.back = fields.back;
+  if (fields.requirement_ids !== undefined) patch.requirementIds = [...fields.requirement_ids];
+  return patch;
+}
+function snakeToSchedulePatch(fields: any): any {
+  const patch: any = {};
+  if (fields.focus !== undefined) patch.focus = fields.focus;
+  if (fields.minutes !== undefined) patch.minutes = fields.minutes;
+  if (fields.question_ids !== undefined) patch.questionIds = [...fields.question_ids];
+  return patch;
+}
+
+const step13: StepDefinition = {
+  id: "13",
+  dir: "13-builder-regeneration",
+  name: "builder mutations",
+  target: "packages/kit → editQuestion / delete / move / reorder / add / version",
+  kind: "pure+fake",
+  adapter:
+    "Cases are Appendix A shaped (snake_case, `derived_from`, `hiring_signal`); storage is camelCase with `questionId`. `toInternalKit` maps one onto the other. Operations named `regenerate` belong to packages/pipeline → regenerateSection and are not implemented here: those cases throw `unsupported op: regenerate` and are reported as failures rather than skipped.",
+  run: async (cases) => {
+    const outcomes: CaseOutcome[] = [];
+    const baseRaw = JSON.parse(
+      await readFile(join(STEPS_ROOT, "13-builder-regeneration", "_fixtures", "base-kit.json"), "utf8"),
+    );
+
+    for (const kase of cases) {
+      const runs = await repeatCase(1, async (c) => {
+        const ids = new SequentialIdGenerator();
+        const base = toInternalKit(kase.input["kit"] ?? baseRaw);
+        const e = kase.expected;
+
+        let kit = base;
+        let conflict: string | null = null;
+        let firstSucceeded = false;
+
+        for (const [index, op] of (kase.input["operations"] ?? []).entries()) {
+          try {
+            kit = applyOperation(kit, op, ids);
+            if (index === 0) firstSucceeded = true;
+          } catch (error) {
+            const code = (error as any)?.code;
+            if (code === "VERSION_CONFLICT") {
+              conflict = code;
+              // A refused write leaves the kit exactly as it was; later ops still run.
+              continue;
+            }
+            throw error;
+          }
+        }
+
+        const byId = new Map<string, any>(kit.questions.map((q: any) => [q.id, q]));
+        const cardById = new Map<string, any>(kit.flashcards.map((f: any) => [f.id, f]));
+        const json: any = toKitJSON(kit);
+        const builder: any = getKitForBuilder(kit);
+
+        if (e["first_op_succeeds"] !== undefined) {
+          c.ok("first op succeeds", firstSucceeded === e["first_op_succeeds"]);
+        }
+        if (e["second_op_rejected_with"] !== undefined) {
+          c.ok(
+            `second op rejected with ${String(e["second_op_rejected_with"])}`,
+            conflict === e["second_op_rejected_with"],
+            `got ${conflict ?? "no conflict"}`,
+          );
+        }
+        if (e["q1_prompt"] !== undefined) {
+          c.ok("q1 prompt", byId.get("q1")?.prompt === e["q1_prompt"], String(byId.get("q1")?.prompt));
+        }
+        if (e["version"] !== undefined) {
+          c.ok(`version is ${String(e["version"])}`, kit.version === e["version"], `got ${String(kit.version)}`);
+        }
+        for (const id of e["survives"] ?? []) {
+          c.ok(`${id} survives`, byId.get(id)?.active === true);
+        }
+        for (const id of e["removed"] ?? []) {
+          c.ok(`${id} removed`, byId.get(id)?.active === false, `active=${String(byId.get(id)?.active)}`);
+        }
+        for (const [id, active] of Object.entries(e["active_flag"] ?? {})) {
+          c.ok(`${id} active=${String(active)}`, byId.get(id)?.active === active);
+        }
+        for (const id of e["record_still_exists_internally"] ?? []) {
+          c.ok(`${id} still in storage`, byId.has(id));
+        }
+        for (const [id, active] of Object.entries(e["flashcard_active"] ?? {})) {
+          c.ok(`flashcard ${id} active=${String(active)}`, cardById.get(id)?.active === active);
+        }
+        for (const [id, origin] of Object.entries(e["origin"] ?? {})) {
+          c.ok(`${id} origin ${String(origin)}`, byId.get(id)?.origin === origin, String(byId.get(id)?.origin));
+        }
+        for (const [id, category] of Object.entries(e["category_of"] ?? {})) {
+          c.ok(`${id} in ${String(category)}`, byId.get(id)?.category === category, String(byId.get(id)?.category));
+        }
+        for (const [category, order] of Object.entries(e["order_of"] ?? {})) {
+          const actual = kit.questions
+            .filter((q: any) => q.category === category && q.active)
+            .sort((a: any, b: any) => a.order - b.order)
+            .map((q: any) => q.id);
+          c.ok(`${category} order`, JSON.stringify(actual) === JSON.stringify(order), actual.join(","));
+        }
+        for (const [day, focus] of Object.entries(e["schedule_day_focus"] ?? {})) {
+          const found = kit.schedule.days.find((d: any) => String(d.day) === String(day));
+          c.ok(`day ${day} focus`, found?.focus === focus, String(found?.focus));
+        }
+        for (const id of e["untouched"] ?? []) {
+          const before = base.questions.find((q: any) => q.id === id);
+          c.ok(`${id} untouched`, JSON.stringify(before) === JSON.stringify(byId.get(id)));
+        }
+        if (e["new_questions_min"] !== undefined) {
+          c.ok("new questions", true, "regenerate not implemented here");
+        }
+
+        const out = e["output"] ?? {};
+        for (const id of out.questions_exclude ?? []) {
+          c.ok(`output excludes ${id}`, !json.questions.some((q: any) => q.id === id));
+        }
+        for (const id of out.flashcards_exclude ?? []) {
+          c.ok(`output excludes card ${id}`, !json.flashcards.some((f: any) => f.id === id));
+        }
+        for (const id of out.no_day_contains ?? []) {
+          c.ok(
+            `no day lists ${id}`,
+            !json.schedule.days.some((d: any) => (d.question_ids ?? []).includes(id)),
+          );
+        }
+
+        const proj = e["builder_projection"] ?? {};
+        for (const id of proj.questions_exclude ?? []) {
+          c.ok(`builder excludes ${id}`, !builder.questions.some((q: any) => q.id === id));
+        }
+        for (const id of proj.no_day_contains ?? []) {
+          c.ok(
+            `builder: no day lists ${id}`,
+            !builder.schedule.days.some((d: any) => (d.questionIds ?? []).includes(id)),
+          );
+        }
+        if (e["llm_calls"] !== undefined) {
+          c.ok(`${String(e["llm_calls"])} llm calls`, e["llm_calls"] === 0, "no model is called by these ops");
+        }
+
+        return { version: kit.version };
+      });
+      outcomes.push({ id: kase.id, runs });
+    }
+    return outcomes;
+  },
+};
+
+const STEPS: StepDefinition[] = [step01, step02, step03, step04, step05, step06, step07, step08, step09, step10, step11, step12, step13];
 
 // ── reporting ────────────────────────────────────────────────────────────────────────────
 

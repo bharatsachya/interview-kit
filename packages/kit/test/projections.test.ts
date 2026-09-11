@@ -140,3 +140,28 @@ describe("archive → regenerate → serialize", () => {
     expect(new Set(scheduled).size).toBe(scheduled.length);
   });
 });
+
+describe("internal-only fields", () => {
+  it("never emits passages or version, however full they are", () => {
+    const kit = makeKit({
+      version: 42,
+      companyBrief: {
+        ...makeKit().companyBrief,
+        passages: [{ url: "https://x.test/", title: "X", text: "the page body the brief was written from" }],
+      },
+    });
+
+    const json = JSON.stringify(toKitJSON(kit));
+    // Both exist so a regeneration has something real to work from. Neither is Appendix A's.
+    expect(json).not.toContain("passages");
+    expect(json).not.toContain("the page body");
+    expect(json).not.toContain('"version"');
+  });
+
+  it("keeps passages on the builder projection, which is storage-shaped", () => {
+    const kit = makeKit({
+      companyBrief: { ...makeKit().companyBrief, passages: [{ url: "u", title: "t", text: "body" }] },
+    });
+    expect(getKitForBuilder(kit).companyBrief.passages?.[0]?.text).toBe("body");
+  });
+});

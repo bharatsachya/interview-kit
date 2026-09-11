@@ -108,6 +108,25 @@ export interface CompanyBrief {
   /** Pages actually fetched and used in the prompt. */
   pagesUsed: string[];
   /**
+   * The cleaned page text the brief was written from. Internal only — never in Appendix A.
+   *
+   * Kept because regenerating the brief has to re-run generation against the passages the first
+   * run read, and `pagesUsed` is a list of bare URLs. Prompting a model with URLs and no page
+   * bodies is exactly the fabrication `generateBrief` exists to prevent: it would have nothing
+   * to write from and would write anyway.
+   *
+   * Optional so kits stored before this field existed still load; a regeneration that finds it
+   * absent falls back to `pagesUsed` and records the degradation rather than inventing text.
+   */
+  passages?: { url: string; title: string; text: string }[];
+  /**
+   * Where the brief's words came from, on the same scale as a question's.
+   *
+   * `edited` below is kept because it is what the pipeline sets, and because "this was touched"
+   * and "this is the user's now" answer different questions. A regeneration reads `origin`.
+   */
+  origin: Origin;
+  /**
    * What could not be found, in plain words. An extension to Appendix A: the degradation
    * ladder requires a missing search provider or an unreachable site to be *recorded*, and a
    * brief that silently omits a section is indistinguishable from one that had nothing to say.
@@ -141,6 +160,18 @@ export interface CoverageReport {
 export interface InternalKit {
   id: string;
   createdAt: number;
+  /**
+   * Bumped by exactly one on every builder mutation.
+   *
+   * The builder is a set of small writes against a document two tabs can hold at once. Without a
+   * version, the second tab's save silently reinstates whatever the first tab deleted — the user
+   * sees their own edit undo itself and has no way to know why. Callers that pass `ifVersion`
+   * get a `VersionConflictError` carrying the current number instead, and can refetch.
+   *
+   * Not a timestamp: two writes inside the same millisecond are ordinary, and a counter cannot
+   * tie. Not a hash: the point is to be comparable, not to detect what changed.
+   */
+  version: number;
   role: RoleSummary;
   companyBrief: CompanyBrief;
   requirements: Requirement[];

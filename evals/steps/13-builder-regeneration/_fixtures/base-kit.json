@@ -1,0 +1,37 @@
+{
+  "id": "kit_base",
+  "version": 7,
+  "source": { "company": "Northwind", "company_url": "https://northwind.example", "role": "Senior Backend Engineer", "location": "Berlin", "jd_chars": 1400, "researched_at": "2026-09-11T10:00:00Z", "pages_used": ["https://northwind.example/"] },
+  "company_brief": { "summary": "Northwind builds routing software for parcel networks.", "what_they_do": "Routing software.", "sources": ["https://northwind.example/"], "hiring_signal": "none", "origin": "generated" },
+  "role": { "title": "Senior Backend Engineer", "seniority": "senior", "responsibilities": ["Own routing services"], "requirements": [
+    { "id": "r1", "text": "5+ years in Go or Java", "kind": "technical", "priority": "must", "source_span": "5+ years building backend services in Go or Java" },
+    { "id": "r2", "text": "PostgreSQL query tuning", "kind": "technical", "priority": "must", "source_span": "Production experience with PostgreSQL, including query tuning" },
+    { "id": "r3", "text": "written communication", "kind": "behavioural", "priority": "must", "source_span": "Strong written communication; most design work happens in RFCs" },
+    { "id": "r4", "text": "Kafka or similar", "kind": "technical", "priority": "nice", "source_span": "Familiarity with Kafka or a similar streaming platform" }
+  ] },
+  "questions": [
+    { "id": "q1", "requirement_ids": ["r1"], "category": "technical", "prompt": "Describe a Go service you own and what you'd change about its structure.", "answer_outline": "...", "difficulty": 2, "origin": "generated", "pinned": false, "active": true, "order": 0 },
+    { "id": "q2", "requirement_ids": ["r2"], "category": "technical", "prompt": "Walk through a Postgres query you tuned. What did EXPLAIN tell you?", "answer_outline": "...", "difficulty": 2, "origin": "generated", "pinned": false, "active": true, "order": 1 },
+    { "id": "q3", "requirement_ids": ["r1"], "category": "technical", "prompt": "I rewrote this one myself: tell me about a Go memory leak you tracked down.", "answer_outline": "my own outline", "difficulty": 3, "origin": "edited", "pinned": false, "active": true, "order": 2 },
+    { "id": "q4", "requirement_ids": ["r4"], "category": "technical", "prompt": "How would you introduce Kafka to a team that has never run it?", "answer_outline": "...", "difficulty": 2, "origin": "generated", "pinned": true, "active": true, "order": 3 },
+    { "id": "q5", "requirement_ids": ["r3"], "category": "behavioural", "prompt": "Describe an RFC you wrote that changed a decision.", "answer_outline": "...", "difficulty": 2, "origin": "generated", "pinned": false, "active": true, "order": 0 },
+    { "id": "q6", "requirement_ids": [], "category": "system-design", "prompt": "Design a routing service for 10k parcels/minute with a 200ms budget.", "answer_outline": "...", "difficulty": 3, "origin": "generated", "pinned": false, "active": true, "order": 0 },
+    { "id": "q7", "requirement_ids": [], "category": "company-fit", "prompt": "Why routing software, and why Northwind?", "answer_outline": "...", "difficulty": 1, "origin": "manual", "pinned": false, "active": true, "order": 0 },
+    { "id": "q8", "requirement_ids": ["r2"], "category": "technical", "prompt": "Old deleted question about Postgres.", "answer_outline": "...", "difficulty": 1, "origin": "generated", "pinned": false, "active": false, "order": 4 }
+  ],
+  "flashcards": [
+    { "id": "f1", "front": "Describe a Go service you own and what you'd change about its structure.", "back": "...", "requirement_ids": ["r1"], "derived_from": "q1", "origin": "generated", "active": true },
+    { "id": "f2", "front": "Walk through a Postgres query you tuned. What did EXPLAIN tell you?", "back": "...", "requirement_ids": ["r2"], "derived_from": "q2", "origin": "generated", "active": true },
+    { "id": "f3", "front": "Go memory leak — my own wording", "back": "my own back", "requirement_ids": ["r1"], "derived_from": "q3", "origin": "edited", "active": true },
+    { "id": "f4", "front": "How would you introduce Kafka to a team that has never run it?", "back": "...", "requirement_ids": ["r4"], "derived_from": "q4", "origin": "generated", "active": true },
+    { "id": "f5", "front": "Describe an RFC you wrote that changed a decision.", "back": "...", "requirement_ids": ["r3"], "derived_from": "q5", "origin": "generated", "active": true },
+    { "id": "f6", "front": "Design a routing service for 10k parcels/minute with a 200ms budget.", "back": "...", "requirement_ids": [], "derived_from": "q6", "origin": "generated", "active": true },
+    { "id": "f7", "front": "Why routing software, and why Northwind?", "back": "...", "requirement_ids": [], "derived_from": "q7", "origin": "manual", "active": true }
+  ],
+  "schedule": { "days_available": 3, "days": [
+    { "day": 1, "focus": "Go and Postgres", "question_ids": ["q1", "q3", "q6"], "minutes": 80, "edited": false },
+    { "day": 2, "focus": "I renamed this day", "question_ids": ["q2", "q5"], "minutes": 40, "edited": true },
+    { "day": 3, "focus": "Kafka and fit", "question_ids": ["q4", "q7"], "minutes": 35, "edited": false }
+  ] },
+  "coverage": { "uncovered_requirement_ids": [], "passes": 2 }
+}

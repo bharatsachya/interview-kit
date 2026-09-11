@@ -16,8 +16,9 @@ function kit(company: string, requirements: Requirement[]): InternalKit {
   return {
     id: `kit_${company}`,
     createdAt: 0,
+    version: 1,
     role: { title: "Engineer", company, location: "", summary: "", responsibilities: [] },
-    companyBrief: { summary: "", whatTheyDo: "", hiringProcess: "", sources: [], pagesUsed: [], gaps: [], edited: false },
+    companyBrief: { summary: "", whatTheyDo: "", hiringProcess: "", sources: [], pagesUsed: [], gaps: [], edited: false, origin: "generated" },
     requirements,
     questions: [],
     flashcards: [],

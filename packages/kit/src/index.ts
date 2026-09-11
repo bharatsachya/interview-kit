@@ -28,17 +28,32 @@ export {
 } from "./appendix-b";
 
 export {
+  addFlashcard,
   addManualQuestion,
+  addQuestion,
   archiveFlashcard,
   archiveQuestion,
+  deleteFlashcard,
+  deleteQuestion,
+  editBrief,
   editFlashcard,
   editQuestion,
+  editScheduleDay,
+  moveQuestion,
+  pinQuestion,
   regenerateCategory,
+  reorderQuestions,
   setQuestionPinned,
+  type BriefPatch,
+  type FlashcardDraft,
   type FlashcardPatch,
   type NewQuestion,
+  type QuestionDraft,
   type QuestionPatch,
+  type SchedulePatch,
 } from "./edits";
+
+export { VersionConflictError, type MutationOptions } from "./version";
 
 export { MINUTES_BY_DIFFICULTY, minutesForDifficulty, minutesForQuestions } from "./minutes";
 

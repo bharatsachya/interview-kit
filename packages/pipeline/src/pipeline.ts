@@ -361,6 +361,7 @@ async function run(
   const kit: InternalKit = {
     id: deps.ids.next("kit_"),
     createdAt: deps.clock.now(),
+    version: 1,
     role: extraction.role,
     companyBrief: brief,
     requirements,
@@ -432,6 +433,7 @@ function fallbackBrief(company: string, crawl: CrawlResult | null, gaps: string[
     pagesUsed: crawl?.pages.map((p) => p.url) ?? [],
     gaps: [...gaps, "The company brief could not be generated."],
     edited: false,
+    origin: "generated",
   };
 }
 

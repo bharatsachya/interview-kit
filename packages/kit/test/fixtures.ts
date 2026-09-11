@@ -66,6 +66,7 @@ export function makeKit(overrides: Partial<InternalKit> = {}): InternalKit {
   return {
     id: "kit_1",
     createdAt: 1_700_000_000_000,
+    version: 1,
     role: {
       title: "Senior Backend Engineer",
       company: "Acme",
@@ -81,6 +82,7 @@ export function makeKit(overrides: Partial<InternalKit> = {}): InternalKit {
       pagesUsed: ["https://acme.test/", "https://acme.test/handbook/hiring"],
       gaps: [],
       edited: false,
+      origin: "generated",
     },
     requirements: REQUIREMENTS,
     questions,

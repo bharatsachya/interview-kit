@@ -1,0 +1,224 @@
+[
+  {
+    "id": "regen-technical-keeps-edited-pinned-manual",
+    "input": {
+      "operations": [ { "op": "regenerate", "section": "questions", "category": "technical" } ],
+      "fake_responses": [
+        { "questions": [
+          { "prompt": "New generated Go question about goroutine leaks.", "answer_outline": "...", "difficulty": 2, "requirement_ids": ["r1"] },
+          { "prompt": "New generated Postgres question about index bloat.", "answer_outline": "...", "difficulty": 2, "requirement_ids": ["r2"] }
+        ] }
+      ]
+    },
+    "expected": {
+      "removed": ["q1", "q2"],
+      "survives": ["q3", "q4", "q5", "q6", "q7"],
+      "origin": { "q3": "edited", "q4": "generated", "q7": "manual" },
+      "untouched": ["q3", "q4", "q5", "q6", "q7"],
+      "new_questions_min": 2,
+      "category_of_new": "technical",
+      "ids_never_reused": ["q1", "q2", "q8"],
+      "llm_calls": 1,
+      "version": 8,
+      "note": "q1 and q2 are unpinned generated → archived. q3 edited, q4 pinned → survive. Nothing in other categories moves. q8 stays archived. New questions get fresh ids."
+    }
+  },
+  {
+    "id": "regen-technical-does-not-touch-other-sections",
+    "input": {
+      "operations": [ { "op": "regenerate", "section": "questions", "category": "technical" } ],
+      "fake_responses": [ { "questions": [ { "prompt": "Replacement Go question.", "answer_outline": "...", "difficulty": 2, "requirement_ids": ["r1"] } ] } ]
+    },
+    "expected": {
+      "untouched_sections": ["company_brief", "role"],
+      "untouched": ["q5", "q6", "q7", "f5", "f6", "f7"],
+      "schedule_day_focus": { "2": "I renamed this day" },
+      "schedule_day_2_question_ids_unchanged": true,
+      "note": "The brief, the role, behavioural/system-design/company-fit questions, their flashcards, and the user's edited day 2 are all byte-identical afterwards."
+    }
+  },
+  {
+    "id": "regen-technical-refills-newly-uncovered-must",
+    "input": {
+      "operations": [ { "op": "regenerate", "section": "questions", "category": "technical" } ],
+      "fake_responses": [
+        { "questions": [ { "prompt": "Only a Go question this time.", "answer_outline": "...", "difficulty": 2, "requirement_ids": ["r1"] } ] },
+        { "prompt": "Gap-fill: describe a Postgres query plan you had to fix.", "answer_outline": "...", "difficulty": 2 }
+      ]
+    },
+    "expected": {
+      "removed": ["q1", "q2"],
+      "must_covered_after": ["r1", "r2", "r3"],
+      "llm_calls": 2,
+      "coverage_passes_min": 2,
+      "gap_fill_question_requirement_ids": ["r2"],
+      "note": "Regenerating technical dropped q2, the only r2 question, and the fake returned nothing for r2. Coverage must run again after a category regen and fill r2. The gap-fill call gets ONE requirement and the caller assigns r2."
+    }
+  },
+  {
+    "id": "regen-brief-touches-nothing-else",
+    "input": {
+      "operations": [ { "op": "regenerate", "section": "company_brief" } ],
+      "fake_responses": [ { "summary": "New summary.", "what_they_do": "New what they do.", "hiring_process": "" } ]
+    },
+    "expected": {
+      "brief_summary": "New summary.",
+      "untouched": ["q1", "q2", "q3", "q4", "q5", "q6", "q7", "q8", "f1", "f2", "f3", "f4", "f5", "f6", "f7"],
+      "schedule_unchanged": true,
+      "llm_calls": 1,
+      "version": 8
+    }
+  },
+  {
+    "id": "regen-schedule-keeps-edited-day",
+    "input": {
+      "operations": [ { "op": "regenerate", "section": "schedule" } ],
+      "fake_responses": []
+    },
+    "expected": {
+      "llm_calls": 0,
+      "schedule_day_focus": { "2": "I renamed this day" },
+      "schedule_day_2_question_ids_unchanged": true,
+      "days_1_and_3_recomputed": true,
+      "all_active_questions_scheduled_exactly_once": true,
+      "untouched": ["q1", "q2", "q3", "q4", "q5", "q6", "q7"],
+      "note": "Schedule regen is pure — zero LLM calls. Day 2 was edited by the user and must survive with its focus and contents. Days 1 and 3 are reallocated from whatever isn't on day 2."
+    }
+  },
+  {
+    "id": "edit-then-regen-survives",
+    "input": {
+      "operations": [
+        { "op": "edit", "id": "q1", "fields": { "prompt": "I changed this Go question by hand.", "answer_outline": "and its outline" } },
+        { "op": "regenerate", "section": "questions", "category": "technical" }
+      ],
+      "fake_responses": [ { "questions": [ { "prompt": "Fresh generated question.", "answer_outline": "...", "difficulty": 2, "requirement_ids": ["r2"] } ] } ]
+    },
+    "expected": {
+      "survives": ["q1"],
+      "origin": { "q1": "edited" },
+      "q1_prompt": "I changed this Go question by hand.",
+      "removed": ["q2"],
+      "version": 9,
+      "note": "The edit flips q1 to origin=edited. The regen must then leave it alone. This is the single sentence the brief says it will look at most closely."
+    }
+  },
+  {
+    "id": "pin-then-regen-survives",
+    "input": {
+      "operations": [
+        { "op": "pin", "id": "q2", "pinned": true },
+        { "op": "regenerate", "section": "questions", "category": "technical" }
+      ],
+      "fake_responses": [ { "questions": [ { "prompt": "Fresh generated question.", "answer_outline": "...", "difficulty": 2, "requirement_ids": ["r1"] } ] } ]
+    },
+    "expected": {
+      "survives": ["q2"],
+      "origin": { "q2": "generated" },
+      "pinned": { "q2": true },
+      "removed": ["q1"],
+      "note": "Pinned is separate from edited: q2's text is untouched and still 'generated', but it survives because the user asked it to."
+    }
+  },
+  {
+    "id": "delete-archives-and-drops-from-schedule",
+    "input": {
+      "operations": [ { "op": "delete", "id": "q1" } ],
+      "fake_responses": []
+    },
+    "expected": {
+      "removed": ["q1"],
+      "active_flag": { "q1": false },
+      "record_still_exists_internally": ["q1"],
+      "flashcard_active": { "f1": false },
+      "output": { "questions_exclude": ["q1"], "flashcards_exclude": ["f1"], "no_day_contains": ["q1"] },
+      "builder_projection": { "questions_exclude": ["q1"], "no_day_contains": ["q1"] },
+      "llm_calls": 0,
+      "note": "Soft delete. Internally q1 and f1 exist with active=false. Both projections hide them and day 1 no longer lists q1. Its derived flashcard goes with it."
+    }
+  },
+  {
+    "id": "move-between-categories-then-regen-both",
+    "input": {
+      "operations": [
+        { "op": "move", "id": "q2", "to_category": "system-design" },
+        { "op": "regenerate", "section": "questions", "category": "technical" },
+        { "op": "regenerate", "section": "questions", "category": "system-design" }
+      ],
+      "fake_responses": [
+        { "questions": [ { "prompt": "New technical.", "answer_outline": "...", "difficulty": 2, "requirement_ids": ["r1"] } ] },
+        { "questions": [ { "prompt": "New system design.", "answer_outline": "...", "difficulty": 3, "requirement_ids": [] } ] }
+      ]
+    },
+    "expected": {
+      "category_of": { "q2": "system-design" },
+      "origin": { "q2": "edited" },
+      "survives": ["q2"],
+      "removed": ["q1", "q6"],
+      "requirement_ids_of": { "q2": ["r2"] },
+      "note": "Moving is a user edit → origin becomes 'edited'. q2 then survives a regen of its OLD category (it's no longer there) and of its NEW category (it's edited). Its requirement_ids travel with it."
+    }
+  },
+  {
+    "id": "reorder-persists-through-regen",
+    "input": {
+      "operations": [
+        { "op": "reorder", "category": "technical", "ids": ["q4", "q3", "q1", "q2"] },
+        { "op": "regenerate", "section": "questions", "category": "technical" }
+      ],
+      "fake_responses": [ { "questions": [ { "prompt": "New A.", "answer_outline": "...", "difficulty": 2, "requirement_ids": ["r1"] }, { "prompt": "New B.", "answer_outline": "...", "difficulty": 2, "requirement_ids": ["r2"] } ] } ]
+    },
+    "expected": {
+      "order_of": { "technical": ["q4", "q3", "<new1>", "<new2>"] },
+      "note": "After reorder, q4 then q3 lead. Regen archives q1 and q2, keeps q4 and q3 in their user-chosen relative order, and appends new questions after the survivors — never in front of them."
+    }
+  },
+  {
+    "id": "add-manual-then-regen-and-schedule-places-it",
+    "input": {
+      "operations": [
+        { "op": "add", "question": { "category": "behavioural", "prompt": "My own behavioural question.", "answer_outline": "mine", "difficulty": 2, "requirement_ids": ["r3"] } },
+        { "op": "regenerate", "section": "questions", "category": "behavioural" }
+      ],
+      "fake_responses": [ { "questions": [ { "prompt": "New behavioural.", "answer_outline": "...", "difficulty": 2, "requirement_ids": ["r3"] } ] } ]
+    },
+    "expected": {
+      "added_origin": "manual",
+      "added_survives_regen": true,
+      "removed": ["q5"],
+      "added_has_flashcard": true,
+      "output": { "added_scheduled_somewhere": true },
+      "note": "A manual question gets a derived flashcard, survives regen of its category, and toKitJSON's repair places it on an unedited day."
+    }
+  },
+  {
+    "id": "edited-flashcard-survives-question-regen",
+    "input": {
+      "operations": [ { "op": "regenerate", "section": "questions", "category": "technical" } ],
+      "fake_responses": [ { "questions": [ { "prompt": "New Go question.", "answer_outline": "...", "difficulty": 2, "requirement_ids": ["r1"] } ] } ]
+    },
+    "expected": {
+      "flashcard_survives": ["f3", "f4"],
+      "flashcard_removed": ["f1", "f2"],
+      "new_flashcards_derived_for_new_questions": true,
+      "note": "f3 is edited → survives. f4 derives from pinned q4 → survives. f1/f2 derive from archived q1/q2 → archived with them. New questions get new derived cards."
+    }
+  },
+  {
+    "id": "stale-version-rejected",
+    "input": {
+      "operations": [
+        { "op": "edit", "id": "q1", "fields": { "prompt": "first edit" }, "if_version": 7 },
+        { "op": "edit", "id": "q1", "fields": { "prompt": "second edit from a stale tab" }, "if_version": 7 }
+      ],
+      "fake_responses": []
+    },
+    "expected": {
+      "first_op_succeeds": true,
+      "second_op_rejected_with": "VERSION_CONFLICT",
+      "q1_prompt": "first edit",
+      "version": 8,
+      "note": "Two tabs, one kit. The second write carries the old version and must be refused with a structured error the UI can show, not silently win."
+    }
+  }
+]
