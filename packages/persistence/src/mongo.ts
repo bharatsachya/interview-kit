@@ -72,6 +72,22 @@ function strip<T extends { id?: string }>(document: Stored<unknown> | null): T |
   return { ...rest, id: _id } as T;
 }
 
+/**
+ * A stored job, read back as a whole `JobRecord`.
+ *
+ * `strip` is a cast, and a cast is a promise the database never made: a document written before
+ * a field existed simply does not have it. `request` was added for retry, so every job recorded
+ * before that reads back with it missing — the type said `| null` while Mongo handed back
+ * `undefined`, a `=== null` guard let it through, and the next line dereferenced it.
+ *
+ * Defaults belong here rather than at each use. There is one place that knows a document may be
+ * older than the type describing it, and it is the place that reads documents.
+ */
+function readJob(document: Stored<unknown> | null): JobRecord | null {
+  const job = strip<JobRecord>(document);
+  return job === null ? null : { ...job, request: job.request ?? null };
+}
+
 export class MongoKitStore<TKit = unknown> implements KitStore<TKit> {
   readonly #collection: Collection<Stored<Record<string, unknown>>>;
 
@@ -114,12 +130,12 @@ export class MongoJobStore implements JobStore {
   }
 
   async findById(id: string): Promise<JobRecord | null> {
-    return strip<JobRecord>(await this.#collection.findOne({ _id: id }));
+    return readJob(await this.#collection.findOne({ _id: id }));
   }
 
   async listByUser(userId: string, limit = 50): Promise<JobRecord[]> {
     const documents = await this.#collection.find({ userId }).sort({ createdAt: -1 }).limit(limit).toArray();
-    return documents.map((document) => strip<JobRecord>(document)).filter((j): j is JobRecord => j !== null);
+    return documents.map((document) => readJob(document)).filter((j): j is JobRecord => j !== null);
   }
 
   async updateProgress(id: string, progress: JobProgress): Promise<void> {

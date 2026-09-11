@@ -648,6 +648,25 @@ describe("retrying a failed run", () => {
     expect((await h.jobs.findById("job_dead"))?.status).toBe("failed");
   });
 
+  it("survives a record written before the posting was stored at all", async () => {
+    // Not the same as `request: null`. A document from before the field existed comes back with
+    // it missing, and `undefined` walks through a `=== null` guard — which is how this returned
+    // a 500 in production instead of a 404, on the very runs a user would most want to retry.
+    const ancient = {
+      id: "job_ancient", userId: "alice", kitId: null, label: "x", status: "failed" as const,
+      progress: null, error: { code: "INTERNAL", message: "x" }, createdAt: 0, updatedAt: 0,
+    };
+    await h.jobs.create(ancient as unknown as Parameters<typeof h.jobs.create>[0]);
+
+    const response = await request(h.app).post("/jobs/job_ancient/retry").set("authorization", "Bearer alice");
+    expect(response.status).toBe(404);
+
+    // And it must not be advertised as retryable, or the button reappears and 404s on click.
+    const list = await request(h.app).get("/jobs").set("authorization", "Bearer alice");
+    const row = (list.body as { jobs: { id: string; retryable: boolean }[] }).jobs.find((j) => j.id === "job_ancient");
+    expect(row?.retryable).toBe(false);
+  });
+
   it("refuses a run that stored no posting, rather than starting an empty one", async () => {
     await h.jobs.create({
       id: "job_old", userId: "alice", kitId: null, label: "x", status: "failed",

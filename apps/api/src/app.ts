@@ -130,7 +130,7 @@ export function createApp(options: ApiOptions): express.Express {
           error: job.error,
           // Whether this one can be run again, rather than leaving the client to infer it from
           // a status and be wrong about the records written before the posting was stored.
-          retryable: job.status === "failed" && job.request !== null,
+          retryable: job.status === "failed" && (job.request ?? null) !== null,
         })),
       } satisfies JobListView);
     }),
@@ -159,7 +159,7 @@ export function createApp(options: ApiOptions): express.Express {
 
       const { request: jobRequest, ...rest } = job;
       res.set("cache-control", "no-store").json({
-        job: { ...rest, retryable: job.status === "failed" && jobRequest !== null },
+        job: { ...rest, retryable: job.status === "failed" && (jobRequest ?? null) !== null },
         spans: options.runner.spansFor(job.id),
         // The in-process label while the job is running, the stored one otherwise — a job
         // watched after a restart still has a name, it just no longer has live spans.

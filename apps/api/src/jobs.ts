@@ -136,13 +136,18 @@ export class JobRunner {
   async retry(userId: string, jobId: string): Promise<StartedJob | null> {
     const job = await this.options.jobs.findById(jobId);
     if (job === null || job.userId !== userId) return null;
-    if (job.status !== "failed" || job.request === null) return null;
+
+    // `?? null` rather than `=== null`, belt to the store's braces. A job recorded before
+    // `request` existed reads back without the field, and a strict null check waves `undefined`
+    // straight through to be dereferenced — which is exactly what it did.
+    const request = job.request ?? null;
+    if (job.status !== "failed" || request === null) return null;
 
     return this.start(userId, {
       id: jobId,
-      jd: job.request.jd,
-      company_url: job.request.companyUrl,
-      days: job.request.days,
+      jd: request.jd,
+      company_url: request.companyUrl,
+      days: request.days,
     });
   }
 
