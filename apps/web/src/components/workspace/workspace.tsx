@@ -72,6 +72,8 @@ export function Workspace() {
   // Finished runs, keyed by job. The spans are what the trace and the per-output build times are
   // read from — a kit opened from history has none, and both simply say less rather than guess.
   const [runs, setRuns] = useState<Record<string, Run>>({});
+  /** Jobs that ended without a kit. A run is only still going if it is in neither collection. */
+  const [failedJobs, setFailedJobs] = useState<ReadonlySet<string>>(() => new Set());
   // The ask and the moment it was made. The time is captured at submit rather than derived from
   // the job later: what the conversation shows is when *you* sent it, which is not the same as
   // when the server got round to it.
@@ -169,13 +171,24 @@ export function Workspace() {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [panelOpen, panelExpanded, closePanel]);
 
-  const selectKit = useCallback((kitId: string) => {
-    setStaleKitId(null);
-    setActiveKitId(kitId);
-    setComparing(false);
-    setPanelOpen(true);
-    setHistoryOverride((open) => (open === true ? null : open));
-  }, []);
+  const selectKit = useCallback(
+    (kitId: string) => {
+      setStaleKitId(null);
+      setActiveKitId(kitId);
+      setComparing(false);
+      setPanelOpen(true);
+      setHistoryOverride((open) => (open === true ? null : open));
+      // Drop any run that is not this kit's.
+      //
+      // The conversation renders whatever is in `jobIds` above whatever kit is open, and those
+      // two were allowed to drift apart: picking a kit out of history left the previous run's
+      // turn in place, so a failed run's "No kit could be produced" sat directly above a kit
+      // that had very much been produced. The run that made *this* kit stays, because its trace
+      // belongs with it.
+      setJobIds((ids) => ids.filter((id) => runs[id]?.kitId === kitId));
+    },
+    [runs],
+  );
 
   const openOutput = useCallback((id: KitOutputId) => {
     setActiveOutput(id);
@@ -229,8 +242,13 @@ export function Workspace() {
    * The refetch is the whole point: the job has been in Mongo since it was accepted, so the row
    * exists server-side already, and the rail simply has not asked since. Without this the
    * failure stays on screen and out of the list until a reload.
+   *
+   * The id is recorded too. "Running" was defined as "in `jobIds` and not yet in `runs`", and
+   * `runs` only ever gains an entry when a kit is produced — so a failed run satisfied that
+   * definition forever and the header claimed to be running a job that had stopped minutes ago.
    */
-  const onRunFailed = useCallback(() => {
+  const onRunFailed = useCallback((jobId: string) => {
+    setFailedJobs((previous) => (previous.has(jobId) ? previous : new Set(previous).add(jobId)));
     setKitsLoading(true);
     setHistoryNonce((nonce) => nonce + 1);
   }, []);
@@ -296,7 +314,7 @@ export function Workspace() {
   const kits = kitsOf(history);
   const activeKitSummary = kits.find((entry) => entry.id === activeKitId) ?? null;
   const activeRun = Object.values(runs).find((run) => run.kitId === activeKitId) ?? null;
-  const running = jobIds.some((jobId) => runs[jobId] === undefined);
+  const running = jobIds.some((jobId) => runs[jobId] === undefined && !failedJobs.has(jobId));
   const sidebarSized = hydrated && isDesktop;
 
   const spans = activeRun?.spans ?? [];
