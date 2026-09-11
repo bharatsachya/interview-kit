@@ -17,6 +17,13 @@ tmp/
 *.log
 .cache/
 
+# Scratch that keeps trying to come back: review-surface artefacts, downloaded
+# archives, and screenshot harnesses. The repo root is the first thing a reader
+# sees, and none of this belongs in it.
+.lavish/
+evals?[0-9]/
+*.zip
+
 # batch output written during development
 kits.json
 

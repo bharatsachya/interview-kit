@@ -538,7 +538,7 @@ function and no component.
 
 ### The design system is the project's own, not a library's
 
-`AI Interview Prep Kit - Design System.html` is the source of truth for the look: near-white
+`docs/design-system.html` is the source of truth for the look: near-white
 ground, mint for what needs you now, dusty teal for the system's own work, and one red spent
 only on failure. It specifies its own stack — one theme layer declaring the fonts and the teal
 ramp as CSS variables, then Tailwind core utilities and no arbitrary values in component code —
