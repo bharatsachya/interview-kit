@@ -15,10 +15,12 @@ export { deriveFlashcards, frontFor } from "./flashcards";
 export { createGapFillWriter, type GapFillDraft, type GapFillWriterOptions } from "./gap-fill";
 export {
   DEFAULT_QUESTIONS_PER_CATEGORY,
+  generateCategoryQuestions,
   generateQuestions,
   requirementsFor,
   responsibilitiesFor,
   type CategoryReport,
+  type QuestionDraft,
   type QuestionGenerationInput,
   type QuestionGenerationResult,
 } from "./questions";

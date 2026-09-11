@@ -99,6 +99,21 @@ export interface QuestionGenerationInput {
    * `category:technical` and the nesting is the evidence.
    */
   span?: SpanHandle;
+  /**
+   * Whether a one-requirement seed may label its own output.
+   *
+   * On the first generation this is safe and useful: a category seeded with exactly one
+   * requirement has no ambiguity about what a returned question was answering, so a model that
+   * forgot to tag still gets its question counted.
+   *
+   * Regeneration turns that logic inside out. There the seed is the *gap list* — the
+   * requirements nothing active covers any more — so tagging a returned question with the only
+   * seeded id is the seed deciding the gap is closed. That is the failure `04-coverage` is
+   * written against, one level up from the model doing it. Regeneration passes `false` and lets
+   * coverage reach its own verdict; if the answer really was about the requirement, the model
+   * tagged it and the tag survives on its own merit.
+   */
+  autoTagSingleSeed?: boolean;
 }
 
 export interface CategoryReport {
@@ -154,7 +169,26 @@ export async function generateQuestions(input: QuestionGenerationInput): Promise
   return { questions, reports };
 }
 
-type QuestionDraft = Omit<InternalQuestion, "id">;
+/**
+ * One category, one call — the unit `generateQuestions` fans out over.
+ *
+ * Exported because regeneration needs exactly this and nothing else: the builder's "regenerate
+ * the technical questions" button must not re-ask the other three categories, both because it
+ * would cost three calls nobody asked for and because it would hand back questions for sections
+ * the user never touched.
+ *
+ * Returns drafts rather than questions. Ids are the caller's to assign, for the same reason the
+ * four-way fan-out assigns them after all four settle: an id that depends on when a provider
+ * answered is an id that changes between two identical runs.
+ */
+export async function generateCategoryQuestions(
+  category: QuestionCategory,
+  input: QuestionGenerationInput,
+): Promise<{ report: CategoryReport; drafts: QuestionDraft[] }> {
+  return runCategory(category, input, input.span ?? NOOP_SPAN);
+}
+
+export type QuestionDraft = Omit<InternalQuestion, "id">;
 
 async function runCategory(
   category: QuestionCategory,
@@ -205,8 +239,11 @@ async function runCategory(
       for (const candidate of data.questions) {
         // The model may tag, but only with ids it was actually shown. Anything else is dropped.
         let requirementIds = candidate.requirement_ids.filter((id) => supplied.has(id));
-        // With a single-requirement seed there is no ambiguity about what it was answering.
-        if (requirementIds.length === 0 && seed.length === 1) requirementIds = [seed[0]?.id as string];
+        // With a single-requirement seed there is no ambiguity about what it was answering —
+        // unless the seed is a gap list. See `autoTagSingleSeed`.
+        if (requirementIds.length === 0 && seed.length === 1 && input.autoTagSingleSeed !== false) {
+          requirementIds = [seed[0]?.id as string];
+        }
 
         drafts.push({
           category,

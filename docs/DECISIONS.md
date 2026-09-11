@@ -653,3 +653,95 @@ are deleted together when the API lands.
 
 Its two degradations are chosen by the environment, not at random, so a demo is reproducible: no
 `TAVILY_API_KEY` skips the search, an unreachable site writes the brief from the description alone.
+
+---
+
+## H12 — regenerating one section of a kit somebody is editing
+
+`packages/pipeline → regenerateSection(kit, request, deps)`. Three sections, three quite
+different jobs, one shared rule: **a regeneration may only take back what the machine put there
+and the user has not claimed.**
+
+### The brief's retrieval record is carried over, not recomputed
+
+Regeneration re-runs generation; it never goes back out to the network. Re-crawling on a button
+press spends a user's rate limit to read pages that have not changed since this morning.
+
+So `sources`, `pagesUsed`, `passages` and `gaps` are copied across verbatim and only the prose is
+replaced. Letting `generateBrief` recompute them looks tidier and is wrong: `sources` would
+silently lose the discussion results this call never saw, and `gaps` would gain "no public
+discussion was retrieved" for a kit where some had been. Those fields are a factual record of
+what was fetched, and the fetch did not happen again.
+
+This is why `CompanyBrief` gained `passages`. Without the page text, a brief regeneration prompts
+the model with a list of bare URLs and no bodies — and a model handed an empty context writes a
+paragraph anyway. Kits stored before the field existed fall back to `pagesUsed` and regenerate
+thin, which is the honest failure.
+
+### The questions branch never writes to `schedule`
+
+It archives, generates, runs coverage and derives cards. It does not touch a single day.
+
+Repair lives at the serialize boundary, so an archived question leaves its day and a new one is
+placed when the kit is next projected — by `toKitJSON` and `getKitForBuilder` alike, which is why
+the two views always agree. Writing to `schedule` from this path is what would wipe a day
+somebody rewrote, and it is what makes "every schedule day is byte-identical after a category
+regeneration" a property rather than a coincidence.
+
+### Exactly one `commit()` per call
+
+However many internal steps run, the version bumps by one, so a caller holding version 7 sees 8
+and `ifVersion` means what it says. The trap is that `regenerateCategory` now goes through
+`commit()` itself: it is a committed mutation, not a helper. The branch calls it once for the
+archive-and-append and then assembles the coverage questions and the new flashcards onto its
+result without committing again.
+
+### The seed is the gap list, not the category
+
+A category regeneration asks about the requirements **nothing still active covers** — the holes
+the archiving just opened — rather than the whole category. Handing the model the full list
+spends the call producing near-duplicates of the pinned and edited questions that were kept.
+
+When the survivors cover everything the full list comes back, because the user pressed regenerate
+and is owed questions. "Nothing was uncovered, so here is nothing" is a correct reading of the
+gap list and a broken button.
+
+### Two gates are deliberately not run on this path
+
+Both are deviations from "exactly what the first generation does", and both are here rather than
+behind a quiet default, because both are the kind of thing `04-coverage` warns about and a reader
+should get to disagree with them.
+
+**The tag gate (`gateQuestionTags`) does not re-run over questions already in the kit.** It is
+admission control on model output at the moment it enters, and it is not idempotent against a
+*stored* question the way it is against a fresh one: it judges the question's text against the
+requirement's source sentence, and a question the user has since rewritten no longer reads like
+the sentence it was generated from. Re-running it on every regeneration means a question quietly
+loses the requirement it covers — during a regeneration of a *different* category, with nothing
+in the UI to say why. The base fixture shows the symptom exactly: a question about introducing
+Kafka, tagged with "Kafka or similar", fails the ambiguous-token anchor check against its own
+source span and comes out covering nothing at all.
+
+It is also only a shared-term threshold, which is the right trade for admission — cheap,
+deterministic, inspectable — but its false negatives are real. "PostgreSQL query tuning" and a
+question about `Postgres` index bloat share no token. Paying that cost once, when the question
+enters, is proportionate; paying it again on every later regeneration is how a kit erodes.
+
+Gap fill's own gates (`acceptGapFill`) are unaffected and always run. That answer *is* fresh model
+output, and it is the one place a hallucinated id could still get in.
+
+**The single-seed auto-tag is suppressed.** On a first generation, a category seeded with exactly
+one requirement has no ambiguity about what a returned question was answering, so `runCategory`
+tags it even when the model forgot to. On a regeneration the seed is the gap list, so doing that
+would be the *seed* deciding the gap is closed — the same failure as letting the model decide, one
+level up. `autoTagSingleSeed: false` lets coverage reach its own verdict instead. The eval case
+`regen-technical-refills-newly-uncovered-must` is built on it: the fake answers a Go question to a
+Postgres seed, and Postgres has to stay open.
+
+### The trace reads like the steps it replays
+
+`regenerate_section` wraps the same child spans the first-generation pipeline emits —
+`generate_questions > category:<name>`, then `coverage > coverage_check pass=n`, then any
+`gap_fill <ids>`. A category regeneration that produced the right kit with no `coverage_check` in
+the trace ran a set difference nobody can see, so the runner asserts the ordering as well as the
+result.

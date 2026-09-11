@@ -1,0 +1,15 @@
+{
+  "//": [
+    "No @trao/llm. Gap fill receives a narrow `GapFillWriter` function instead of a provider,",
+    "so the package cannot call a model even by accident — and its tests need no fake provider."
+  ],
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@trao/contracts": ["../contracts/src/index.ts"],
+      "@trao/kit": ["../kit/src/index.ts"]
+    }
+  },
+  "include": ["src", "test"]
+}

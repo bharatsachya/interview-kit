@@ -2,7 +2,9 @@ node_modules/
 dist/
 .next/
 out/
-coverage/
+# Vitest's coverage output, at the repo root only. Unanchored, this pattern also swallowed
+# packages/coverage — the whole package, its tests included — so a clean clone did not build.
+/coverage/
 tmp/
 *.tsbuildinfo
 

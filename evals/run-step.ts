@@ -33,6 +33,7 @@ import {
   editQuestion,
   editScheduleDay,
   getKitForBuilder,
+  minutesForQuestions,
   moveQuestion,
   pinQuestion,
   repairSchedule,
@@ -40,6 +41,7 @@ import {
   toKitJSON,
   validateKitJSON,
 } from "@trao/kit";
+import { regenerateSection } from "@trao/pipeline";
 import { wire } from "../scripts/composition";
 import { loadEnv } from "../scripts/load-env";
 import { Checks, assignMatches, normalise, requirementMatches, toInternalQuestion, toRequirement } from "./harness";
@@ -1214,7 +1216,11 @@ function toInternalKit(raw: any): any {
       // The fixture calls it `hiring_signal`; the implemented brief calls it `hiringProcess`.
       hiringProcess: raw.company_brief?.hiring_process ?? raw.company_brief?.hiring_signal ?? "",
       sources: [...(raw.company_brief?.sources ?? [])],
-      pagesUsed: [],
+      // The fixture keeps these under the top-level `source` block. Regenerating the brief reads
+      // them, so dropping them here would quietly turn that case into the no-context path, where
+      // `generateBrief` writes an honest empty brief in code and never calls a model at all.
+      pagesUsed: [...(raw.source?.pages_used ?? [])],
+      ...(raw.company_brief?.passages !== undefined ? { passages: raw.company_brief.passages } : {}),
       gaps: [...(raw.company_brief?.gaps ?? [])],
       edited: false,
       origin: raw.company_brief?.origin ?? "generated",
@@ -1261,14 +1267,78 @@ function toInternalKit(raw: any): any {
 }
 
 /**
+ * Ids that cannot collide with the fixture's.
+ *
+ * `SequentialIdGenerator` starts at q1, and the base kit already has q1..q8. Handing coverage a
+ * generator that mints `q1` for a gap fill would silently overwrite the user's first question
+ * and make `ids_never_reused` pass for the wrong reason. Storage never reuses an id, so neither
+ * does the runner: taken names are skipped, not renumbered around.
+ */
+class FreshIds implements IdGenerator {
+  readonly #inner = new SequentialIdGenerator();
+  readonly #taken: Set<string>;
+
+  constructor(taken: Iterable<string>) {
+    this.#taken = new Set(taken);
+  }
+
+  next(prefix: string): string {
+    for (;;) {
+      const id = this.#inner.next(prefix);
+      if (this.#taken.has(id)) continue;
+      this.#taken.add(id);
+      return id;
+    }
+  }
+}
+
+/**
+ * The case's `fake_responses`, consumed in order across every purpose.
+ *
+ * One queue rather than one per purpose, because the order the cases are written in is the order
+ * the calls happen: the category call, then a gap fill if coverage opened one. Registering by
+ * prefix lets `generate_questions:technical` and `gap_fill:r2` both draw from it without the
+ * case having to know the purpose strings.
+ *
+ * An exhausted queue returns a value no schema accepts, so the call fails the way a provider
+ * returning junk would. That is deliberate: a case that scripts one answer and triggers two
+ * calls should exercise the degradation path, not be quietly handed the same answer twice.
+ */
+function scriptedFake(responses: readonly unknown[], tracer: Tracer): FakeLlmProvider {
+  const queue = [...responses];
+  const next = (): unknown => (queue.length > 0 ? queue.shift() : { exhausted_fake_response_queue: true });
+
+  const fake = new FakeLlmProvider({ tracer });
+  for (const purpose of ["generate_questions", "gap_fill", "generate_brief"]) fake.respondWith(purpose, next);
+  return fake;
+}
+
+/**
  * Apply one operation from a case.
  *
- * `regenerate` is deliberately a throw rather than a skip. It belongs to
- * `packages/pipeline → regenerateSection`, which another session owns; failing loudly means a
- * case that needs it is reported as failing rather than quietly passing on a no-op.
+ * Everything but `regenerate` is a pure mutation in `packages/kit`. `regenerate` is
+ * `packages/pipeline → regenerateSection`, which is the only operation here that reaches a model.
  */
-function applyOperation(kit: any, op: any, ids: IdGenerator): any {
+async function applyOperation(
+  kit: any,
+  op: any,
+  ids: IdGenerator,
+  regen: { llm: LlmProvider; tracer: Tracer },
+): Promise<any> {
   const options = op.if_version === undefined ? undefined : { ifVersion: op.if_version };
+
+  if (op.op === "regenerate") {
+    return regenerateSection(
+      kit,
+      { section: op.section, ...(op.category !== undefined ? { category: op.category } : {}) },
+      {
+        llm: regen.llm,
+        ids,
+        tracer: regen.tracer,
+        ...(options !== undefined ? { ifVersion: options.ifVersion } : {}),
+      },
+    );
+  }
 
   switch (op.op) {
     case "edit": {
@@ -1346,11 +1416,11 @@ function snakeToSchedulePatch(fields: any): any {
 const step13: StepDefinition = {
   id: "13",
   dir: "13-builder-regeneration",
-  name: "builder mutations",
-  target: "packages/kit → editQuestion / delete / move / reorder / add / version",
+  name: "builder mutations + regenerateSection",
+  target: "packages/kit → edit/delete/move/reorder/add/version · packages/pipeline → regenerateSection",
   kind: "pure+fake",
   adapter:
-    "Cases are Appendix A shaped (snake_case, `derived_from`, `hiring_signal`); storage is camelCase with `questionId`. `toInternalKit` maps one onto the other. Operations named `regenerate` belong to packages/pipeline → regenerateSection and are not implemented here: those cases throw `unsupported op: regenerate` and are reported as failures rather than skipped.",
+    "Cases are Appendix A shaped (snake_case, `derived_from`, `hiring_signal`, a top-level `source` block); storage is camelCase with `questionId`. `toInternalKit` maps one onto the other, including `source.pages_used` onto `companyBrief.pagesUsed`, which the brief regeneration reads. Ids come from a generator that skips names the fixture already uses, because storage never reuses an id.",
   run: async (cases) => {
     const outcomes: CaseOutcome[] = [];
     const baseRaw = JSON.parse(
@@ -1359,9 +1429,15 @@ const step13: StepDefinition = {
 
     for (const kase of cases) {
       const runs = await repeatCase(1, async (c) => {
-        const ids = new SequentialIdGenerator();
         const base = toInternalKit(kase.input["kit"] ?? baseRaw);
         const e = kase.expected;
+
+        const baseQuestionIds = new Set<string>(base.questions.map((q: any) => q.id));
+        const baseCardIds = new Set<string>(base.flashcards.map((f: any) => f.id));
+        const ids = new FreshIds([...baseQuestionIds, ...baseCardIds]);
+
+        const tracer = new InMemoryTracer(new SystemClock());
+        const llm = scriptedFake((kase.input["fake_responses"] ?? []) as unknown[], tracer);
 
         let kit = base;
         let conflict: string | null = null;
@@ -1369,7 +1445,7 @@ const step13: StepDefinition = {
 
         for (const [index, op] of (kase.input["operations"] ?? []).entries()) {
           try {
-            kit = applyOperation(kit, op, ids);
+            kit = await applyOperation(kit, op, ids, { llm, tracer });
             if (index === 0) firstSucceeded = true;
           } catch (error) {
             const code = (error as any)?.code;
@@ -1381,6 +1457,11 @@ const step13: StepDefinition = {
             throw error;
           }
         }
+
+        const spans = tracer.export();
+        const regenerated = (kase.input["operations"] ?? []).filter((op: any) => op.op === "regenerate");
+        const newQuestions = kit.questions.filter((q: any) => q.active && !baseQuestionIds.has(q.id));
+        const newCards = kit.flashcards.filter((f: any) => f.active && !baseCardIds.has(f.id));
 
         const byId = new Map<string, any>(kit.questions.map((q: any) => [q.id, q]));
         const cardById = new Map<string, any>(kit.flashcards.map((f: any) => [f.id, f]));
@@ -1429,18 +1510,170 @@ const step13: StepDefinition = {
             .filter((q: any) => q.category === category && q.active)
             .sort((a: any, b: any) => a.order - b.order)
             .map((q: any) => q.id);
-          c.ok(`${category} order`, JSON.stringify(actual) === JSON.stringify(order), actual.join(","));
+          // `<new1>`, `<new2>` … are placeholders: the case cannot name an id the run mints. Each
+          // matches any question that was not in the base kit, and two placeholders may not match
+          // the same one — the point of the case is that BOTH new questions land after the
+          // survivors, not that one did twice.
+          const want = order as string[];
+          const seen = new Set<string>();
+          const matches =
+            actual.length === want.length &&
+            want.every((expect, i) => {
+              const got = actual[i] as string;
+              if (!/^<.*>$/.test(expect)) return got === expect;
+              if (baseQuestionIds.has(got) || seen.has(got)) return false;
+              seen.add(got);
+              return true;
+            });
+          c.ok(`${category} order`, matches, `${actual.join(",")} vs ${want.join(",")}`);
         }
         for (const [day, focus] of Object.entries(e["schedule_day_focus"] ?? {})) {
           const found = kit.schedule.days.find((d: any) => String(d.day) === String(day));
           c.ok(`day ${day} focus`, found?.focus === focus, String(found?.focus));
         }
         for (const id of e["untouched"] ?? []) {
-          const before = base.questions.find((q: any) => q.id === id);
-          c.ok(`${id} untouched`, JSON.stringify(before) === JSON.stringify(byId.get(id)));
+          // Questions and flashcards alike: the cases list both in the same array.
+          const before = base.questions.find((q: any) => q.id === id) ?? base.flashcards.find((f: any) => f.id === id);
+          const after = byId.get(id) ?? cardById.get(id);
+          c.ok(`${id} untouched`, JSON.stringify(before) === JSON.stringify(after), JSON.stringify(after));
         }
+        for (const section of e["untouched_sections"] ?? []) {
+          const key = section === "company_brief" ? "companyBrief" : section;
+          c.ok(
+            `${section} untouched`,
+            JSON.stringify((base as any)[key]) === JSON.stringify((kit as any)[key]),
+            JSON.stringify((kit as any)[key]).slice(0, 200),
+          );
+        }
+
+        const category = regenerated.find((op: any) => op.section === "questions")?.category;
         if (e["new_questions_min"] !== undefined) {
-          c.ok("new questions", true, "regenerate not implemented here");
+          const added = newQuestions.filter((q: any) => category === undefined || q.category === category);
+          c.ok(
+            `at least ${String(e["new_questions_min"])} new questions`,
+            added.length >= (e["new_questions_min"] as number),
+            `got ${added.length}`,
+          );
+        }
+        if (e["category_of_new"] !== undefined) {
+          c.ok(
+            `new questions are ${String(e["category_of_new"])}`,
+            newQuestions.length > 0 && newQuestions.every((q: any) => q.category === e["category_of_new"]),
+            newQuestions.map((q: any) => q.category).join(",") || "none",
+          );
+        }
+        for (const id of e["ids_never_reused"] ?? []) {
+          // The id still resolves to the record it always did, and nothing new took the name.
+          const before = base.questions.find((q: any) => q.id === id);
+          c.ok(
+            `${id} not reused`,
+            byId.get(id)?.prompt === before?.prompt && !newQuestions.some((q: any) => q.id === id),
+            String(byId.get(id)?.prompt),
+          );
+        }
+        for (const [id, pinned] of Object.entries(e["pinned"] ?? {})) {
+          c.ok(`${id} pinned=${String(pinned)}`, byId.get(id)?.pinned === pinned, String(byId.get(id)?.pinned));
+        }
+        for (const [id, reqs] of Object.entries(e["requirement_ids_of"] ?? {})) {
+          c.eq(`${id} requirement_ids`, byId.get(id)?.requirementIds, reqs as string[]);
+        }
+        for (const id of e["flashcard_survives"] ?? []) {
+          c.ok(`flashcard ${id} survives`, cardById.get(id)?.active === true);
+        }
+        for (const id of e["flashcard_removed"] ?? []) {
+          c.ok(`flashcard ${id} removed`, cardById.get(id)?.active === false, `active=${String(cardById.get(id)?.active)}`);
+        }
+        if (e["new_flashcards_derived_for_new_questions"] === true) {
+          const withOutline = newQuestions.filter((q: any) => q.answerOutline.trim().length > 0);
+          c.ok(
+            "every new question with an outline got a card",
+            withOutline.every((q: any) => newCards.some((f: any) => f.questionId === q.id)),
+            `${newCards.length} new cards for ${withOutline.length} new questions`,
+          );
+        }
+
+        // ── coverage ──────────────────────────────────────────────────────────────────
+        if (e["must_covered_after"] !== undefined) {
+          const covered = new Set(kit.questions.filter((q: any) => q.active).flatMap((q: any) => q.requirementIds));
+          const missing = (e["must_covered_after"] as string[]).filter((id) => !covered.has(id));
+          c.ok("every named must-have is covered", missing.length === 0, `uncovered: ${missing.join(",")}`);
+        }
+        if (e["coverage_passes_min"] !== undefined) {
+          c.ok(
+            `coverage.passes >= ${String(e["coverage_passes_min"])}`,
+            kit.coverage.passes >= (e["coverage_passes_min"] as number),
+            `got ${String(kit.coverage.passes)}`,
+          );
+        }
+        if (e["gap_fill_question_requirement_ids"] !== undefined) {
+          const want = JSON.stringify(e["gap_fill_question_requirement_ids"]);
+          const filled = newQuestions.find((q: any) => JSON.stringify(q.requirementIds) === want);
+          c.ok(`a gap-fill question covers ${want}`, filled !== undefined, newQuestions.map((q: any) => JSON.stringify(q.requirementIds)).join(" "));
+          // The ids came from the code that chose the cluster, never from the model: gap fill's
+          // schema has no requirement_ids field at all. The span names what was asked for.
+          const ask = spans.find((sp) => sp.step.startsWith("gap_fill "));
+          c.ok(
+            "the gap fill was asked for exactly that requirement",
+            ask?.step === `gap_fill ${(e["gap_fill_question_requirement_ids"] as string[]).join("+")}`,
+            ask?.step ?? "no gap_fill span",
+          );
+        }
+
+        // ── the brief ─────────────────────────────────────────────────────────────────
+        if (e["brief_summary"] !== undefined) {
+          c.ok("brief summary replaced", kit.companyBrief.summary === e["brief_summary"], kit.companyBrief.summary);
+        }
+
+        // ── the schedule ──────────────────────────────────────────────────────────────
+        if (e["schedule_unchanged"] === true) {
+          c.ok(
+            "schedule byte-identical",
+            JSON.stringify(base.schedule) === JSON.stringify(kit.schedule),
+            JSON.stringify(kit.schedule).slice(0, 200),
+          );
+        }
+        if (e["schedule_day_2_question_ids_unchanged"] === true) {
+          const before = base.schedule.days.find((d: any) => d.day === 2);
+          const after = kit.schedule.days.find((d: any) => d.day === 2);
+          c.eq("day 2 question ids", after?.questionIds, before?.questionIds);
+        }
+        if (e["all_active_questions_scheduled_exactly_once"] === true) {
+          const placed = kit.schedule.days.flatMap((d: any) => d.questionIds);
+          const active = kit.questions.filter((q: any) => q.active).map((q: any) => q.id).sort();
+          const repeated = placed.filter((id: string, i: number) => placed.indexOf(id) !== i);
+          c.ok("no question placed twice", repeated.length === 0, repeated.join(","));
+          c.eq("every active question placed", [...placed].sort(), active);
+        }
+        if (e["days_1_and_3_recomputed"] === true) {
+          // "Recomputed" is a property, not a diff: the unedited days between them hold exactly
+          // the active questions the edited day did not claim, and their minutes follow.
+          const day2 = new Set<string>(kit.schedule.days.find((d: any) => d.day === 2)?.questionIds ?? []);
+          const open = kit.schedule.days.filter((d: any) => d.day !== 2);
+          const expected = kit.questions
+            .filter((q: any) => q.active && !day2.has(q.id))
+            .map((q: any) => q.id)
+            .sort();
+          c.eq("days 1 and 3 hold the unclaimed questions", open.flatMap((d: any) => d.questionIds).sort(), expected);
+          const byQuestionId = new Map<string, any>(kit.questions.map((q: any) => [q.id, q]));
+          for (const day of open) {
+            const minutes = minutesForQuestions(day.questionIds.map((id: string) => byQuestionId.get(id)));
+            c.ok(`day ${day.day} minutes recomputed`, day.minutes === minutes, `${day.minutes} vs ${minutes}`);
+          }
+        }
+
+        // ── the added manual question ─────────────────────────────────────────────────
+        const added = newQuestions.find((q: any) => q.origin === "manual");
+        if (e["added_origin"] !== undefined) {
+          c.ok(`added question origin ${String(e["added_origin"])}`, added?.origin === e["added_origin"], String(added?.origin));
+        }
+        if (e["added_survives_regen"] === true) {
+          c.ok("the added question survived the regen", added !== undefined && added.active === true);
+        }
+        if (e["added_has_flashcard"] === true) {
+          c.ok(
+            "the added question has a card",
+            added !== undefined && kit.flashcards.some((f: any) => f.active && f.questionId === added.id),
+          );
         }
 
         const out = e["output"] ?? {};
@@ -1456,6 +1689,13 @@ const step13: StepDefinition = {
             !json.schedule.days.some((d: any) => (d.question_ids ?? []).includes(id)),
           );
         }
+        if (out.added_scheduled_somewhere === true) {
+          // On the internal kit the question sits on no day at all: the questions branch never
+          // writes to `schedule`. Repair places it when the kit is projected, which is the whole
+          // reason this assertion is on `output` rather than on the kit.
+          const scheduled = new Set<string>(json.schedule.days.flatMap((d: any) => d.question_ids ?? []));
+          c.ok("the added question was placed on a day", added !== undefined && scheduled.has(added.id));
+        }
 
         const proj = e["builder_projection"] ?? {};
         for (const id of proj.questions_exclude ?? []) {
@@ -1468,10 +1708,43 @@ const step13: StepDefinition = {
           );
         }
         if (e["llm_calls"] !== undefined) {
-          c.ok(`${String(e["llm_calls"])} llm calls`, e["llm_calls"] === 0, "no model is called by these ops");
+          c.ok(
+            `${String(e["llm_calls"])} llm calls`,
+            llm.calls.length === e["llm_calls"],
+            `made ${llm.calls.length}: ${llm.calls.map((call) => call.purpose).join(", ") || "none"}`,
+          );
         }
 
-        return { version: kit.version };
+        // ── the trace ─────────────────────────────────────────────────────────────────
+        //
+        // Not in `expected`, but named by the step README: a regeneration has to read in the
+        // trace like the first-generation steps it replays. A category regen that produced the
+        // right kit with no coverage_check in the trace ran a set difference nobody can see.
+        for (const op of regenerated) {
+          const root = spans.find((sp) => sp.step === "regenerate_section");
+          c.ok(`regenerate_section span for ${String(op.section)}`, root !== undefined);
+
+          if (op.section === "questions") {
+            const order = spans
+              .filter((sp) => sp.step.startsWith("category:") || sp.step.startsWith("coverage_check") || sp.step.startsWith("gap_fill "))
+              .map((sp) => sp.step);
+            c.ok(`category:${String(op.category)} call recorded`, order.includes(`category:${String(op.category)}`), order.join(" → "));
+            const categoryAt = order.findIndex((step) => step.startsWith("category:"));
+            const checkAt = order.findIndex((step) => step.startsWith("coverage_check"));
+            c.ok("coverage_check runs after the category call", categoryAt >= 0 && checkAt > categoryAt, order.join(" → "));
+            const fillAt = order.findIndex((step) => step.startsWith("gap_fill "));
+            if (fillAt >= 0) c.ok("gap_fill runs after a coverage_check", fillAt > checkAt, order.join(" → "));
+          }
+          if (op.section === "company_brief") {
+            c.ok("generate_brief span", spans.some((sp) => sp.step === "generate_brief"));
+          }
+          if (op.section === "schedule") {
+            c.ok("allocate_schedule span", spans.some((sp) => sp.step === "allocate_schedule"));
+            c.ok("no model span", !spans.some((sp) => sp.step.startsWith("llm:")), spans.map((sp) => sp.step).join(","));
+          }
+        }
+
+        return { version: kit.version, llmCalls: llm.calls.length, spans: spans.map((sp) => sp.step) };
       });
       outcomes.push({ id: kase.id, runs });
     }

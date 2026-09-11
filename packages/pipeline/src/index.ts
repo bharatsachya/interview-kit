@@ -9,3 +9,9 @@
 
 export { hashSubmission } from "./hash";
 export { generateKit, type GenerateKitInput, type PipelineDeps, type PipelineResult } from "./pipeline";
+export {
+  regenerateSection,
+  type RegenerateDeps,
+  type RegenerateRequest,
+  type RegenerateSectionName,
+} from "./regenerate";
