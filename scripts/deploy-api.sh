@@ -22,11 +22,58 @@ cd "$here"
 : "${AZ_ACR:?Set AZ_ACR to a globally unique registry name, e.g. prepkit<something>}"
 : "${AZ_ENV:=prep-kit-env}"
 : "${AZ_APP:=prep-kit-api}"
-: "${GEMINI_API_KEY:?Required. https://aistudio.google.com/apikey}"
 : "${MONGODB_URI:?Required in production — the API refuses to start on the in-memory store.}"
 : "${CLERK_ISSUER:?Required in production — e.g. https://your-app.clerk.accounts.dev}"
+: "${GEMINI_API_KEY:=}"
+: "${OPENROUTER_API_KEY:=}"
+: "${LLM_PROVIDER:=}"
+: "${OPENROUTER_MODELS:=}"
+: "${GEMINI_MODEL_QUALITY:=}"
+: "${GEMINI_MODEL_FAST:=}"
+: "${GEMINI_RPM:=}"
+: "${GEMINI_TPM:=}"
+: "${FAKE_LLM:=false}"
+: "${FAKE_FETCH:=false}"
 : "${TAVILY_API_KEY:=}"
 : "${CORS_ORIGINS:=}"
+
+# Which model the deployed API will actually call.
+#
+# Gemini used to be required here, which was wrong in a way that only showed up after the
+# deployment was live: its free tier is a *daily cap* of roughly twenty requests per model, not a
+# rate limit, and one kit costs six to eight calls. A link handed to a reviewer is out of quota
+# after two or three generations and waiting does not help. OpenRouter's free models draw on a
+# different bucket, so the deployment needs to be able to express that choice — `apps/api` has
+# supported both providers since H8 and only this script did not.
+#
+# `LLM_PROVIDER` is always sent explicitly. `chooseProvider` prefers Gemini when the variable is
+# empty and both keys are present, so a deployment that switched to OpenRouter while a Gemini
+# secret was still set would silently keep calling the spent key.
+if [[ "$FAKE_LLM" =~ ^(1|true|yes)$ ]]; then
+  provider_label="fake (canned responses — no model is called)"
+  LLM_PROVIDER=""
+elif [[ -n "$LLM_PROVIDER" ]]; then
+  provider_label="$LLM_PROVIDER (explicit)"
+elif [[ -n "$GEMINI_API_KEY" ]]; then
+  provider_label="gemini"
+  LLM_PROVIDER="gemini"
+elif [[ -n "$OPENROUTER_API_KEY" ]]; then
+  provider_label="openrouter"
+  LLM_PROVIDER="openrouter"
+else
+  echo "Set GEMINI_API_KEY or OPENROUTER_API_KEY in .env.deploy, or FAKE_LLM=true to deploy a" >&2
+  echo "demo that calls no model at all. See docs/DEPLOYING.md — 'Known limitations'." >&2
+  exit 1
+fi
+
+if [[ "$LLM_PROVIDER" == "openrouter" && -z "$OPENROUTER_API_KEY" ]]; then
+  echo "LLM_PROVIDER=openrouter but OPENROUTER_API_KEY is empty." >&2
+  exit 1
+fi
+if [[ "$LLM_PROVIDER" == "gemini" && -z "$GEMINI_API_KEY" ]]; then
+  echo "LLM_PROVIDER=gemini but GEMINI_API_KEY is empty." >&2
+  exit 1
+fi
 
 tag="$(git rev-parse --short HEAD)$( git diff --quiet || echo -dirty )"
 image="${AZ_ACR}.azurecr.io/prep-kit-api:${tag}"
@@ -50,25 +97,43 @@ az containerapp env show -n "$AZ_ENV" -g "$AZ_RESOURCE_GROUP" -o none 2>/dev/nul
   az containerapp env create -n "$AZ_ENV" -g "$AZ_RESOURCE_GROUP" -l "$AZ_LOCATION" -o none
 
 # Secrets are set every run so rotating a key is just editing .env.deploy and deploying again.
-secrets=(
-  "gemini-key=${GEMINI_API_KEY}"
-  "mongodb-uri=${MONGODB_URI}"
-)
+secrets=( "mongodb-uri=${MONGODB_URI}" )
 env_vars=(
   "NODE_ENV=production"
   "PORT=8080"
-  "GEMINI_API_KEY=secretref:gemini-key"
   "MONGODB_URI=secretref:mongodb-uri"
   "CLERK_ISSUER=${CLERK_ISSUER}"
+  "LLM_PROVIDER=${LLM_PROVIDER}"
   # Not a decision the deployment gets to make. Loopback and private addresses stay rejected in
   # production; only `npm run evaluate` turns this on, for itself, to reach its fixture server.
   "ALLOW_PRIVATE_HOSTS=false"
 )
+
+# A model key is a secret; the model *names* are not, and being able to set them is the one
+# lever that widens Gemini's daily cap, since the cap is per model and both variables take a
+# comma-separated list.
+if [[ -n "$GEMINI_API_KEY" ]]; then
+  secrets+=( "gemini-key=${GEMINI_API_KEY}" )
+  env_vars+=( "GEMINI_API_KEY=secretref:gemini-key" )
+fi
+if [[ -n "$OPENROUTER_API_KEY" ]]; then
+  secrets+=( "openrouter-key=${OPENROUTER_API_KEY}" )
+  env_vars+=( "OPENROUTER_API_KEY=secretref:openrouter-key" )
+fi
 if [[ -n "$TAVILY_API_KEY" ]]; then
   secrets+=( "tavily-key=${TAVILY_API_KEY}" )
   env_vars+=( "TAVILY_API_KEY=secretref:tavily-key" )
 fi
-[[ -n "$CORS_ORIGINS" ]] && env_vars+=( "CORS_ORIGINS=${CORS_ORIGINS}" )
+
+for pass_through in OPENROUTER_MODELS GEMINI_MODEL_QUALITY GEMINI_MODEL_FAST GEMINI_RPM GEMINI_TPM CORS_ORIGINS; do
+  [[ -n "${!pass_through}" ]] && env_vars+=( "${pass_through}=${!pass_through}" )
+done
+
+# Deliberate, and loud about it. A deployment that calls no model always works and researches
+# nothing real — a legitimate choice for a demo link, and one to state out loud rather than let
+# someone discover from a brief that reads the same for every company.
+if [[ "$FAKE_LLM" =~ ^(1|true|yes)$ ]]; then env_vars+=( "FAKE_LLM=true" ); fi
+if [[ "$FAKE_FETCH" =~ ^(1|true|yes)$ ]]; then env_vars+=( "FAKE_FETCH=true" ); fi
 
 if az containerapp show -n "$AZ_APP" -g "$AZ_RESOURCE_GROUP" -o none 2>/dev/null; then
   say "Updating ${AZ_APP}"
@@ -97,6 +162,7 @@ fi
 fqdn="$(az containerapp show -n "$AZ_APP" -g "$AZ_RESOURCE_GROUP" --query properties.configuration.ingress.fqdn -o tsv)"
 
 say "Deployed"
-printf '  image   %s\n  url     https://%s\n\n' "$image" "$fqdn"
+printf '  image   %s\n  url     https://%s\n  model   %s\n  search  %s\n\n' \
+  "$image" "$fqdn" "$provider_label" "$([[ -n "$TAVILY_API_KEY" ]] && echo tavily || echo 'none — the discussion step records itself as skipped')"
 printf '  health  '; curl -fsS "https://${fqdn}/health" && printf '\n'
 printf '\nSet this in Vercel, then redeploy the web app:\n\n  API_ORIGIN=https://%s\n\n' "$fqdn"
