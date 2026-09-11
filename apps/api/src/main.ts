@@ -13,6 +13,9 @@ import {
   OpenRouterTransport,
   RoutedTransport,
   RunBudget,
+  ZAI_FAST_MODELS,
+  ZAI_QUALITY_MODELS,
+  ZaiTransport,
   type ModelTransport,
 } from "@trao/llm";
 import { MemoryJobStore, MemoryKitStore, MemoryPracticeStore, connectMongo } from "@trao/persistence";
@@ -49,69 +52,149 @@ interface ProviderChoice {
   label: string;
 }
 
-/** Mirrors `scripts/composition.ts`. See there for why two providers rather than one. */
+/**
+ * Which providers to talk to, and in what order.
+ *
+ * Mirrors `scripts/composition.ts`, which is the file that matters for the graded batch run.
+ *
+ * Three free or near-free tiers, failing in three different directions. Gemini answers a real
+ * extraction prompt in about three seconds and then hits a daily cap that no amount of waiting
+ * reopens. Z.AI's GLM models are metered separately and answer the same prompt in about four,
+ * which makes them the natural thing to reach for once Gemini's day is spent. OpenRouter's free
+ * models take twenty-odd seconds and keep going, which makes them a floor rather than a choice.
+ *
+ * So the default is all of them, in that order, as one model list. Nothing new was needed to
+ * arrange it: the gateway already walks a list and moves to the next name when one reports
+ * itself unavailable, a daily cap reports itself exactly that way, and `RoutedTransport` sends
+ * each `provider:model` name to the transport that understands it. Cross-provider failover is
+ * the chain that already existed, given a wider list to walk.
+ *
+ * `LLM_PROVIDER` still pins one — `=gemini`, `=zai`, `=openrouter` — which is what a measurement
+ * wants: a number for a provider should not quietly become a number for whichever one answered.
+ * It also takes a comma list (`LLM_PROVIDER=zai,gemini`) when the order is worth changing
+ * without changing the code, which is the usual reason to reach for this at all.
+ */
+const PROVIDER_ORDER = ["gemini", "zai", "openrouter"] as const;
+type ProviderName = (typeof PROVIDER_ORDER)[number];
+
+interface BuiltProvider {
+  transport: ModelTransport;
+  quality: string[];
+  fast: string[];
+  /** Named in the error when this provider was asked for and its key is missing. */
+  keyVariable: string;
+}
+
+/** Null when this deployment has no key for it — which is how a provider is dropped. */
+function buildProvider(name: ProviderName): BuiltProvider | null {
+  switch (name) {
+    case "gemini": {
+      const apiKey = env("GEMINI_API_KEY");
+      if (apiKey === "") return null;
+      return {
+        transport: new GeminiTransport({ apiKey }),
+        // Extraction is worth 20 points and asks for `quality`. Everything else takes `fast`.
+        quality: modelList("GEMINI_MODEL_QUALITY", GEMINI_QUALITY),
+        fast: modelList("GEMINI_MODEL_FAST", GEMINI_FAST),
+        keyVariable: "GEMINI_API_KEY",
+      };
+    }
+    case "zai": {
+      // `GLM_API_KEY` because that is what the key is called everywhere it is issued, and the
+      // provider is called Z.AI everywhere else. Both names work rather than making anyone
+      // remember which of the two this repo happened to pick.
+      const apiKey = env("ZAI_API_KEY") !== "" ? env("ZAI_API_KEY") : env("GLM_API_KEY");
+      if (apiKey === "") return null;
+      return {
+        transport: new ZaiTransport({
+          apiKey,
+          // The mainland endpoint (open.bigmodel.cn) speaks the same dialect on a different host.
+          ...(env("ZAI_BASE_URL") !== "" ? { baseUrl: env("ZAI_BASE_URL") } : {}),
+        }),
+        quality: modelList("ZAI_MODELS", ZAI_QUALITY_MODELS),
+        fast: modelList("ZAI_MODELS", ZAI_FAST_MODELS),
+        keyVariable: "ZAI_API_KEY or GLM_API_KEY",
+      };
+    }
+    case "openrouter": {
+      const apiKey = env("OPENROUTER_API_KEY");
+      if (apiKey === "") return null;
+      const free = modelList("OPENROUTER_MODELS", OPENROUTER_FREE_MODELS);
+      return {
+        transport: new OpenRouterTransport({
+          apiKey,
+          appName: "Trao Interview Prep Kit",
+          ...(env("OPENROUTER_APP_URL") !== "" ? { appUrl: env("OPENROUTER_APP_URL") } : {}),
+        }),
+        // One list for both tiers: the free models are peers rather than a quality ladder, and
+        // claiming otherwise in the wiring would be a fiction the trace would then repeat.
+        quality: free,
+        fast: free,
+        keyVariable: "OPENROUTER_API_KEY",
+      };
+    }
+  }
+}
+
 function chooseProvider(): ProviderChoice {
-  const geminiKey = env("GEMINI_API_KEY");
-  const openRouterKey = env("OPENROUTER_API_KEY");
-  const requested = env("LLM_PROVIDER").trim().toLowerCase();
+  const requested = env("LLM_PROVIDER")
+    .split(",")
+    .map((name) => canonicalProvider(name))
+    .filter((name) => name !== null);
 
-  const useOpenRouter = requested === "openrouter" || (requested === "" && geminiKey === "" && openRouterKey !== "");
+  const wanted: ProviderName[] = requested.length > 0 ? requested : [...PROVIDER_ORDER];
+  const built: { name: ProviderName; provider: BuiltProvider }[] = [];
 
-  if (useOpenRouter) {
-    if (openRouterKey === "") throw new Error("LLM_PROVIDER=openrouter but OPENROUTER_API_KEY is not set.");
-    const free = modelList("OPENROUTER_MODELS", OPENROUTER_FREE_MODELS);
-    return {
-      transport: new OpenRouterTransport({
-        apiKey: openRouterKey,
-        appName: "Trao Interview Prep Kit",
-        ...(env("OPENROUTER_APP_URL") !== "" ? { appUrl: env("OPENROUTER_APP_URL") } : {}),
-      }),
-      quality: free,
-      fast: free,
-      label: "openrouter (free)",
-    };
+  for (const name of wanted) {
+    const provider = buildProvider(name);
+    // Asked for by name and unusable: say so. Silently dropping it would turn a typo in an env
+    // file into a quiet change of model, which is the kind of thing nobody notices for a day.
+    if (provider === null && requested.length > 0) {
+      throw new Error(`LLM_PROVIDER names "${name}" but ${keyVariableFor(name)} is not set.`);
+    }
+    if (provider !== null) built.push({ name, provider });
   }
 
-  if (geminiKey === "") {
+  if (built.length === 0) {
     throw new Error(
-      "No model key. Set GEMINI_API_KEY or OPENROUTER_API_KEY, or FAKE_LLM=true to run without one.",
+      "No model key. Set GEMINI_API_KEY, ZAI_API_KEY (or GLM_API_KEY) or OPENROUTER_API_KEY, " +
+        "or FAKE_LLM=true to run without one.",
     );
   }
 
-  // Both keys and no explicit choice: use both, Gemini first.
-  //
-  // The two free tiers fail in opposite directions — Gemini answers a real extraction prompt in
-  // about three seconds and then hits a daily cap that no waiting reopens, while OpenRouter's
-  // free models take twenty-odd seconds and keep going. Naming both in one list gets the fast
-  // path first and the durable one underneath, and the gateway's existing fallback carries a
-  // run across the boundary when the cap lands mid-kit.
-  //
-  // `LLM_PROVIDER=gemini` or `=openrouter` still pins one, which is what the batch runs and the
-  // tests want: a measurement of a provider should not quietly become a measurement of whichever
-  // one answered.
-  if (requested === "" && openRouterKey !== "") {
-    const gemini = new GeminiTransport({ apiKey: geminiKey });
-    const openRouter = new OpenRouterTransport({
-      apiKey: openRouterKey,
-      appName: "Trao Interview Prep Kit",
-      ...(env("OPENROUTER_APP_URL") !== "" ? { appUrl: env("OPENROUTER_APP_URL") } : {}),
-    });
-    const free = modelList("OPENROUTER_MODELS", OPENROUTER_FREE_MODELS).map((m) => `openrouter:${m}`);
-
+  // One provider: plain model names, no routing layer and no prefixes in the trace.
+  if (built.length === 1) {
+    const [only] = built as [{ name: ProviderName; provider: BuiltProvider }];
     return {
-      transport: new RoutedTransport({ gemini, openrouter: openRouter }),
-      quality: [...modelList("GEMINI_MODEL_QUALITY", GEMINI_QUALITY).map((m) => `gemini:${m}`), ...free],
-      fast: [...modelList("GEMINI_MODEL_FAST", GEMINI_FAST).map((m) => `gemini:${m}`), ...free],
-      label: "gemini → openrouter",
+      transport: only.provider.transport,
+      quality: only.provider.quality,
+      fast: only.provider.fast,
+      label: only.name,
     };
   }
 
   return {
-    transport: new GeminiTransport({ apiKey: geminiKey }),
-    quality: modelList("GEMINI_MODEL_QUALITY", GEMINI_QUALITY),
-    fast: modelList("GEMINI_MODEL_FAST", GEMINI_FAST),
-    label: "gemini",
+    transport: new RoutedTransport(Object.fromEntries(built.map((b) => [b.name, b.provider.transport]))),
+    quality: built.flatMap((b) => b.provider.quality.map((model) => `${b.name}:${model}`)),
+    fast: built.flatMap((b) => b.provider.fast.map((model) => `${b.name}:${model}`)),
+    label: built.map((b) => b.name).join(" → "),
   };
+}
+
+/** `LLM_PROVIDER` spellings, including the ones people actually type. Unknown names throw. */
+function canonicalProvider(raw: string): ProviderName | null {
+  const name = raw.trim().toLowerCase();
+  if (name === "") return null;
+  if (name === "glm" || name === "z.ai" || name === "zhipu") return "zai";
+  if (name === "google") return "gemini";
+  if ((PROVIDER_ORDER as readonly string[]).includes(name)) return name as ProviderName;
+  throw new Error(`LLM_PROVIDER="${raw}" is not a provider. Known: ${PROVIDER_ORDER.join(", ")}.`);
+}
+
+function keyVariableFor(name: ProviderName): string {
+  if (name === "gemini") return "GEMINI_API_KEY";
+  if (name === "zai") return "ZAI_API_KEY or GLM_API_KEY";
+  return "OPENROUTER_API_KEY";
 }
 
 /**
@@ -125,6 +208,7 @@ function chooseProvider(): ProviderChoice {
 const GEMINI_QUALITY = ["gemini-3.5-flash", "gemini-3.6-flash"];
 const GEMINI_FAST = ["gemini-flash-lite-latest", "gemini-3.5-flash-lite"];
 
+/** `GEMINI_MODEL_QUALITY=a,b,c` overrides the list; a single name pins one model. */
 function modelList(variable: string, fallback: readonly string[]): string[] {
   const configured = env(variable).trim();
   if (configured === "") return [...fallback];

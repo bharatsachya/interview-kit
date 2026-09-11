@@ -22,6 +22,8 @@ import type { RegenerateRequest, RegenerateResponse } from "@trao/api-contract";
  * risks starting two, and the progress screen already polls — a second layer of cleverness
  * would make "why did it run twice" unanswerable.
  */
+import { KIT_VERSION_HEADER } from "@/lib/api/headers";
+
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -46,10 +48,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       | null;
 
     // A 409 is not a failure to report and forget — it is the one error the UI can actually do
-    // something about, and the version it carries is what makes the retry possible. Read from
-    // the ETag first: the header is authoritative and present even when the body is not.
+    // something about, and the version it carries is what makes the retry possible. Read the
+    // header first: it is authoritative and present even when the body is not.
     if (response.status === 409) {
-      const tagged = Number(response.headers.get("etag")?.replace(/^W\//i, "").replace(/"/g, ""));
+      const tagged = Number(response.headers.get(KIT_VERSION_HEADER));
       throw new VersionConflict(
         Number.isSafeInteger(tagged) ? tagged : (body?.current_version ?? -1),
         body?.message ?? "This kit has changed since you loaded it.",
@@ -69,14 +71,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 /**
  * A write and the version it produced.
  *
- * The version comes off the ETag rather than out of the kit, because the header is what the next
- * `If-Match` has to echo. Reading it from `kit.version` would work today and break quietly the
- * first time the API weakens the tag.
+ * The version travels in `X-Kit-Version` between the browser and this app's own routes, and as
+ * `If-Match`/`ETag` between those routes and the API. The translation happens in `upstream.ts`
+ * and it is not decoration — see the note there. The API's HTTP stays correct; the hop a CDN can
+ * see does not use headers a CDN is entitled to act on.
+ *
+ * Still read from a header rather than from `kit.version`, for the original reason: the header
+ * is what the next write has to echo, and taking it from the body would break quietly the first
+ * time the two disagreed.
  */
 async function write<T>(path: string, init: RequestInit): Promise<{ body: T; version: number }> {
   const response = await requestRaw(path, init);
-  const tag = Number(response.headers.get("etag")?.replace(/^W\//i, "").replace(/"/g, ""));
-  return { body: (await response.json()) as T, version: Number.isSafeInteger(tag) ? tag : -1 };
+  const sent = Number(response.headers.get(KIT_VERSION_HEADER));
+  return { body: (await response.json()) as T, version: Number.isSafeInteger(sent) ? sent : -1 };
 }
 
 /** The same call as `request`, stopping short of the body so the caller can read headers. */
@@ -96,7 +103,7 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
       | { code?: string; message?: string; current_version?: number }
       | null;
     if (response.status === 409) {
-      const tagged = Number(response.headers.get("etag")?.replace(/^W\//i, "").replace(/"/g, ""));
+      const tagged = Number(response.headers.get(KIT_VERSION_HEADER));
       throw new VersionConflict(
         Number.isSafeInteger(tagged) ? tagged : (body?.current_version ?? -1),
         body?.message ?? "This kit has changed since you loaded it.",
@@ -148,9 +155,21 @@ export interface ScheduleFields {
   question_ids?: string[];
 }
 
-/** `If-Match`, quoted the way the API's `expectedVersion` expects to unquote it. */
+/**
+ * The version this write expects to be replacing.
+ *
+ * `X-Kit-Version`, not `If-Match`. The guard used to be a real conditional request, which is the
+ * right HTTP and the wrong thing to send through a CDN: Vercel's edge evaluates the precondition
+ * itself, and because the proxy passed the API's `ETag` back, every successful write came home
+ * as `If-Match: "5"` against `ETag: "6"` — a mismatch by construction, since a write is what
+ * changes the version. The edge then replaced a 200 with a 412 and the builder reported a
+ * conflict for a write that had already been committed.
+ *
+ * A header the CDN has no opinion about cannot be second-guessed by it. `upstream.ts` turns this
+ * back into `If-Match` for the API, which never had to change.
+ */
 function guard(version: number | undefined): Record<string, string> {
-  return version === undefined ? {} : { "if-match": `"${version}"` };
+  return version === undefined ? {} : { [KIT_VERSION_HEADER]: String(version) };
 }
 
 export const api = {

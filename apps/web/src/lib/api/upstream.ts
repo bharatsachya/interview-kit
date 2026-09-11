@@ -1,5 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import { KIT_VERSION_HEADER } from "@/lib/api/headers";
 
 /**
  * The server-side edge of the app: everything under `app/api/` forwards to `apps/api` through
@@ -92,16 +93,30 @@ export async function proxyJson(path: string, call: UpstreamCall = {}): Promise<
   const text = await response.text();
   const payload: unknown = text === "" ? { code: "EMPTY_RESPONSE", message: "The API returned nothing." } : safeParse(text);
 
-  // The ETag is the kit's version and the next write sends it back as If-Match, so it has to
-  // survive the hop. It is also the only useful thing on a 409: refetch, echo it, retry —
-  // without ever reading the body.
+  /**
+   * The kit's version, renamed on the way out.
+   *
+   * It has to survive the hop — the next write echoes it, and on a 409 it is the only useful
+   * thing in the response: refetch, echo, retry, without reading the body. But it must not
+   * survive *as an ETag*.
+   *
+   * Vercel's edge evaluates conditional requests itself. With `If-Match` on the request and an
+   * `ETag` on the response it compares the two and answers 412 on a mismatch — and a write is
+   * precisely the thing that makes them differ, because the response carries the version the
+   * write just created. Every successful edit came back as `X-Vercel-Error: PRECONDITION_FAILED`
+   * over a change that had already been committed, which is the worst shape a bug can take: the
+   * data moved and the interface said it had not.
+   *
+   * So the API keeps correct HTTP and the browser hop uses a name no CDN has an opinion about.
+   */
   const etag = response.headers.get("etag");
+  const version = etag === null ? null : etag.replace(/^W\//i, "").replace(/"/g, "");
 
   return NextResponse.json(payload, {
     status: response.status,
     headers: {
       "cache-control": "no-store",
-      ...(etag !== null ? { etag } : {}),
+      ...(version !== null ? { [KIT_VERSION_HEADER]: version } : {}),
     },
   });
 }
