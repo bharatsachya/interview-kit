@@ -6,6 +6,8 @@ import { api } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/types";
 import { normaliseCompanyUrl } from "@/lib/role-guess";
 import { Badge, CalendarIcon, GlobeIcon } from "@/components/industry/badge";
+import { glimpseUrl } from "@/lib/url-glimpse";
+import type { AskParts } from "@/lib/ask";
 import { Button } from "@/components/industry/button";
 import { ErrorNotice } from "@/components/industry/states";
 import { Eyebrow } from "@/components/industry/text";
@@ -77,7 +79,7 @@ function formatCount(value: number): string {
   return value.toLocaleString("en-US");
 }
 
-export function Composer({ onStarted }: { onStarted: (jobIds: string[], ask: string) => void }) {
+export function Composer({ onStarted }: { onStarted: (jobIds: string[], ask: AskParts) => void }) {
   const [jd, setJd] = useState("");
   const [companyUrl, setCompanyUrl] = useState("");
   const [days, setDays] = useState("");
@@ -151,7 +153,7 @@ export function Composer({ onStarted }: { onStarted: (jobIds: string[], ask: str
     if (batch) {
       await start(
         () => api.createBatch({ cases: batch.cases }),
-        `${batch.cases.length} ${batch.cases.length === 1 ? "role" : "roles"} from ${batch.fileName}`,
+        { kind: "summary", text: `${batch.cases.length} ${batch.cases.length === 1 ? "role" : "roles"} from ${batch.fileName}` },
       );
       return;
     }
@@ -169,7 +171,7 @@ export function Composer({ onStarted }: { onStarted: (jobIds: string[], ask: str
       }));
       await start(
         () => api.createBatch({ cases }),
-        `${cases.length} roles — ${drafted.map((role) => hostOf(role.companyUrl)).join(", ")}`,
+        { kind: "summary", text: `${cases.length} roles — ${drafted.map((role) => hostOf(role.companyUrl)).join(", ")}` },
       );
       return;
     }
@@ -194,13 +196,15 @@ export function Composer({ onStarted }: { onStarted: (jobIds: string[], ask: str
     // far as extraction is concerned. Labelled, so it is never mistaken for the advert's words.
     const description = withNote(trimmedJd, note.trim());
 
+    // The posting as written, not the one with the note appended: the card shows what the
+    // person sent, and the note is already visible as its own control in the composer.
     await start(
       () => api.createKit({ jd: description, company_url: url, days: dayCount }),
-      ask(trimmedJd, url, dayCount),
+      { kind: "posting", jd: trimmedJd, url, days: dayCount },
     );
   }
 
-  async function start(request: () => Promise<{ job_ids: string[] }>, asked: string) {
+  async function start(request: () => Promise<{ job_ids: string[] }>, asked: AskParts) {
     setBusy(true);
     try {
       const response = await request();
@@ -403,7 +407,9 @@ export function Composer({ onStarted }: { onStarted: (jobIds: string[], ask: str
                         <span className="hidden sm:inline">Company website</span>
                       </>
                     ) : (
-                      companyUrl.trim()
+                      // The readable part, not the raw string: a badge sits in a row with two
+                      // others and CSS truncation would spend its width on "https://www.".
+                      glimpseUrl(companyUrl)
                     )}
                   </Badge>
                 }
@@ -594,17 +600,6 @@ export function Composer({ onStarted }: { onStarted: (jobIds: string[], ask: str
   );
 }
 
-/**
- * The turn the conversation shows for this run.
- *
- * The opening of the posting rather than a sentence written on the user's behalf: what they
- * sent is what the bubble should say, and a generated "build me a kit for X" would be the app
- * putting words in their mouth. Trimmed at a word boundary so it does not stop mid-token.
- */
-function ask(jd: string, url: string, days: number): string {
-  const opening = jd.length <= 220 ? jd : `${jd.slice(0, 220).replace(/\s+\S*$/, "")}…`;
-  return `${opening}\n\n${url} · ${days === 1 ? "1 day" : `${days} days`} until the interview`;
-}
 
 /** "the job posting and how many days you have" — an Oxford-comma list, spoken. */
 function listWords(items: string[]): string {

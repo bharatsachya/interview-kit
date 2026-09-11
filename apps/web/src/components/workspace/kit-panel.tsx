@@ -26,12 +26,22 @@ export function KitPanel({
   hydrated,
   resize,
   sideBySide,
+  expanded,
   children,
 }: {
   open: boolean;
   desktop: boolean;
   hydrated: boolean;
   resize: Resizable;
+  /**
+   * The panel across the whole window.
+   *
+   * Reading is half of what this panel is for, and a question with a full answer outline is
+   * cramped in a third of the screen. Expanded it stops being a column in the row and becomes a
+   * fixed overlay — the dragged width, the resize edge and the row layout all step aside rather
+   * than fighting a width they cannot express.
+   */
+  expanded: boolean;
   /**
    * Whether the index rail sits beside the body or above it.
    *
@@ -44,7 +54,7 @@ export function KitPanel({
 }) {
   // Held back until hydration: the server cannot know how wide this was dragged, so it renders
   // the CSS default and the remembered width takes over once the client is in charge.
-  const sized = hydrated && desktop;
+  const sized = hydrated && desktop && !expanded;
   const style = sized ? { width: open ? resize.width : 0 } : undefined;
   const innerStyle = sized ? { width: resize.width } : undefined;
 
@@ -54,18 +64,22 @@ export function KitPanel({
       aria-hidden={!open}
       inert={!open}
       style={style}
-      className={`bg-surface fixed inset-y-0 right-0 z-40 w-full shrink-0 overflow-hidden duration-300 ease-out lg:relative lg:inset-y-auto lg:z-auto ${
-        resize.dragging ? "" : "motion-safe:transition-[width,transform]"
-      } ${open ? "translate-x-0 lg:w-panel" : "translate-x-full lg:w-0 lg:translate-x-0"}`}
+      className={`bg-surface fixed inset-y-0 right-0 z-40 w-full shrink-0 overflow-hidden duration-300 ease-out ${
+        expanded ? "lg:fixed lg:inset-0 lg:z-50 lg:w-full" : "lg:relative lg:inset-y-auto lg:z-auto"
+      } ${resize.dragging ? "" : "motion-safe:transition-[width,transform]"} ${
+        open ? `translate-x-0 ${expanded ? "" : "lg:w-panel"}` : "translate-x-full lg:w-0 lg:translate-x-0"
+      }`}
     >
-      {open ? (
+      {/* No edge to drag when the panel is the window: there is nothing on the other side of it
+          to trade width with. */}
+      {open && !expanded ? (
         <ResizeHandle edge="left" separatorProps={resize.separatorProps} dragging={resize.dragging} />
       ) : null}
 
       {/* Fixed inner width: the content must not reflow line by line while the panel moves. */}
       <div
         style={innerStyle}
-        className={`flex h-full w-full lg:w-panel ${sideBySide ? "flex-row" : "flex-col"}`}
+        className={`flex h-full w-full ${expanded ? "" : "lg:w-panel"} ${sideBySide ? "flex-row" : "flex-col"}`}
       >
         {children}
       </div>

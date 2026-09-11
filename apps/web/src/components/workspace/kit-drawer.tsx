@@ -40,6 +40,8 @@ export function KitDrawer({
   indexVertical,
   onSelectOutput,
   onClose,
+  expanded,
+  onToggleExpand,
 }: {
   kitId: string | null;
   builder: BuilderState;
@@ -52,6 +54,9 @@ export function KitDrawer({
   indexVertical: boolean;
   onSelectOutput: (id: KitOutputId) => void;
   onClose: () => void;
+  /** Whether the panel has taken the whole window. Only ever true where there is a window to take. */
+  expanded: boolean;
+  onToggleExpand: () => void;
 }) {
 
   // Flashcard confidence comes from the server now, keyed by kit by the hook itself. It used to
@@ -106,6 +111,18 @@ export function KitDrawer({
               </IconButton>
               <IconButton label="Export">
                 <ExportIcon />
+              </IconButton>
+              {/* Reading is the other half of what this panel is for, and a question with a
+                  long answer outline is cramped in a third of the window. Beside Close rather
+                  than in a menu: it is a two-state toggle people flip constantly. Hidden below
+                  lg, where the panel is already a full-screen sheet and there is nothing to
+                  expand into. */}
+              <IconButton
+                label={expanded ? "Shrink the kit panel" : "Expand the kit panel"}
+                onClick={onToggleExpand}
+                className="hidden lg:inline-grid"
+              >
+                {expanded ? <ShrinkIcon /> : <ExpandIcon />}
               </IconButton>
               <IconButton label="Close the kit panel" onClick={onClose}>
                 <CloseIcon />
@@ -220,6 +237,23 @@ function ExportIcon() {
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
       <polyline points="17 8 12 3 7 8" />
       <line x1="12" y1="3" x2="12" y2="15" />
+    </svg>
+  );
+}
+
+/** Arrows to the corners: the panel taking the window. Paired with ShrinkIcon, which reverses it. */
+function ExpandIcon() {
+  return (
+    <svg aria-hidden width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 21H5a2 2 0 0 1-2-2v-4M15 3h4a2 2 0 0 1 2 2v4M21 15v4a2 2 0 0 1-2 2h-4M3 9V5a2 2 0 0 1 2-2h4" />
+    </svg>
+  );
+}
+
+function ShrinkIcon() {
+  return (
+    <svg aria-hidden width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 3v4a2 2 0 0 1-2 2H3M21 9h-4a2 2 0 0 1-2-2V3M15 21v-4a2 2 0 0 1 2-2h4M3 15h4a2 2 0 0 1 2 2v4" />
     </svg>
   );
 }

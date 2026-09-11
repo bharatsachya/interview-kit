@@ -4,7 +4,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import type { Span } from "@trao/contracts";
 import { api } from "@/lib/api/client";
+import { askTitle, isPosting, type Ask, type AskParts } from "@/lib/ask";
 import { kitsOf, mergeHistory, type HistoryEntry } from "@/lib/history";
+import { AskDocument } from "@/components/workspace/ask-document";
 import { KIT_OUTPUTS, seconds, type KitOutputId } from "@/lib/kit-outputs";
 import { DESKTOP, WIDE, useMediaQuery } from "@/lib/use-media-query";
 import { useHydrated } from "@/lib/use-hydrated";
@@ -59,6 +61,9 @@ export function Workspace() {
   const [jobIds, setJobIds] = useState<string[]>(() => splitIds(searchParams.get("jobs")));
 
   const [panelOpen, setPanelOpen] = useState(() => searchParams.get("kit") !== null);
+  // Deliberately not in the URL. Which of two ways you are reading a panel is a preference of
+  // the moment, not a property of the kit, and a shared link should not force it on anyone.
+  const [panelExpanded, setPanelExpanded] = useState(false);
   const [activeOutput, setActiveOutput] = useState<KitOutputId>("brief");
   // The centre column has two things it can be: the conversation, or the comparison across
   // kits. Not a route — navigating would remount the shell and lose the run in progress.
@@ -70,7 +75,7 @@ export function Workspace() {
   // The ask and the moment it was made. The time is captured at submit rather than derived from
   // the job later: what the conversation shows is when *you* sent it, which is not the same as
   // when the server got round to it.
-  const [asks, setAsks] = useState<Record<string, { text: string; at: number }>>({});
+  const [asks, setAsks] = useState<Record<string, Ask>>({});
 
   // The history column follows the viewport until somebody says otherwise: open on a laptop,
   // closed on a phone. `null` means "no opinion yet", which is what keeps the default from
@@ -142,18 +147,27 @@ export function Workspace() {
     window.history.replaceState(null, "", search === "" ? window.location.pathname : `?${search}`);
   }, [jobIds, activeKitId]);
 
-  const closePanel = useCallback(() => setPanelOpen(false), []);
+  const closePanel = useCallback(() => {
+    setPanelOpen(false);
+    // Not a sticky mode. Expanded is how you were reading *this* kit; the next thing you open
+    // should not arrive covering the conversation you opened it from.
+    setPanelExpanded(false);
+  }, []);
 
-  // Escape closes the panel. Registered once, on the document, because focus could legitimately
-  // be anywhere inside the panel when someone reaches for it.
+  // Escape unwinds one layer at a time: expanded first, then the panel. Registered once, on the
+  // document, because focus could legitimately be anywhere inside the panel when someone reaches
+  // for it. Collapsing straight to closed would throw away two states on one keypress, and the
+  // one people mean by Escape here is "give me the conversation back", which shrinking does.
   useEffect(() => {
     if (!panelOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closePanel();
+      if (event.key !== "Escape") return;
+      if (panelExpanded) setPanelExpanded(false);
+      else closePanel();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [panelOpen, closePanel]);
+  }, [panelOpen, panelExpanded, closePanel]);
 
   const selectKit = useCallback((kitId: string) => {
     setStaleKitId(null);
@@ -169,6 +183,7 @@ export function Workspace() {
   }, []);
 
   const startNew = useCallback(() => {
+    setPanelExpanded(false);
     setStaleKitId(null);
     setComparing(false);
     setJobIds([]);
@@ -194,7 +209,7 @@ export function Workspace() {
     setHistoryOverride((open) => (open === true ? null : open));
   }, []);
 
-  const startRun = useCallback((ids: string[], ask: string) => {
+  const startRun = useCallback((ids: string[], ask: AskParts) => {
     setStaleKitId(null);
     setComparing(false);
     setJobIds(ids);
@@ -203,7 +218,7 @@ export function Workspace() {
     const at = Date.now();
     setAsks((previous) => {
       const next = { ...previous };
-      for (const id of ids) next[id] = { text: ask, at };
+      for (const id of ids) next[id] = { ...ask, at };
       return next;
     });
   }, []);
@@ -239,7 +254,7 @@ export function Workspace() {
     (jobId: string, kitId: string, spans: Span[]) => {
       setRuns((previous) => ({
         ...previous,
-        [jobId]: { jobId, kitId, spans, ask: asks[jobId]?.text ?? "" },
+        [jobId]: { jobId, kitId, spans, ask: askText(asks[jobId]) },
       }));
       setKitsLoading(true);
       setHistoryNonce((nonce) => nonce + 1);
@@ -453,7 +468,14 @@ export function Workspace() {
                     const ask = asks[jobId];
                     return (
                       <div key={jobId} className="flex flex-col gap-5">
-                        {ask ? <AskBubble at={ask.at}>{ask.text}</AskBubble> : null}
+                        {/* One posting is a document you can open; a batch is a sentence. */}
+                        {ask ? (
+                          isPosting(ask) ? (
+                            <AskDocument ask={ask} />
+                          ) : (
+                            <AskBubble at={ask.at}>{ask.text}</AskBubble>
+                          )
+                        ) : null}
 
                         {run ? (
                           <>
@@ -530,6 +552,7 @@ export function Workspace() {
 
         {/* Right region. */}
         <KitPanel
+          expanded={panelExpanded}
           open={panelOpen}
           desktop={isWide}
           hydrated={hydrated}
@@ -548,6 +571,8 @@ export function Workspace() {
             activeOutput={activeOutput}
             onSelectOutput={setActiveOutput}
             onClose={closePanel}
+            expanded={panelExpanded}
+            onToggleExpand={() => setPanelExpanded((on) => !on)}
           />
         </KitPanel>
         </div>
@@ -564,6 +589,12 @@ export function Workspace() {
  * you pasted existed nowhere you could reach it. If a run went wrong, getting your own posting
  * back meant finding the original tab again.
  */
+/** Whatever was asked, as one line — for the run summary, which has no room for a document. */
+function askText(ask: Ask | undefined): string {
+  if (ask === undefined) return "";
+  return ask.kind === "posting" ? askTitle(ask.jd) : ask.text;
+}
+
 function AskBubble({ children, at }: { children: string; at: number }) {
   // "idle" until you press it, then what actually happened. A button that says "Copied" when
   // nothing was copied is worse than one that says nothing.
