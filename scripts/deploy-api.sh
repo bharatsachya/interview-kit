@@ -199,6 +199,12 @@ if [[ "$FAKE_LLM" =~ ^(1|true|yes)$ ]]; then env_vars+=( "FAKE_LLM=true" ); fi
 if [[ "$FAKE_FETCH" =~ ^(1|true|yes)$ ]]; then env_vars+=( "FAKE_FETCH=true" ); fi
 
 if az containerapp show -n "$AZ_APP" -g "$AZ_RESOURCE_GROUP" -o none 2>/dev/null; then
+  # Note for anyone changing only an environment variable: do not reach for `az containerapp
+  # update --set-env-vars` on its own. On an Express environment that updates the app definition
+  # without replacing the running replica — the process restarts inside the existing pod, which
+  # keeps the environment it was created with, so the change appears to apply and does nothing.
+  # `--revision-suffix`, the usual way to force a roll, is rejected outright on Express. A new
+  # image tag is what actually replaces the pod, which is why this path always ships one.
   say "Updating ${AZ_APP}"
   az containerapp secret set -n "$AZ_APP" -g "$AZ_RESOURCE_GROUP" --secrets "${secrets[@]}" -o none
   az containerapp update -n "$AZ_APP" -g "$AZ_RESOURCE_GROUP" \
