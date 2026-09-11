@@ -9,7 +9,7 @@ import { KIT_OUTPUTS, seconds, type KitOutputId } from "@/lib/kit-outputs";
 import { DESKTOP, WIDE, useMediaQuery } from "@/lib/use-media-query";
 import { useHydrated } from "@/lib/use-hydrated";
 import { copyText } from "@/lib/copy";
-import { useKit } from "@/lib/use-kit";
+import { useBuilder } from "@/lib/use-builder";
 import { useResizable } from "@/lib/use-resizable";
 import { Button } from "@/components/industry/button";
 import { Assistant } from "@/components/workspace/assistant";
@@ -95,12 +95,11 @@ export function Workspace() {
     setPanelOpen(false);
   }, []);
 
-  const {
-    kit,
-    loading: kitLoading,
-    error: kitError,
-    retry: retryKit,
-  } = useKit(activeKitId, forgetStaleKit);
+  // One builder for the whole workspace, so the output grid counts the same kit the panel edits
+  // and deleting a question updates the card in the conversation without a second fetch.
+  const builder = useBuilder(activeKitId, forgetStaleKit);
+  const { kit, loading: kitLoading, error: kitError } = builder;
+  const retryKit = builder.refetch;
 
   /**
    * A `?kit=` pointing at a kit that is not there.
@@ -489,6 +488,7 @@ export function Workspace() {
         >
           <KitDrawer
             kitId={activeKitId}
+            builder={builder}
             kit={kit}
             loading={kitLoading}
             error={kitError}

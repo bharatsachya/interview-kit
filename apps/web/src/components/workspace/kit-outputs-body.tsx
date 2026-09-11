@@ -1,17 +1,25 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { QUESTION_CATEGORIES, minutesForQuestions, type InternalKit, type QuestionCategory } from "@trao/kit";
+import {
+  QUESTION_CATEGORIES,
+  minutesForQuestions,
+  type Difficulty,
+  type InternalKit,
+  type InternalQuestion,
+  type QuestionCategory,
+} from "@trao/kit";
 import { CATEGORY_META } from "@/lib/categories";
+import type { BuilderState } from "@/lib/use-builder";
+import { InlineEdit } from "@/components/industry/inline-edit";
 import { useMediaQuery } from "@/lib/use-media-query";
 import type { KitOutputId } from "@/lib/kit-outputs";
 import { Button } from "@/components/industry/button";
 import { Frame } from "@/components/industry/frame";
 import { EmptyState } from "@/components/industry/states";
 import { Kicker } from "@/components/industry/text";
+import { Ring } from "@/components/industry/mark";
 import { CoverageBar } from "@/components/kit/coverage-bar";
-import { QuestionCard } from "@/components/kit/question-card";
-import { ScheduleList } from "@/components/kit/schedule-list";
 
 /**
  * How sure you were about a card, the last time you drew it.
@@ -25,6 +33,7 @@ export type ConfidenceMap = Readonly<Record<string, Confidence>>;
 
 export function KitOutputBody({
   output,
+  builder,
   kit,
   confidence,
   onRate,
@@ -33,6 +42,7 @@ export function KitOutputBody({
   onOpenOutput,
 }: {
   output: KitOutputId;
+  builder: BuilderState;
   kit: InternalKit;
   confidence: ConfidenceMap;
   onRate: (flashcardId: string, value: Confidence) => void;
@@ -48,13 +58,15 @@ export function KitOutputBody({
       tabIndex={0}
       className="flex flex-col gap-4 px-4 pt-1 pb-6 md:px-5"
     >
-      {output === "brief" ? <BriefBody kit={kit} /> : null}
+      {output === "brief" ? <BriefBody kit={kit} builder={builder} /> : null}
       {output === "role" ? <RoleBody kit={kit} /> : null}
-      {output === "questions" ? <QuestionsBody kit={kit} track={track} onTrack={onTrack} /> : null}
-      {output === "flashcards" ? (
-        <FlashcardsBody kit={kit} confidence={confidence} onRate={onRate} />
+      {output === "questions" ? (
+        <QuestionsBody kit={kit} builder={builder} track={track} onTrack={onTrack} />
       ) : null}
-      {output === "schedule" ? <ScheduleList schedule={kit.schedule} questions={kit.questions} /> : null}
+      {output === "flashcards" ? (
+        <FlashcardsBody kit={kit} builder={builder} confidence={confidence} onRate={onRate} />
+      ) : null}
+      {output === "schedule" ? <ScheduleBody kit={kit} builder={builder} /> : null}
       {output === "practice" ? (
         <PracticeBody
           kit={kit}
@@ -69,6 +81,39 @@ export function KitOutputBody({
   );
 }
 
+/**
+ * Rebuild this section.
+ *
+ * Ghost rather than primary: regenerating is destructive to generated work — it is the one
+ * control here that takes something away — and it should not be the most obvious thing on a
+ * panel whose other buttons all add. The label says what will survive, because "regenerate"
+ * alone reads as "lose my edits" and that is precisely what it does not do.
+ */
+function RegenerateButton({
+  label,
+  running,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  running: boolean;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled || running}
+      title="Edited, pinned and hand-written items are kept"
+      className="font-head text-ink/45 hover:bg-steel-100 hover:text-steel-700 rounded-pill inline-flex h-7 shrink-0 items-center gap-1.5 px-2.5 text-xs tracking-widest uppercase transition-colors disabled:cursor-not-allowed disabled:opacity-45"
+    >
+      {running ? <Ring size={11} /> : <span aria-hidden>↻</span>}
+      {running ? "Regenerating" : label}
+    </button>
+  );
+}
+
 /* ══════════════════════════════════════════════════════════════ brief ══ */
 
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
@@ -80,8 +125,9 @@ function Section({ label, children }: { label: string; children: React.ReactNode
   );
 }
 
-function BriefBody({ kit }: { kit: InternalKit }) {
+function BriefBody({ kit, builder }: { kit: InternalKit; builder: BuilderState }) {
   const brief = kit.companyBrief;
+  const busy = builder.busy === "brief";
   const nothingFound =
     brief.whatTheyDo === "" && brief.hiringProcess === "" && brief.sources.length === 0;
 
@@ -99,20 +145,47 @@ function BriefBody({ kit }: { kit: InternalKit }) {
         </EmptyState>
       ) : (
         <>
-          <p className="text-[15px] leading-relaxed">{brief.summary}</p>
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1 text-[15px] leading-relaxed">
+              <InlineEdit
+                label="brief summary"
+                value={brief.summary}
+                multiline
+                busy={busy}
+                onSave={(summary) => builder.editBrief({ summary })}
+              />
+            </div>
+            <RegenerateButton
+              label="Rewrite"
+              running={builder.regenerating === "company_brief"}
+              disabled={builder.regenerating !== null}
+              onClick={() => builder.regenerate({ section: "company_brief" })}
+            />
+          </div>
 
           <Section label="What they do">
-            <p className="text-ink/70 text-[13.5px] leading-relaxed">{brief.whatTheyDo}</p>
+            <div className="text-ink/70 text-[13.5px] leading-relaxed">
+              <InlineEdit
+                label="what they do"
+                value={brief.whatTheyDo}
+                multiline
+                busy={busy}
+                onSave={(whatTheyDo) => builder.editBrief({ whatTheyDo })}
+              />
+            </div>
           </Section>
 
           <Section label="How they interview">
-            {brief.hiringProcess ? (
-              <p className="text-ink/70 text-[13.5px] leading-relaxed">{brief.hiringProcess}</p>
-            ) : (
-              <p className="text-ink/45 text-[13.5px] leading-relaxed">
-                No hiring page turned up on their site, so this is blank rather than guessed.
-              </p>
-            )}
+            <div className="text-ink/70 text-[13.5px] leading-relaxed">
+              <InlineEdit
+                label="how they interview"
+                value={brief.hiringProcess}
+                multiline
+                busy={busy}
+                placeholder="No hiring page turned up on their site. Add what you know."
+                onSave={(hiringProcess) => builder.editBrief({ hiringProcess })}
+              />
+            </div>
           </Section>
 
           {/* What could not be found is printed, not dropped: a brief that silently omits a
@@ -295,14 +368,17 @@ const FIRST_SHOWN = 5;
 
 function QuestionsBody({
   kit,
+  builder,
   track,
   onTrack,
 }: {
   kit: InternalKit;
+  builder: BuilderState;
   track: QuestionCategory | null;
   onTrack: (track: QuestionCategory | null) => void;
 }) {
   const [showAll, setShowAll] = useState(false);
+  const [adding, setAdding] = useState(false);
 
   const shown = track
     ? kit.questions.filter((question) => question.category === track)
@@ -346,7 +422,12 @@ function QuestionsBody({
                   {String(index + 1).padStart(2, "0")}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <QuestionCard question={question} />
+                  <EditableQuestion
+                    question={question}
+                    builder={builder}
+                    // Within the filtered view, so the arrows move it past what you can see.
+                    siblings={shown.filter((q) => q.category === question.category).map((q) => q.id)}
+                  />
                 </span>
               </li>
             ))}
@@ -360,6 +441,45 @@ function QuestionsBody({
             >
               {showAll ? "Show fewer" : `Show all ${shown.length}`}
             </button>
+          ) : null}
+
+          {/* Adding and regenerating both need a category, so both live behind the track filter.
+              With "All" selected there is no answer to "which category", and guessing one is how
+              a question ends up somewhere the user did not put it. */}
+          {track ? (
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              {adding ? null : (
+                <button
+                  type="button"
+                  onClick={() => setAdding(true)}
+                  className="bg-tint text-ink/70 hover:bg-steel-100 hover:text-steel-700 rounded-pill h-8 px-3.5 text-xs font-semibold transition-colors"
+                >
+                  + Write your own
+                </button>
+              )}
+              <RegenerateButton
+                label={`Regenerate ${CATEGORY_META[track].label.toLowerCase()}`}
+                running={builder.regenerating === `questions:${track}`}
+                disabled={builder.regenerating !== null}
+                onClick={() => builder.regenerate({ section: "questions", category: track })}
+              />
+            </div>
+          ) : (
+            <p className="text-ink/40 pt-1 text-xs">
+              Pick a track to add a question or regenerate it.
+            </p>
+          )}
+
+          {adding && track ? (
+            <NewQuestionForm
+              category={track}
+              busy={builder.busy === "question:new"}
+              onCancel={() => setAdding(false)}
+              onAdd={(draft) => {
+                builder.addQuestion(draft);
+                setAdding(false);
+              }}
+            />
           ) : null}
         </>
       )}
@@ -390,6 +510,274 @@ function TrackChip({
       {children}
       <span className="font-head text-steel-500 tabular-nums">{count}</span>
     </button>
+  );
+}
+
+/**
+ * One question, with everything you can do to it.
+ *
+ * The controls are on the card rather than behind a menu because there are five of them and a
+ * menu would hide all five to save the space of five. They are muted until the card is hovered
+ * or focused within, which keeps a list of eighteen questions readable while leaving every
+ * control one tab away — `focus-within` rather than hover alone is what keeps that true for
+ * somebody not using a mouse.
+ */
+function EditableQuestion({
+  question,
+  builder,
+  siblings,
+}: {
+  question: InternalQuestion;
+  builder: BuilderState;
+  siblings: string[];
+}) {
+  const busy = builder.busy === `question:${question.id}`;
+  const at = siblings.indexOf(question.id);
+
+  function moveTo(index: number) {
+    if (index < 0 || index >= siblings.length) return;
+    const next = [...siblings];
+    const [moved] = next.splice(at, 1);
+    next.splice(index, 0, moved as string);
+    builder.reorderQuestions(question.category, next);
+  }
+
+  return (
+    <Frame
+      as="article"
+      className={`group flex flex-col gap-2 p-4 transition-opacity ${busy ? "opacity-60" : ""}`}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <Kicker>{CATEGORY_META[question.category].label}</Kicker>
+
+        {/* Provenance in words. The user needs to know what a regeneration will spare, and
+            "pinned" is the word that says so. */}
+        {question.origin !== "generated" ? (
+          <span className="text-ink/40 text-[11px] font-medium">
+            {question.origin === "manual" ? "Yours" : question.origin === "edited" ? "Edited" : "Fallback"}
+          </span>
+        ) : null}
+
+        <span className="ml-auto flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+          <CardAction label="Move up" onClick={() => moveTo(at - 1)} disabled={busy || at <= 0}>
+            ↑
+          </CardAction>
+          <CardAction
+            label="Move down"
+            onClick={() => moveTo(at + 1)}
+            disabled={busy || at < 0 || at >= siblings.length - 1}
+          >
+            ↓
+          </CardAction>
+          <MoveMenu question={question} builder={builder} disabled={busy} />
+          <CardAction
+            label={question.pinned ? "Unpin" : "Pin so a regeneration keeps it"}
+            onClick={() => builder.pinQuestion(question.id, !question.pinned)}
+            disabled={busy}
+            active={question.pinned}
+          >
+            {question.pinned ? "★" : "☆"}
+          </CardAction>
+          <CardAction label="Delete" onClick={() => builder.deleteQuestion(question.id)} disabled={busy} danger>
+            ✕
+          </CardAction>
+        </span>
+      </div>
+
+      <div className="text-[15px] leading-snug">
+        <InlineEdit
+          label="question"
+          value={question.prompt}
+          multiline
+          busy={busy}
+          onSave={(prompt) => builder.editQuestion(question.id, { prompt })}
+        />
+      </div>
+
+      <div className="text-ink/60 text-[13px] leading-relaxed">
+        <InlineEdit
+          label="answer outline"
+          value={question.answerOutline}
+          multiline
+          busy={busy}
+          placeholder="No outline yet. Write what a good answer covers."
+          onSave={(answerOutline) => builder.editQuestion(question.id, { answerOutline })}
+        />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 pt-0.5">
+        <span className="font-head text-ink/35 text-[11px] tracking-widest uppercase">Difficulty</span>
+        {([1, 2, 3] as const).map((level) => (
+          <button
+            key={level}
+            type="button"
+            disabled={busy}
+            aria-pressed={question.difficulty === level}
+            onClick={() => builder.editQuestion(question.id, { difficulty: level })}
+            className={`rounded-pill h-6 px-2.5 text-[11px] font-semibold transition-colors ${
+              question.difficulty === level
+                ? "bg-steel-500 text-white"
+                : "bg-tint text-ink/50 hover:bg-steel-100 hover:text-steel-700"
+            }`}
+          >
+            {level === 1 ? "Easy" : level === 2 ? "Medium" : "Hard"}
+          </button>
+        ))}
+        <span className="text-ink/35 ml-auto text-[11px] tabular-nums">
+          {question.requirementIds.join(" · ") || "no requirement"}
+        </span>
+      </div>
+    </Frame>
+  );
+}
+
+function CardAction({
+  children,
+  label,
+  onClick,
+  disabled,
+  danger = false,
+  active = false,
+}: {
+  children: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  disabled: boolean;
+  danger?: boolean;
+  active?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      title={label}
+      className={`grid size-6 place-items-center rounded-md text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-30 ${
+        danger
+          ? "text-ink/35 hover:bg-alarm/10 hover:text-alarm"
+          : active
+            ? "text-steel-600 hover:bg-steel-100"
+            : "text-ink/35 hover:bg-steel-100 hover:text-steel-700"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** Move to another track. A select, because four destinations is a list, not a dialog. */
+function MoveMenu({
+  question,
+  builder,
+  disabled,
+}: {
+  question: InternalQuestion;
+  builder: BuilderState;
+  disabled: boolean;
+}) {
+  return (
+    <label className="relative inline-grid size-6 place-items-center">
+      <span className="sr-only">Move {question.id} to another track</span>
+      <span aria-hidden className="text-ink/35 pointer-events-none text-xs">
+        ⇄
+      </span>
+      <select
+        disabled={disabled}
+        value={question.category}
+        onChange={(event) => builder.moveQuestion(question.id, event.target.value as QuestionCategory)}
+        className="absolute inset-0 cursor-pointer opacity-0"
+      >
+        {QUESTION_CATEGORIES.map((category) => (
+          <option key={category} value={category}>
+            {CATEGORY_META[category].label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+/** Writing a question by hand. Origin `manual`, so no regeneration will ever take it back. */
+function NewQuestionForm({
+  category,
+  busy,
+  onAdd,
+  onCancel,
+}: {
+  category: QuestionCategory;
+  busy: boolean;
+  onAdd: (draft: {
+    category: QuestionCategory;
+    prompt: string;
+    answerOutline: string;
+    difficulty: Difficulty;
+    requirementIds: string[];
+  }) => void;
+  onCancel: () => void;
+}) {
+  const [prompt, setPrompt] = useState("");
+  const [outline, setOutline] = useState("");
+  const [difficulty, setDifficulty] = useState<Difficulty>(2);
+
+  return (
+    <Frame className="flex flex-col gap-2.5 p-4">
+      <Kicker>New {CATEGORY_META[category].label.toLowerCase()} question</Kicker>
+      <textarea
+        autoFocus
+        value={prompt}
+        onChange={(event) => setPrompt(event.target.value)}
+        placeholder="What would you ask?"
+        rows={2}
+        className="bg-surface rounded-control placeholder:text-ink/35 w-full px-3 py-2 text-sm outline-none"
+      />
+      <textarea
+        value={outline}
+        onChange={(event) => setOutline(event.target.value)}
+        placeholder="What a good answer covers — one point per line."
+        rows={2}
+        className="bg-surface rounded-control placeholder:text-ink/35 w-full px-3 py-2 text-[13px] outline-none"
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        {([1, 2, 3] as const).map((level) => (
+          <button
+            key={level}
+            type="button"
+            aria-pressed={difficulty === level}
+            onClick={() => setDifficulty(level)}
+            className={`rounded-pill h-7 px-3 text-[11px] font-semibold transition-colors ${
+              difficulty === level ? "bg-steel-500 text-white" : "bg-tint text-ink/50 hover:bg-steel-100"
+            }`}
+          >
+            {level === 1 ? "Easy" : level === 2 ? "Medium" : "Hard"}
+          </button>
+        ))}
+        <span className="ml-auto flex gap-2">
+          <Button variant="ghost" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            busy={busy}
+            busyLabel="Adding"
+            disabled={prompt.trim() === ""}
+            onClick={() =>
+              onAdd({
+                category,
+                prompt: prompt.trim(),
+                answerOutline: outline.trim(),
+                difficulty,
+                // Left empty deliberately: coverage is computed from these, and a question the
+                // user wrote does not get to claim it closes a gap. They tag it, or it stays open.
+                requirementIds: [],
+              })
+            }
+          >
+            Add question
+          </Button>
+        </span>
+      </div>
+    </Frame>
   );
 }
 
@@ -425,10 +813,12 @@ type DeckPhase = "idle" | "enter" | "settle";
 
 function FlashcardsBody({
   kit,
+  builder,
   confidence,
   onRate,
 }: {
   kit: InternalKit;
+  builder: BuilderState;
   confidence: ConfidenceMap;
   onRate: (flashcardId: string, value: Confidence) => void;
 }) {
@@ -691,6 +1081,43 @@ function FlashcardsBody({
         </button>
       </div>
 
+      {/* Editing the card you are looking at, rather than a separate list of all eighteen. The
+          deck is where you notice a card is wrong — being sent somewhere else to fix it is how
+          you end up not fixing it. */}
+      <Frame tone="tile" className="flex flex-col gap-2 p-3.5">
+        <div className="flex items-center gap-2">
+          <Kicker>Edit this card</Kicker>
+          <button
+            type="button"
+            onClick={() => builder.deleteFlashcard(card.id)}
+            disabled={builder.busy === `flashcard:${card.id}`}
+            className="text-ink/35 hover:bg-alarm/10 hover:text-alarm ml-auto grid size-6 place-items-center rounded-md text-xs transition-colors disabled:opacity-30"
+            aria-label="Delete this card"
+            title="Delete this card"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="text-[13.5px] font-medium">
+          <InlineEdit
+            label="card front"
+            value={card.front}
+            multiline
+            busy={builder.busy === `flashcard:${card.id}`}
+            onSave={(front) => builder.editFlashcard(card.id, { front })}
+          />
+        </div>
+        <div className="text-ink/60 text-[13px] leading-relaxed">
+          <InlineEdit
+            label="card back"
+            value={card.back}
+            multiline
+            busy={builder.busy === `flashcard:${card.id}`}
+            onSave={(back) => builder.editFlashcard(card.id, { back })}
+          />
+        </div>
+      </Frame>
+
       <div className="grid grid-cols-3 gap-2">
         <SignalTile label="Known" value={String(counts.known)} detail="Confident" />
         <SignalTile label="Shaky" value={String(counts.shaky)} detail="Repeat tomorrow" />
@@ -717,6 +1144,88 @@ function RateButton({
     >
       {children}
     </button>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════ schedule ══ */
+
+/**
+ * The schedule, editable a day at a time.
+ *
+ * Editing a day sets `edited: true` on it, and allocation steps around any day carrying that
+ * flag — so rewriting Tuesday survives a regeneration that reshuffles everything else. The note
+ * under the heading says so, because a user who does not know that will not risk the edit.
+ */
+function ScheduleBody({ kit, builder }: { kit: InternalKit; builder: BuilderState }) {
+  const byId = new Map(kit.questions.map((question) => [question.id, question]));
+
+  return (
+    <>
+      <div className="flex items-start gap-2">
+        <p className="text-ink/55 min-w-0 flex-1 text-[13px] leading-relaxed">
+          {kit.schedule.days.length} days, {kit.schedule.days.reduce((sum, d) => sum + d.minutes, 0)}{" "}
+          minutes. Rewrite any day and the plan will work around it — a day you have edited is
+          left alone when the schedule is rebuilt.
+        </p>
+        <RegenerateButton
+          label="Replan"
+          running={builder.regenerating === "schedule"}
+          disabled={builder.regenerating !== null}
+          onClick={() => builder.regenerate({ section: "schedule" })}
+        />
+      </div>
+
+      {kit.schedule.days.length === 0 ? (
+        <EmptyState title="No schedule yet">
+          The questions and cards are here; only the day-by-day plan is missing.
+        </EmptyState>
+      ) : (
+        <ol className="flex list-none flex-col gap-1.5">
+          {kit.schedule.days.map((day, index) => {
+            const busy = builder.busy === `day:${day.day}`;
+            const placed = day.questionIds.map((id) => byId.get(id)).filter((q) => q !== undefined);
+            return (
+              <li
+                key={day.day}
+                className={`rounded-[11px] px-3 py-2.5 ${index === 0 ? "bg-steel-100" : "bg-tint-soft"} ${
+                  busy ? "opacity-60" : ""
+                }`}
+              >
+                <div className="flex items-baseline gap-3">
+                  <span
+                    className={`font-head w-10 shrink-0 text-xs tracking-wider uppercase ${
+                      index === 0 ? "text-steel-600" : "text-ink/40"
+                    }`}
+                  >
+                    Day {day.day}
+                  </span>
+                  <span className="min-w-0 flex-1 text-[13.5px] font-medium">
+                    <InlineEdit
+                      label={`day ${day.day} focus`}
+                      value={day.focus}
+                      busy={busy}
+                      placeholder="No focus set"
+                      onSave={(focus) => builder.editScheduleDay(day.day, { focus })}
+                    />
+                  </span>
+                  {day.edited ? (
+                    <span className="text-steel-600 shrink-0 text-[11px] font-medium">Yours</span>
+                  ) : null}
+                  <span className="font-head text-ink/40 w-14 shrink-0 text-right text-[13px] tabular-nums">
+                    {day.minutes} min
+                  </span>
+                </div>
+                <p className="text-ink/40 mt-0.5 pl-[52px] text-[11.5px]">
+                  {placed.length === 0
+                    ? "No block. Rest day."
+                    : `${placed.length} ${placed.length === 1 ? "question" : "questions"}`}
+                </p>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </>
   );
 }
 

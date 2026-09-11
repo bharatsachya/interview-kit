@@ -7,7 +7,9 @@ import {
   type JobView,
   type KitListView,
   type KitView,
+  VersionConflict,
 } from "./types";
+import type { RegenerateRequest, RegenerateResponse } from "@trao/api-contract";
 
 /**
  * The typed client for `apps/api`.
@@ -39,7 +41,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { code?: string; message?: string } | null;
+    const body = (await response.json().catch(() => null)) as
+      | { code?: string; message?: string; current_version?: number }
+      | null;
+
+    // A 409 is not a failure to report and forget — it is the one error the UI can actually do
+    // something about, and the version it carries is what makes the retry possible. Read from
+    // the ETag first: the header is authoritative and present even when the body is not.
+    if (response.status === 409) {
+      const tagged = Number(response.headers.get("etag")?.replace(/^W\//i, "").replace(/"/g, ""));
+      throw new VersionConflict(
+        Number.isSafeInteger(tagged) ? tagged : (body?.current_version ?? -1),
+        body?.message ?? "This kit has changed since you loaded it.",
+      );
+    }
+
     throw new ApiError(
       response.status,
       body?.code ?? "REQUEST_FAILED",
@@ -48,6 +64,93 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return (await response.json()) as T;
+}
+
+/**
+ * A write and the version it produced.
+ *
+ * The version comes off the ETag rather than out of the kit, because the header is what the next
+ * `If-Match` has to echo. Reading it from `kit.version` would work today and break quietly the
+ * first time the API weakens the tag.
+ */
+async function write<T>(path: string, init: RequestInit): Promise<{ body: T; version: number }> {
+  const response = await requestRaw(path, init);
+  const tag = Number(response.headers.get("etag")?.replace(/^W\//i, "").replace(/"/g, ""));
+  return { body: (await response.json()) as T, version: Number.isSafeInteger(tag) ? tag : -1 };
+}
+
+/** The same call as `request`, stopping short of the body so the caller can read headers. */
+async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      headers: { "content-type": "application/json", ...init?.headers },
+    });
+  } catch (cause) {
+    throw new ApiError(0, "NETWORK_UNREACHABLE", cause instanceof Error ? cause.message : "Network request failed.");
+  }
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as
+      | { code?: string; message?: string; current_version?: number }
+      | null;
+    if (response.status === 409) {
+      const tagged = Number(response.headers.get("etag")?.replace(/^W\//i, "").replace(/"/g, ""));
+      throw new VersionConflict(
+        Number.isSafeInteger(tagged) ? tagged : (body?.current_version ?? -1),
+        body?.message ?? "This kit has changed since you loaded it.",
+      );
+    }
+    throw new ApiError(
+      response.status,
+      body?.code ?? "REQUEST_FAILED",
+      body?.message ?? `Request to ${path} failed with ${response.status}.`,
+    );
+  }
+  return response;
+}
+
+function kitPath(kitId: string, tail: string): string {
+  return `/kits/${encodeURIComponent(kitId)}/${tail}`;
+}
+
+export interface BriefFields {
+  summary?: string;
+  what_they_do?: string;
+  hiring_process?: string;
+}
+export interface QuestionFields {
+  prompt?: string;
+  answer_outline?: string;
+  difficulty?: 1 | 2 | 3;
+}
+export interface NewQuestionBody {
+  category: string;
+  prompt: string;
+  answer_outline: string;
+  difficulty: 1 | 2 | 3;
+  requirement_ids: string[];
+}
+export interface FlashcardFields {
+  front?: string;
+  back?: string;
+  requirement_ids?: string[];
+}
+export interface NewFlashcardBody {
+  front: string;
+  back: string;
+  requirement_ids: string[];
+}
+export interface ScheduleFields {
+  focus?: string;
+  minutes?: number;
+  question_ids?: string[];
+}
+
+/** `If-Match`, quoted the way the API's `expectedVersion` expects to unquote it. */
+function guard(version: number | undefined): Record<string, string> {
+  return version === undefined ? {} : { "if-match": `"${version}"` };
 }
 
 export const api = {
@@ -81,5 +184,112 @@ export const api = {
 
   async getKit(kitId: string, signal?: AbortSignal): Promise<KitView> {
     return request<KitView>(`/kits/${encodeURIComponent(kitId)}`, { signal });
+  },
+
+  // ── the builder ────────────────────────────────────────────────────────────────────────
+  //
+  // Every write answers with the whole kit and its new version rather than a patch. That looks
+  // wasteful and is not: the alternative is the client reassembling the document from a diff,
+  // and a schedule repaired server-side after an archive is precisely the change a diff of the
+  // edited field would not contain.
+
+  async editBrief(kitId: string, fields: BriefFields, version?: number) {
+    return write<KitView>(kitPath(kitId, "brief"), {
+      method: "PATCH",
+      body: JSON.stringify(fields),
+      headers: guard(version),
+    });
+  },
+
+  async addQuestion(kitId: string, question: NewQuestionBody, version?: number) {
+    return write<KitView>(kitPath(kitId, "questions"), {
+      method: "POST",
+      body: JSON.stringify(question),
+      headers: guard(version),
+    });
+  },
+
+  async editQuestion(kitId: string, questionId: string, fields: QuestionFields, version?: number) {
+    return write<KitView>(kitPath(kitId, `questions/${encodeURIComponent(questionId)}`), {
+      method: "PATCH",
+      body: JSON.stringify(fields),
+      headers: guard(version),
+    });
+  },
+
+  async deleteQuestion(kitId: string, questionId: string, version?: number) {
+    return write<KitView>(kitPath(kitId, `questions/${encodeURIComponent(questionId)}`), {
+      method: "DELETE",
+      headers: guard(version),
+    });
+  },
+
+  async pinQuestion(kitId: string, questionId: string, pinned: boolean, version?: number) {
+    return write<KitView>(kitPath(kitId, `questions/${encodeURIComponent(questionId)}/pin`), {
+      method: "POST",
+      body: JSON.stringify({ pinned }),
+      headers: guard(version),
+    });
+  },
+
+  async moveQuestion(kitId: string, questionId: string, toCategory: string, version?: number) {
+    return write<KitView>(kitPath(kitId, `questions/${encodeURIComponent(questionId)}/move`), {
+      method: "POST",
+      body: JSON.stringify({ to_category: toCategory }),
+      headers: guard(version),
+    });
+  },
+
+  async reorderQuestions(kitId: string, category: string, ids: readonly string[], version?: number) {
+    return write<KitView>(kitPath(kitId, "questions/reorder"), {
+      method: "POST",
+      body: JSON.stringify({ category, ids }),
+      headers: guard(version),
+    });
+  },
+
+  async addFlashcard(kitId: string, card: NewFlashcardBody, version?: number) {
+    return write<KitView>(kitPath(kitId, "flashcards"), {
+      method: "POST",
+      body: JSON.stringify(card),
+      headers: guard(version),
+    });
+  },
+
+  async editFlashcard(kitId: string, flashcardId: string, fields: FlashcardFields, version?: number) {
+    return write<KitView>(kitPath(kitId, `flashcards/${encodeURIComponent(flashcardId)}`), {
+      method: "PATCH",
+      body: JSON.stringify(fields),
+      headers: guard(version),
+    });
+  },
+
+  async deleteFlashcard(kitId: string, flashcardId: string, version?: number) {
+    return write<KitView>(kitPath(kitId, `flashcards/${encodeURIComponent(flashcardId)}`), {
+      method: "DELETE",
+      headers: guard(version),
+    });
+  },
+
+  async editScheduleDay(kitId: string, day: number, fields: ScheduleFields, version?: number) {
+    return write<KitView>(kitPath(kitId, `schedule/days/${day}`), {
+      method: "PATCH",
+      body: JSON.stringify(fields),
+      headers: guard(version),
+    });
+  },
+
+  /**
+   * Rebuild a section. Answers 202 with a job id, not a kit.
+   *
+   * Regeneration is several model calls and the builder stays usable while it runs, so the
+   * caller watches the job and refetches when it lands. `existing: true` means a run for this
+   * same section was already going and nothing new was started.
+   */
+  async regenerate(kitId: string, target: RegenerateRequest): Promise<RegenerateResponse> {
+    return request<RegenerateResponse>(kitPath(kitId, "regenerate"), {
+      method: "POST",
+      body: JSON.stringify(target),
+    });
   },
 };

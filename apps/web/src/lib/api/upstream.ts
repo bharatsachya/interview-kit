@@ -29,6 +29,15 @@ export interface UpstreamCall {
   method?: string;
   body?: string;
   signal?: AbortSignal;
+  /**
+   * Extra request headers to carry through, `If-Match` above all.
+   *
+   * The builder's concurrency control lives in that header. A proxy that quietly dropped it
+   * would turn every guarded write into an unconditional one — the mutation layer would keep
+   * checking a version nobody was sending, and last-write-wins would be back with the machinery
+   * to prevent it still in place and inert.
+   */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -52,6 +61,7 @@ export async function callApi(path: string, call: UpstreamCall = {}): Promise<Re
       headers: {
         "content-type": "application/json",
         ...(token !== null ? { authorization: `Bearer ${token}` } : {}),
+        ...call.headers,
       },
       ...(call.body !== undefined ? { body: call.body } : {}),
       signal: call.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -82,9 +92,17 @@ export async function proxyJson(path: string, call: UpstreamCall = {}): Promise<
   const text = await response.text();
   const payload: unknown = text === "" ? { code: "EMPTY_RESPONSE", message: "The API returned nothing." } : safeParse(text);
 
+  // The ETag is the kit's version and the next write sends it back as If-Match, so it has to
+  // survive the hop. It is also the only useful thing on a 409: refetch, echo it, retry —
+  // without ever reading the body.
+  const etag = response.headers.get("etag");
+
   return NextResponse.json(payload, {
     status: response.status,
-    headers: { "cache-control": "no-store" },
+    headers: {
+      "cache-control": "no-store",
+      ...(etag !== null ? { etag } : {}),
+    },
   });
 }
 

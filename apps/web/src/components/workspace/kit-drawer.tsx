@@ -7,6 +7,8 @@ import { KIT_OUTPUTS, outputCount, outputDuration, type KitOutputId } from "@/li
 import { Button, IconButton } from "@/components/industry/button";
 import { ErrorNotice, Loading, Skeleton } from "@/components/industry/states";
 import { Kicker } from "@/components/industry/text";
+import type { BuilderState } from "@/lib/use-builder";
+import { ConflictBanner } from "@/components/workspace/conflict-banner";
 import { KitIndex } from "@/components/workspace/kit-index";
 import {
   KitOutputBody,
@@ -31,6 +33,7 @@ import {
  */
 export function KitDrawer({
   kitId,
+  builder,
   kit,
   loading,
   error,
@@ -42,6 +45,7 @@ export function KitDrawer({
   onClose,
 }: {
   kitId: string | null;
+  builder: BuilderState;
   kit: InternalKit | null;
   loading: boolean;
   error: string | null;
@@ -128,6 +132,18 @@ export function KitDrawer({
           ) : null}
         </header>
 
+        {builder.conflict ? (
+          <div className="shrink-0 px-4 pb-3 md:px-5">
+            <ConflictBanner
+              conflict={builder.conflict}
+              busy={builder.busy !== null}
+              onReapply={builder.reapply}
+              onReload={builder.refetch}
+              onDismiss={builder.dismissConflict}
+            />
+          </div>
+        ) : null}
+
         <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
           {loading ? (
             <div className="flex flex-col gap-4 p-4 md:p-5">
@@ -151,6 +167,7 @@ export function KitDrawer({
           ) : kit ? (
             <KitOutputBody
               output={activeOutput}
+              builder={builder}
               kit={kit}
               confidence={confidenceByKit[kitId] ?? {}}
               onRate={rate}
