@@ -105,8 +105,42 @@ az acr show -n "$AZ_ACR" -g "$AZ_RESOURCE_GROUP" -o none 2>/dev/null ||
 
 # Built in Azure from this working tree. The tag carries the commit, so a running revision can
 # always be traced back to source — and `-dirty` says out loud when it cannot.
+#
+# ACR Tasks is the preferred path because it needs no local Docker and builds natively on amd64.
+# It is not available everywhere: an Azure for Students subscription refuses it outright with
+# TasksOperationsNotAllowed, and no amount of retrying changes that. So the build falls back to
+# the local daemon rather than the deployment simply being impossible on that kind of account.
+#
+# The fallback must cross-compile. Container Apps runs linux/amd64 and an Apple Silicon laptop
+# builds linux/arm64 by default; an image of the wrong architecture pushes and deploys perfectly
+# happily and then fails to start, which is a slow and confusing way to find out.
 say "Building ${image}"
-az acr build -r "$AZ_ACR" -t "prep-kit-api:${tag}" -f Dockerfile . -o none
+if [[ "${AZ_BUILD:-auto}" != "local" ]] && az acr build -r "$AZ_ACR" -t "prep-kit-api:${tag}" -f Dockerfile . -o none 2>/tmp/acr-build.$$; then
+  build_where="ACR Tasks"
+else
+  if [[ "${AZ_BUILD:-auto}" != "local" ]]; then
+    echo
+    echo "  ACR Tasks unavailable on this subscription — building locally instead:" >&2
+    sed 's/^/    /' /tmp/acr-build.$$ | head -3 >&2
+    echo
+  fi
+  rm -f /tmp/acr-build.$$
+
+  command -v docker >/dev/null || {
+    echo "Local build needs Docker, and ACR Tasks is not available on this subscription." >&2
+    exit 1
+  }
+  docker info >/dev/null 2>&1 || {
+    echo "Docker is installed but its daemon is not running. Start it and run this again." >&2
+    exit 1
+  }
+
+  say "Building locally for linux/amd64 (slower than ACR, and the only option here)"
+  az acr login -n "$AZ_ACR" -o none
+  docker buildx build --platform linux/amd64 -f Dockerfile -t "$image" --push .
+  build_where="local docker (cross-compiled to amd64)"
+fi
+rm -f /tmp/acr-build.$$
 
 say "Container Apps environment ${AZ_ENV}"
 az containerapp env show -n "$AZ_ENV" -g "$AZ_RESOURCE_GROUP" -o none 2>/dev/null ||
@@ -181,7 +215,7 @@ fi
 fqdn="$(az containerapp show -n "$AZ_APP" -g "$AZ_RESOURCE_GROUP" --query properties.configuration.ingress.fqdn -o tsv)"
 
 say "Deployed"
-printf '  image   %s\n  url     https://%s\n  model   %s\n  search  %s\n\n' \
-  "$image" "$fqdn" "$provider_label" "$([[ -n "$TAVILY_API_KEY" ]] && echo tavily || echo 'none — the discussion step records itself as skipped')"
+printf '  image   %s\n  built   %s\n  size    %s vCPU / %s\n  url     https://%s\n  model   %s\n  search  %s\n\n' \
+  "$image" "$build_where" "$AZ_CPU" "$AZ_MEMORY" "$fqdn" "$provider_label" "$([[ -n "$TAVILY_API_KEY" ]] && echo tavily || echo 'none — the discussion step records itself as skipped')"
 printf '  health  '; curl -fsS "https://${fqdn}/health" && printf '\n'
 printf '\nSet this in Vercel, then redeploy the web app:\n\n  API_ORIGIN=https://%s\n\n' "$fqdn"
