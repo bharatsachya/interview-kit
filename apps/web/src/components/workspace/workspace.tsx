@@ -13,6 +13,7 @@ import { useHydrated } from "@/lib/use-hydrated";
 import { copyText } from "@/lib/copy";
 import { useBuilder } from "@/lib/use-builder";
 import { useResizable } from "@/lib/use-resizable";
+import { useStickToBottom } from "@/lib/use-stick-to-bottom";
 import { Button } from "@/components/industry/button";
 import { Assistant } from "@/components/workspace/assistant";
 import { BootSplash } from "@/components/workspace/boot-splash";
@@ -89,6 +90,9 @@ export function Workspace() {
   // The history column follows the viewport until somebody says otherwise: open on a laptop,
   // closed on a phone. `null` means "no opinion yet", which is what keeps the default from
   // being sticky the first time the window is resized across the breakpoint.
+  // The conversation follows its newest turn unless the reader has scrolled away from it.
+  const transcript = useStickToBottom<HTMLDivElement, HTMLDivElement>();
+
   const isDesktop = useMediaQuery(DESKTOP);
   // The rail can be a column from 768 up; the panel needs 1024 before it can sit beside the
   // conversation instead of over it.
@@ -127,7 +131,10 @@ export function Workspace() {
       ...previous,
       [jobId]: { kind: "change", text: sectionLabel(section), section, at: Date.now() },
     }));
-    setJobIds([jobId]);
+    // Appended, not replaced. Each rewrite is a turn: ask, steps, what changed — and the ones
+    // before it stay above, because the value of a transcript is being able to read back what
+    // you asked for and what it did. Replacing left one turn on screen and no history at all.
+    setJobIds((previous) => (previous.includes(jobId) ? previous : [...previous, jobId]));
     setComparing(false);
   }, []);
 
@@ -208,11 +215,18 @@ export function Workspace() {
       // The conversation renders whatever is in `jobIds` above whatever kit is open, and those
       // two were allowed to drift apart: picking a kit out of history left the previous run's
       // turn in place, so a failed run's "No kit could be produced" sat directly above a kit
-      // that had very much been produced. The run that made *this* kit stays, because its trace
-      // belongs with it.
-      setJobIds((ids) => ids.filter((id) => runs[id]?.kitId === kitId));
+      // that had very much been produced. Runs that made *this* kit stay, because their traces
+      // belong with it — and so does anything still in flight, since clicking the kit a rewrite
+      // is running against should not be a way to lose sight of the rewrite.
+      setJobIds((ids) =>
+        ids.filter((id) => {
+          const run = runs[id];
+          if (run !== undefined) return run.kitId === kitId;
+          return !failedJobs.has(id);
+        }),
+      );
     },
-    [runs],
+    [runs, failedJobs],
   );
 
   const openOutput = useCallback((id: KitOutputId) => {
@@ -479,12 +493,15 @@ export function Workspace() {
             </header>
           ) : null}
 
-          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 md:px-8">
+          <div ref={transcript.viewport} className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 md:px-8">
             {/* A query container, so what is inside responds to this column's real width. The
                   output grid used viewport breakpoints, which is wrong in a three-pane layout:
                   at 1180px the viewport says "wide, three columns" while this column is 444px
                   and the cards are 140px each. */}
-              <div className="@container max-w-centre mx-auto flex w-full flex-1 flex-col gap-5 pb-6">
+              <div
+                ref={transcript.content}
+                className="@container max-w-centre mx-auto flex w-full flex-1 flex-col gap-5 pb-6"
+              >
               {staleKitId ? (
                 <div className="bg-tint rounded-card flex items-start gap-3 px-4 py-3">
                   <p className="text-ink/70 min-w-0 flex-1 text-[13px] leading-relaxed">
