@@ -268,6 +268,8 @@ export class LlmGateway implements LlmProvider {
 
   async #send(request: { model: string; prompt: string; maxOutputTokens?: number }, span: SpanHandle) {
     let lastError: unknown;
+    /** Whether the retries ran out, as opposed to stopping early on something a retry cannot fix. */
+    let exhausted = false;
 
     for (let attempt = 1; attempt <= this.#maxAttempts; attempt += 1) {
       // The deadline is checked before every attempt, not only before the first call.
@@ -294,7 +296,13 @@ export class LlmGateway implements LlmProvider {
         lastError = error;
         const providerError = error instanceof ProviderError ? error : undefined;
         if (providerError !== undefined && !providerError.retryable) break;
-        if (attempt === this.#maxAttempts) break;
+        if (attempt === this.#maxAttempts) {
+          // Every attempt against this model is spent and none produced an answer. Whatever the
+          // provider called it, the practical fact is that this model is not answering — so say
+          // so, and let the caller try the next one instead of failing the step outright.
+          exhausted = true;
+          break;
+        }
 
         if (providerError?.status === 429) span.set("rate_limited", true);
         const delay = retryDelay(attempt, providerError?.retryAfterMs, this.options.backoff);
@@ -327,7 +335,8 @@ export class LlmGateway implements LlmProvider {
       details: {
         attempts: this.#maxAttempts,
         ...(status !== undefined ? { status } : {}),
-        model_unavailable: providerError?.modelUnavailable === true || status === 503 || status === 404,
+        model_unavailable:
+          providerError?.modelUnavailable === true || status === 503 || status === 404 || exhausted,
       },
     });
   }

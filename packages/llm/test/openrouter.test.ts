@@ -88,6 +88,34 @@ describe("OpenRouterTransport", () => {
     expect((error as ProviderError).retryable).toBe(false);
   });
 
+  it("treats a timeout as this model being unavailable, not as a blip worth retrying", async () => {
+    // Fifteen seconds is the whole request budget. A model that has used it and produced nothing
+    // does not deserve three more goes while an untried model sits in the list — that is exactly
+    // how one hung free model cost a production run sixty-one seconds and then failed it.
+    const slow = transport(async () => {
+      const timeout = new Error("The operation was aborted due to timeout");
+      timeout.name = "TimeoutError";
+      throw timeout;
+    });
+
+    const error = await slow.send({ model: "m", prompt: "p" }).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ProviderError);
+    expect((error as ProviderError).modelUnavailable).toBe(true);
+    expect((error as ProviderError).retryable).toBe(false);
+  });
+
+  it("still retries an ordinary socket error against the same model", async () => {
+    const flaky = transport(async () => {
+      throw new Error("ECONNRESET");
+    });
+
+    const error = await flaky.send({ model: "m", prompt: "p" }).catch((e: unknown) => e);
+
+    expect((error as ProviderError).retryable).toBe(true);
+    expect((error as ProviderError).modelUnavailable).toBe(false);
+  });
+
   it("rejects an empty completion rather than passing it on", async () => {
     const empty = transport(async () => ok({ choices: [{ message: { content: "" }, finish_reason: "length" }] }));
 

@@ -49,20 +49,29 @@ interface OpenRouterResponse {
  * against the live API before being put here, and ordered by whether it returned parseable JSON
  * on repeated tries rather than by parameter count:
  *
- *   nex-n2.5-pro          clean JSON on every attempt
- *   ling-3.0-flash-vl     clean, and the fastest of them at well under two seconds
- *   laguna-s-2.1          clean
- *   nemotron-3-super      largest, but sometimes answers with its reasoning; the gateway's
- *                         repair round covers that, which is why it is last and not absent
+ * Ordered by how each behaves on a *real* extraction prompt, which is not the same question as
+ * how it behaves on a toy one. An earlier version of this list was ranked on two-line prompts,
+ * put nex-n2.5-pro first on that basis, and shipped: in production that model hung, burned four
+ * attempts and sixty-one seconds, and took the whole run down. The same model answers a real
+ * prompt in twelve seconds on a good day. Free capacity moves hour to hour, so ranking is a
+ * tiebreak, never a guarantee — the fallback chain is what actually keeps a run alive.
+ *
+ *   nex-n2.5-mini      ~4s    fastest of them, and complete
+ *   nemotron-3-super   ~8s    largest that reliably returns JSON
+ *   laguna-s-2.1       ~9s
+ *   nex-n2.5-pro      ~12s    good when healthy, and the one that hung
+ *
+ * Deliberately absent: nemotron-3.5-lightning, which answers with its chain of thought every
+ * time and never with parseable JSON, and ling-3.0-flash-vl, which spent most of a day 429ing.
  *
  * This list will rot the same way the last one did. When a kit comes back thin, check the models
  * endpoint before suspecting the pipeline.
  */
 export const OPENROUTER_FREE_MODELS = [
-  "nex-agi/nex-n2.5-pro:free",
-  "inclusionai/ling-3.0-flash-vl:free",
-  "poolside/laguna-s-2.1:free",
+  "nex-agi/nex-n2.5-mini:free",
   "nvidia/nemotron-3-super-120b-a12b:free",
+  "poolside/laguna-s-2.1:free",
+  "nex-agi/nex-n2.5-pro:free",
 ] as const;
 
 /** See DEFAULT_REQUEST_BUDGET_MS in gateway.ts. The gateway normally caps this lower still. */
@@ -101,8 +110,20 @@ export class OpenRouterTransport implements ModelTransport {
         signal: AbortSignal.timeout(request.timeoutMs ?? this.options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS),
       });
     } catch (error) {
-      // A timeout or a socket error has no status. Worth one more try, so retryable.
-      throw new ProviderError(`OpenRouter request failed: ${describe(error)}`, { retryable: true, cause: error });
+      // A timeout and a socket error are not the same failure and must not be treated alike.
+      //
+      // A socket error is a blip: retry the same model. A timeout means this model has already
+      // had the full request budget — fifteen seconds — and produced nothing. Spending three
+      // more attempts on it costs a minute and usually ends the same way, while a different
+      // model sitting in the list has not been asked at all. One free model hung exactly like
+      // this in production and took the whole run down with it: four attempts, sixty-one
+      // seconds, and the second model never tried.
+      const timedOut = error instanceof Error && error.name === "TimeoutError";
+      throw new ProviderError(`OpenRouter request failed: ${describe(error)}`, {
+        retryable: !timedOut,
+        modelUnavailable: timedOut,
+        cause: error,
+      });
     }
 
     if (!response.ok) {

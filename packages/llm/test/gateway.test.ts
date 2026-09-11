@@ -578,6 +578,20 @@ describe("falling back to another model", () => {
     expect(transport.requests.map((r) => r.model)).toEqual(["first", "first"]);
   });
 
+  it("moves on once a model has used up every attempt without answering", async () => {
+    // The safety net under the transport-level flags. Whatever a provider calls it, a model that
+    // has spent all its retries and produced nothing is not answering, and the next one in the
+    // list has not been asked at all. Without this the run dies on the first model that hangs.
+    const flaky = new ProviderError("socket hang up", { retryable: true });
+    const { gateway, transport } = withModels([flaky, flaky, OK], ["stuck", "spare"]);
+
+    const result = await gateway.complete(ask({ tier: "quality" }));
+
+    expect(result.data).toEqual({ greeting: "hello" });
+    // maxAttempts is 2 in this harness: both spent on "stuck", then "spare" answers.
+    expect(transport.requests.map((r) => r.model)).toEqual(["stuck", "stuck", "spare"]);
+  });
+
   it("does not fall back on a malformed request — a second model fails the same way", async () => {
     const bad = new ProviderError("400 Bad Request", { status: 400 });
     const { gateway, transport } = withModels([bad, OK], ["first", "second"]);
