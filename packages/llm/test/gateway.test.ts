@@ -592,6 +592,32 @@ describe("falling back to another model", () => {
     expect(transport.requests.map((r) => r.model)).toEqual(["stuck", "stuck", "spare"]);
   });
 
+  it("carries a run across providers when one tier's daily cap lands mid-kit", async () => {
+    // The reason the model list spans two providers at all. Gemini answers a real extraction
+    // prompt in about three seconds and then stops for the day; OpenRouter is slower and keeps
+    // going. Neither alone is a deployment. Crossing over needs nothing new — a daily cap
+    // reports itself as unavailable, which is what this chain already moves on from.
+    const capped = new ProviderError("RESOURCE_EXHAUSTED", {
+      status: 429,
+      retryable: false,
+      modelUnavailable: true,
+    });
+    const { gateway, transport } = withModels(
+      [capped, capped, OK],
+      ["gemini:gemini-flash-lite-latest", "gemini:gemini-3.5-flash", "openrouter:nex-agi/nex-n2.5-mini:free"],
+    );
+
+    const result = await gateway.complete(ask({ tier: "quality" }));
+
+    expect(result.data).toEqual({ greeting: "hello" });
+    expect(result.model).toBe("openrouter:nex-agi/nex-n2.5-mini:free");
+    expect(transport.requests.map((r) => r.model)).toEqual([
+      "gemini:gemini-flash-lite-latest",
+      "gemini:gemini-3.5-flash",
+      "openrouter:nex-agi/nex-n2.5-mini:free",
+    ]);
+  });
+
   it("does not fall back on a malformed request — a second model fails the same way", async () => {
     const bad = new ProviderError("400 Bad Request", { status: 400 });
     const { gateway, transport } = withModels([bad, OK], ["first", "second"]);

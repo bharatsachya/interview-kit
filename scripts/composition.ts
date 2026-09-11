@@ -11,7 +11,7 @@ import {
 } from "@trao/llm";
 import { NullSearchProvider, TavilySearchProvider } from "@trao/research";
 import { FakeFetcher, LiveHttpFetcher, fixtureMounts } from "@trao/retrieval";
-import { DEFAULT_REQUEST_BUDGET_MS, GeminiTransport, OPENROUTER_FREE_MODELS, OpenRouterTransport } from "@trao/llm";
+import { DEFAULT_REQUEST_BUDGET_MS, GeminiTransport, OPENROUTER_FREE_MODELS, OpenRouterTransport, RoutedTransport } from "@trao/llm";
 import type { ModelTransport } from "@trao/llm";
 import { fakeLlmResponses, gapFillResponse } from "../fixtures/fake-llm-responses";
 
@@ -105,13 +105,39 @@ function chooseProvider(): { transport: ModelTransport; quality: string[]; fast:
     );
   }
 
+  // Both keys and no explicit choice: both providers, Gemini first. Mirrors apps/api — see the
+  // longer note there. Batch wants it more than the app does, not less: five cases is thirty-odd
+  // calls, which is several times Gemini's daily cap, so a run pinned to Gemini alone stops
+  // partway through and reports failures that are about quota rather than about the pipeline.
+  if (requested === "" && openRouterKey !== "") {
+    const gemini = new GeminiTransport({ apiKey: geminiKey });
+    const openRouter = new OpenRouterTransport({
+      apiKey: openRouterKey,
+      appName: "Trao Interview Prep Kit",
+      ...(process.env["OPENROUTER_APP_URL"] !== undefined ? { appUrl: process.env["OPENROUTER_APP_URL"] } : {}),
+    });
+    const free = modelList("OPENROUTER_MODELS", [...OPENROUTER_FREE_MODELS]).map((m) => `openrouter:${m}`);
+    const chain = [...modelList("GEMINI_MODEL_FAST", GEMINI_FAST).map((m) => `gemini:${m}`), ...free];
+
+    return {
+      transport: new RoutedTransport({ gemini, openrouter: openRouter }),
+      quality: [...modelList("GEMINI_MODEL_QUALITY", GEMINI_QUALITY).map((m) => `gemini:${m}`), ...free],
+      fast: chain,
+      label: "Gemini → OpenRouter",
+    };
+  }
+
   return {
     transport: new GeminiTransport({ apiKey: geminiKey }),
-    quality: modelList("GEMINI_MODEL_QUALITY", ["gemini-flash-latest", "gemini-3.6-flash", "gemini-3.5-flash"]),
-    fast: modelList("GEMINI_MODEL_FAST", ["gemini-flash-lite-latest", "gemini-3.5-flash-lite"]),
+    quality: modelList("GEMINI_MODEL_QUALITY", GEMINI_QUALITY),
+    fast: modelList("GEMINI_MODEL_FAST", GEMINI_FAST),
     label: "Gemini",
   };
 }
+
+/** See the note in apps/api/src/main.ts: measured against a real posting, not a toy one. */
+const GEMINI_QUALITY = ["gemini-3.5-flash", "gemini-3.6-flash"];
+const GEMINI_FAST = ["gemini-flash-lite-latest", "gemini-3.5-flash-lite"];
 
 /** `GEMINI_MODEL_QUALITY=a,b,c` overrides the list; a single name pins one model. */
 function modelList(variable: string, fallback: readonly string[]): string[] {

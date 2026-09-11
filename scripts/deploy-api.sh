@@ -69,7 +69,17 @@ if [[ "$FAKE_LLM" =~ ^(1|true|yes)$ ]]; then
   provider_label="fake (canned responses — no model is called)"
   LLM_PROVIDER=""
 elif [[ -n "$LLM_PROVIDER" ]]; then
-  provider_label="$LLM_PROVIDER (explicit)"
+  provider_label="$LLM_PROVIDER (explicit — pinned to one provider)"
+elif [[ -n "$GEMINI_API_KEY" && -n "$OPENROUTER_API_KEY" ]]; then
+  # Both keys, no explicit choice: send it empty and let the API use both, Gemini first.
+  #
+  # This used to resolve to "gemini" here, and it had to: an empty variable meant "whichever
+  # chooseProvider prefers", and a deployment that had moved to OpenRouter while a spent Gemini
+  # secret lingered would silently keep calling the spent key. Empty now means something
+  # specific — one model list spanning both providers — so naming one would switch the failover
+  # off, which is the opposite of what having two keys is for.
+  provider_label="gemini → openrouter (one chain across both)"
+  LLM_PROVIDER=""
 elif [[ -n "$GEMINI_API_KEY" ]]; then
   provider_label="gemini"
   LLM_PROVIDER="gemini"

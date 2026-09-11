@@ -25,6 +25,7 @@ export {
   type RecordedCall,
   type ScriptedStep,
 } from "./fake";
+export { RoutedTransport, isRouted } from "./routed";
 export {
   DEFAULT_CACHE_TTL_SECONDS,
   DEFAULT_MAX_ATTEMPTS,

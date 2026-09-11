@@ -11,6 +11,7 @@ import {
   MemoryCacheStore,
   OPENROUTER_FREE_MODELS,
   OpenRouterTransport,
+  RoutedTransport,
   RunBudget,
   type ModelTransport,
 } from "@trao/llm";
@@ -77,13 +78,52 @@ function chooseProvider(): ProviderChoice {
     );
   }
 
+  // Both keys and no explicit choice: use both, Gemini first.
+  //
+  // The two free tiers fail in opposite directions — Gemini answers a real extraction prompt in
+  // about three seconds and then hits a daily cap that no waiting reopens, while OpenRouter's
+  // free models take twenty-odd seconds and keep going. Naming both in one list gets the fast
+  // path first and the durable one underneath, and the gateway's existing fallback carries a
+  // run across the boundary when the cap lands mid-kit.
+  //
+  // `LLM_PROVIDER=gemini` or `=openrouter` still pins one, which is what the batch runs and the
+  // tests want: a measurement of a provider should not quietly become a measurement of whichever
+  // one answered.
+  if (requested === "" && openRouterKey !== "") {
+    const gemini = new GeminiTransport({ apiKey: geminiKey });
+    const openRouter = new OpenRouterTransport({
+      apiKey: openRouterKey,
+      appName: "Trao Interview Prep Kit",
+      ...(env("OPENROUTER_APP_URL") !== "" ? { appUrl: env("OPENROUTER_APP_URL") } : {}),
+    });
+    const free = modelList("OPENROUTER_MODELS", OPENROUTER_FREE_MODELS).map((m) => `openrouter:${m}`);
+
+    return {
+      transport: new RoutedTransport({ gemini, openrouter: openRouter }),
+      quality: [...modelList("GEMINI_MODEL_QUALITY", GEMINI_QUALITY).map((m) => `gemini:${m}`), ...free],
+      fast: [...modelList("GEMINI_MODEL_FAST", GEMINI_FAST).map((m) => `gemini:${m}`), ...free],
+      label: "gemini → openrouter",
+    };
+  }
+
   return {
     transport: new GeminiTransport({ apiKey: geminiKey }),
-    quality: modelList("GEMINI_MODEL_QUALITY", ["gemini-flash-latest", "gemini-3.6-flash", "gemini-3.5-flash"]),
-    fast: modelList("GEMINI_MODEL_FAST", ["gemini-flash-lite-latest", "gemini-3.5-flash-lite"]),
+    quality: modelList("GEMINI_MODEL_QUALITY", GEMINI_QUALITY),
+    fast: modelList("GEMINI_MODEL_FAST", GEMINI_FAST),
     label: "gemini",
   };
 }
+
+/**
+ * Gemini defaults, measured against a real posting rather than a toy one.
+ *
+ * `gemini-flash-latest` is absent from both: it answered 503 "high demand" on every attempt and
+ * spent twenty seconds doing it. `gemini-2.5-flash-lite` is absent because the API now answers
+ * "no longer available to new users" — the floating aliases are the safe names, which is what
+ * gemini.ts has said all along.
+ */
+const GEMINI_QUALITY = ["gemini-3.5-flash", "gemini-3.6-flash"];
+const GEMINI_FAST = ["gemini-flash-lite-latest", "gemini-3.5-flash-lite"];
 
 function modelList(variable: string, fallback: readonly string[]): string[] {
   const configured = env(variable).trim();
