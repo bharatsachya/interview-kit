@@ -1,0 +1,35 @@
+{
+  "//": [
+    "The scripts are a composition root — `evaluate.ts`, `dev.ts` and `smoke.ts` are three of the",
+    "few files permitted to construct adapters — so this deliberately maps every package. It is",
+    "not an exception to the dependency rule; the rule constrains packages, and a composition",
+    "root is where the wiring is supposed to live.",
+    "",
+    "It exists so `npm run typecheck` covers this directory. `scripts/typecheck.mjs` has always",
+    "looked for it; until now there was nothing to find, and the pre-commit and pre-push gates",
+    "were the only code in the repository that nothing checked."
+  ],
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "baseUrl": "..",
+    "paths": {
+      "@trao/api-contract": ["packages/api-contract/src/index.ts"],
+      "@trao/auth": ["packages/auth/src/index.ts"],
+      "@trao/persistence": ["packages/persistence/src/index.ts"],
+      "@trao/contracts": ["packages/contracts/src/index.ts"],
+      "@trao/coverage": ["packages/coverage/src/index.ts"],
+      "@trao/extraction": ["packages/extraction/src/index.ts"],
+      "@trao/generation": ["packages/generation/src/index.ts"],
+      "@trao/kernel": ["packages/kernel/src/index.ts"],
+      "@trao/kit": ["packages/kit/src/index.ts"],
+      "@trao/llm": ["packages/llm/src/index.ts"],
+      "@trao/pipeline": ["packages/pipeline/src/index.ts"],
+      "@trao/practice": ["packages/practice/src/index.ts"],
+      "@trao/research": ["packages/research/src/index.ts"],
+      "@trao/retrieval": ["packages/retrieval/src/index.ts"],
+      "@trao/scheduling": ["packages/scheduling/src/index.ts"]
+    }
+  },
+  "include": ["."]
+}

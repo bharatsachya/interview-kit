@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A second push to the same branch makes the first run's answer worthless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    name: Typecheck (dependency rule)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # Every workspace against its OWN tsconfig, whose `paths` list only the packages it may
+      # import. This job is the dependency rule — a package reaching into `llm` or `pipeline`
+      # fails here and nowhere else.
+      - run: npm run typecheck
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # No database, no model, no network — the suite runs on fakes by design.
+      - run: npm test
+
+  clean-clone:
+    name: Clean clone → batch output
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      # `npm ci` rather than `npm install`, from a checkout with no node_modules — which is
+      # exactly what a grader does, and the only way a file the repository is missing shows up.
+      # A `.gitignore` line once hid a whole package this way: everything built locally, nothing
+      # built from a clone.
+      - run: npm ci
+
+      # The frozen command, run verbatim. Renaming the script or a flag breaks no test and
+      # scores zero, so the command itself is the assertion.
+      - name: npm run evaluate (the command the marking runs)
+        run: npm run evaluate -- --input fixtures/cases.json --output kits.json --fake-llm --fake-fetch
+
+      # Validated with the repository's own validator, not a hand-written assertion. A second
+      # opinion about the spec in a CI step is a second copy of the spec, and the first draft of
+      # this one checked for a top-level `results` array that Appendix B has never had.
+      - name: Output is Appendix B
+        run: npm run check:output -- kits.json
+
+      # The whole pipeline plus the Appendix A validator, on fakes. Catches what a unit test
+      # cannot: the steps disagreeing with each other.
+      - run: npm run smoke
+
+  secrets:
+    name: Secrets scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks needs history to scan it; a shallow clone silently scans almost nothing.
+          fetch-depth: 0
+      # The pre-commit hook runs this too, and `--no-verify` skips the hook. This one cannot be
+      # skipped, which is the only reason it is worth running twice.
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The deploy builds this image. Building it here means a new workspace package breaks a
+      # pull request rather than a deployment.
+      - run: docker build -t trao-interview-kit:ci .

@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "AI Interview Prep Kit \u2014 job description to a researched, editable interview prep kit",
+  "description": "AI Interview Prep Kit — job description to a researched, editable interview prep kit",
   "engines": {
     "node": ">=20"
   },
@@ -25,7 +25,11 @@
     "test:watch": "vitest",
     "typecheck": "node scripts/typecheck.mjs",
     "build": "npm run typecheck",
-    "api:once": "tsx apps/api/src/main.ts"
+    "commit:validate": "tsx scripts/commit-validate.ts",
+    "push:validate": "tsx scripts/push-validate.ts",
+    "prepare": "git config core.hooksPath .husky || true",
+    "api:once": "tsx apps/api/src/main.ts",
+    "check:output": "tsx scripts/check-output.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

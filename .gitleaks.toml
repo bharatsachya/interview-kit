@@ -1,0 +1,35 @@
+# gitleaks configuration.
+#
+# The default rule set, plus this project's own shapes. Allowlists are deliberately narrow:
+# every entry is a place a real-looking string appears in code that is not a credential, and
+# each one is a small hole, so each one is anchored to a path rather than a pattern.
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "gemini-api-key"
+description = "Google AI Studio / Gemini API key"
+regex = '''AIza[0-9A-Za-z_\-]{35}'''
+keywords = ["AIza"]
+
+[[rules]]
+id = "clerk-secret-key"
+description = "Clerk secret key"
+regex = '''sk_(test|live)_[0-9A-Za-z]{20,}'''
+keywords = ["sk_test_", "sk_live_"]
+
+[[rules]]
+id = "mongodb-srv-with-password"
+description = "MongoDB connection string carrying a password"
+regex = '''mongodb(\+srv)?:\/\/[^:\/\s]+:[^@\s]+@'''
+keywords = ["mongodb://", "mongodb+srv://"]
+
+[allowlist]
+description = "Examples and fixtures that look like credentials and are not"
+paths = [
+  '''\.env\.example$''',
+  '''(^|/)fixtures/''',
+  '''(^|/)evals/''',
+  '''\.gitleaks\.toml$''',
+]
