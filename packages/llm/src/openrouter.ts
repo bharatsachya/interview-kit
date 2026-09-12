@@ -1,3 +1,4 @@
+import { describe, retryAfterMs, safeText } from "./http";
 import { ProviderError, type ModelTransport, type ModelTransportRequest, type ModelTransportResponse } from "./transport";
 
 /**
@@ -12,8 +13,10 @@ import { ProviderError, type ModelTransport, type ModelTransportRequest, type Mo
  * before the pipeline has been exercised once. OpenRouter's free models are a different bucket,
  * so a spent Gemini quota stops being the end of the day's testing.
  *
- * The API is OpenAI-shaped, which is a happy accident rather than a design goal: it means this
- * file is also most of the work for any other OpenAI-compatible provider.
+ * The API is OpenAI-shaped, which turned out to be worth more than expected: `zai.ts` is the
+ * same dialect, and the two share their wire-level helpers through `http.ts`. What they do not
+ * share is the interesting part — every provider has its own vocabulary for "try the next model
+ * instead of waiting", and that classification stays next to the provider it describes.
  */
 
 export interface OpenRouterOptions {
@@ -206,26 +209,6 @@ export class OpenRouterTransport implements ModelTransport {
   }
 }
 
-/** `Retry-After` in seconds or as a date. Honoured over the backoff schedule when present. */
-function retryAfterMs(response: Response): number | undefined {
-  const header = response.headers.get("retry-after");
-  if (header === null) return undefined;
-
-  const seconds = Number.parseFloat(header);
-  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
-
-  const asDate = Date.parse(header);
-  return Number.isFinite(asDate) ? Math.max(0, asDate - Date.now()) : undefined;
-}
-
-async function safeText(response: Response): Promise<string> {
-  try {
-    return (await response.text()).slice(0, 300);
-  } catch {
-    return "(no body)";
-  }
-}
-
 /**
  * A 400 that means "this model cannot do that", not "your request is wrong".
  *
@@ -237,9 +220,4 @@ async function safeText(response: Response): Promise<string> {
 function isUnsupportedFeature(status: number | undefined, detail: string): boolean {
   if (status !== 400) return false;
   return /does not support feature|structured[-_ ]?outputs?|response_format/i.test(detail);
-}
-
-function describe(error: unknown): string {
-  if (error instanceof Error) return error.name === "TimeoutError" ? "timed out" : error.message;
-  return String(error);
 }

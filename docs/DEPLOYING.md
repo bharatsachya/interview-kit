@@ -187,10 +187,12 @@ out of quota by the time anyone else opens it.
 `GEMINI_MODEL_QUALITY` and `GEMINI_MODEL_FAST` each take a comma-separated list, and the cap is
 per model, so listing more models buys more headroom. `scripts/deploy-api.sh` passes both through.
 
-**The real answer is a second provider.** Set `OPENROUTER_API_KEY` in `.env.deploy` — free, no
-card, from https://openrouter.ai/keys — and its free models draw on a different bucket entirely.
-With both keys set, `LLM_PROVIDER` decides; the deploy script always sends it explicitly, so a
-Gemini secret left over from an earlier revision cannot silently win the choice back.
+**The real answer is more providers.** Set `ZAI_API_KEY` (https://z.ai/manage-apikey/apikey-list)
+and `OPENROUTER_API_KEY` (free, no card, https://openrouter.ai/keys) in `.env.deploy`. Both are
+metered separately from Gemini, and with several keys set the model list spans all of them —
+Gemini → Z.AI → OpenRouter — so a run that hits the daily wall mid-kit continues rather than
+failing. `LLM_PROVIDER` still pins one, and the deploy script always sends it explicitly, so a
+secret left over from an earlier revision cannot silently win the choice back.
 
 Setting `FAKE_LLM=true` on the deployed API turns the link into a demo that always works and
 never researches anything real — a legitimate choice for a graded submission, and one to state

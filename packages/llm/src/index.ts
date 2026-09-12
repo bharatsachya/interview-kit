@@ -39,6 +39,7 @@ export {
 } from "./gateway";
 export { GeminiTransport, type GeminiOptions } from "./gemini";
 export { OPENROUTER_FREE_MODELS, OpenRouterTransport, type OpenRouterOptions } from "./openrouter";
+export { ZAI_FAST_MODELS, ZAI_QUALITY_MODELS, ZaiTransport, type ZaiOptions } from "./zai";
 export { extractJson } from "./json";
 export { MemoryCacheStore, NullCacheStore } from "./memory-cache";
 export { DEFAULT_MAX_PAGE_CHARS, estimateTokens, truncateForPrompt, untrustedBlock } from "./tokens";

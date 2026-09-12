@@ -126,10 +126,26 @@ The web app on Vercel, the API on Azure Container Apps, MongoDB Atlas, Clerk.
 `gemini-3.5-flash`), with `gemini-flash-lite-latest` for the cheaper calls. Requirement
 extraction is the one step that asks for the `quality` tier; everything else takes `fast`.
 
-**OpenRouter** is supported as a second provider, on its free models. Not redundancy for its own
-sake: Gemini's free tier is a *daily cap* of roughly twenty requests per model rather than a
-rate limit, so once it is spent, waiting does nothing. OpenRouter's free models draw on a
-different bucket. Set `LLM_PROVIDER` to pick when both keys are present.
+**Z.AI (GLM)** and **OpenRouter** sit behind it as a fallback chain — Gemini → Z.AI →
+OpenRouter. Not redundancy for its own sake: Gemini's free tier is a *daily cap* of roughly
+twenty requests per model rather than a rate limit, so once it is spent, waiting does nothing.
+The other two are metered separately, and measured against the same real extraction prompt
+`glm-5.3-flash` answers in about four seconds against OpenRouter's twenty — so GLM is the middle
+rung rather than a second floor.
+
+It needed no new mechanism. The gateway already walked a model list and moved to the next name
+when one reported itself unavailable, and a spent daily cap reports itself exactly that way; the
+list simply names models from all three providers and `RoutedTransport` sends each
+`provider:model` name to the transport that understands it. `LLM_PROVIDER` pins one provider, or
+a comma list reorders them.
+
+GLM needed one provider-specific thing, and it is the interesting part of `packages/llm/zai.ts`:
+every GLM model reasons before answering, which is the difference between nine seconds and
+forty-four against a thirty-second request budget, and the two model families disagree about how
+to turn it down — `glm-4.x` takes `thinking: {type: "disabled"}` and 400s on nothing, `glm-5.3`
+400s on exactly that and takes `reasoning_effort` instead. Both are sent, and the `thinking`
+field is dropped for any model that has rejected it once, so the discovery costs one cheap 400
+per model per process rather than a hardcoded list of model names that would rot.
 
 Every model call in the system goes through one gateway (`packages/llm`) — RPM and TPM token
 buckets, a request queue, exponential backoff with jitter, `Retry-After` handling, a response
@@ -400,8 +416,8 @@ with a fake Clerk verifier — ownership, versions, idempotency and the event st
 **Gemini's free tier is a daily cap, not a rate limit.** Roughly twenty requests per day per
 model, and one kit costs six to eight calls — so a free-tier key supports two or three
 generations per day *across everyone using a deployed link*. The gateway's RPM and TPM buckets do
-not help with this; nothing does except a paid key or a second provider. This is why OpenRouter
-support exists, and it is the single most likely reason a live demo link disappoints.
+not help with this; nothing does except a paid key or another provider. This is why the Z.AI and
+OpenRouter rungs exist, and it is the single most likely reason a live demo link disappoints.
 
 **Traces are not persisted.** They live in the API process, which is why the deployment runs on a
 single replica and never scales to zero. A revision deployed mid-run loses that run's spans; the

@@ -26,8 +26,16 @@ cd "$here"
 : "${CLERK_ISSUER:?Required in production — e.g. https://your-app.clerk.accounts.dev}"
 : "${GEMINI_API_KEY:=}"
 : "${OPENROUTER_API_KEY:=}"
+: "${ZAI_API_KEY:=}"
+: "${GLM_API_KEY:=}"
 : "${LLM_PROVIDER:=}"
 : "${OPENROUTER_MODELS:=}"
+: "${ZAI_MODELS:=}"
+: "${ZAI_BASE_URL:=}"
+
+# The key is issued as a GLM key and the provider is called Z.AI. Both names work everywhere
+# else, so both work here; the rest of this script only knows the one name.
+[[ -z "$ZAI_API_KEY" && -n "$GLM_API_KEY" ]] && ZAI_API_KEY="$GLM_API_KEY"
 : "${GEMINI_MODEL_QUALITY:=}"
 : "${GEMINI_MODEL_FAST:=}"
 : "${GEMINI_RPM:=}"
@@ -59,46 +67,53 @@ cd "$here"
 # deployment was live: its free tier is a *daily cap* of roughly twenty requests per model, not a
 # rate limit, and one kit costs six to eight calls. A link handed to a reviewer is out of quota
 # after two or three generations and waiting does not help. OpenRouter's free models draw on a
-# different bucket, so the deployment needs to be able to express that choice — `apps/api` has
-# supported both providers since H8 and only this script did not.
+# different bucket, as does Z.AI's GLM, so the deployment needs to be able to express that
+# choice — `apps/api` has supported the chain since H8 and only this script did not.
 #
 # `LLM_PROVIDER` is always sent explicitly. `chooseProvider` prefers Gemini when the variable is
 # empty and both keys are present, so a deployment that switched to OpenRouter while a Gemini
 # secret was still set would silently keep calling the spent key.
+present=()
+[[ -n "$GEMINI_API_KEY" ]] && present+=( gemini )
+[[ -n "$ZAI_API_KEY" ]] && present+=( zai )
+[[ -n "$OPENROUTER_API_KEY" ]] && present+=( openrouter )
+
 if [[ "$FAKE_LLM" =~ ^(1|true|yes)$ ]]; then
   provider_label="fake (canned responses — no model is called)"
   LLM_PROVIDER=""
 elif [[ -n "$LLM_PROVIDER" ]]; then
-  provider_label="$LLM_PROVIDER (explicit — pinned to one provider)"
-elif [[ -n "$GEMINI_API_KEY" && -n "$OPENROUTER_API_KEY" ]]; then
-  # Both keys, no explicit choice: send it empty and let the API use both, Gemini first.
+  provider_label="$LLM_PROVIDER (explicit — pinned)"
+elif (( ${#present[@]} == 0 )); then
+  echo "Set GEMINI_API_KEY, ZAI_API_KEY (or GLM_API_KEY) or OPENROUTER_API_KEY in .env.deploy," >&2
+  echo "or FAKE_LLM=true to deploy a demo that calls no model at all." >&2
+  echo "See docs/DEPLOYING.md — 'Known limitations'." >&2
+  exit 1
+elif (( ${#present[@]} == 1 )); then
+  LLM_PROVIDER="${present[0]}"
+  provider_label="$LLM_PROVIDER"
+else
+  # Several keys, no explicit choice: send it empty and let the API use all of them as one
+  # chain, in its own preference order.
   #
   # This used to resolve to "gemini" here, and it had to: an empty variable meant "whichever
-  # chooseProvider prefers", and a deployment that had moved to OpenRouter while a spent Gemini
-  # secret lingered would silently keep calling the spent key. Empty now means something
-  # specific — one model list spanning both providers — so naming one would switch the failover
-  # off, which is the opposite of what having two keys is for.
-  provider_label="gemini → openrouter (one chain across both)"
+  # chooseProvider prefers", and a deployment that had moved to another provider while a spent
+  # Gemini secret lingered would silently keep calling the spent key. Empty now means something
+  # specific — one model list spanning every provider with a key — so naming one would switch
+  # the failover off, which is the opposite of what having several keys is for.
   LLM_PROVIDER=""
-elif [[ -n "$GEMINI_API_KEY" ]]; then
-  provider_label="gemini"
-  LLM_PROVIDER="gemini"
-elif [[ -n "$OPENROUTER_API_KEY" ]]; then
-  provider_label="openrouter"
-  LLM_PROVIDER="openrouter"
-else
-  echo "Set GEMINI_API_KEY or OPENROUTER_API_KEY in .env.deploy, or FAKE_LLM=true to deploy a" >&2
-  echo "demo that calls no model at all. See docs/DEPLOYING.md — 'Known limitations'." >&2
-  exit 1
+  provider_label="$(printf '%s → ' "${present[@]}")"
+  provider_label="${provider_label% → } (one chain across all of them)"
 fi
 
-if [[ "$LLM_PROVIDER" == "openrouter" && -z "$OPENROUTER_API_KEY" ]]; then
-  echo "LLM_PROVIDER=openrouter but OPENROUTER_API_KEY is empty." >&2
-  exit 1
-fi
-if [[ "$LLM_PROVIDER" == "gemini" && -z "$GEMINI_API_KEY" ]]; then
-  echo "LLM_PROVIDER=gemini but GEMINI_API_KEY is empty." >&2
-  exit 1
+# A pinned provider whose key is missing is a typo, not a deployment. Catch it here rather than
+# in a container that will not start.
+if [[ -n "$LLM_PROVIDER" && ! "$FAKE_LLM" =~ ^(1|true|yes)$ ]]; then
+  case "$LLM_PROVIDER" in
+    gemini) [[ -n "$GEMINI_API_KEY" ]] || { echo "LLM_PROVIDER=gemini but GEMINI_API_KEY is empty." >&2; exit 1; } ;;
+    zai|glm) [[ -n "$ZAI_API_KEY" ]] || { echo "LLM_PROVIDER=$LLM_PROVIDER but ZAI_API_KEY/GLM_API_KEY is empty." >&2; exit 1; } ;;
+    openrouter) [[ -n "$OPENROUTER_API_KEY" ]] || { echo "LLM_PROVIDER=openrouter but OPENROUTER_API_KEY is empty." >&2; exit 1; } ;;
+    *) echo "LLM_PROVIDER=$LLM_PROVIDER is not a provider. Known: gemini, zai, openrouter." >&2; exit 1 ;;
+  esac
 fi
 
 tag="$(git rev-parse --short HEAD)$( git diff --quiet || echo -dirty )"
@@ -193,12 +208,16 @@ if [[ -n "$OPENROUTER_API_KEY" ]]; then
   secrets+=( "openrouter-key=${OPENROUTER_API_KEY}" )
   env_vars+=( "OPENROUTER_API_KEY=secretref:openrouter-key" )
 fi
+if [[ -n "$ZAI_API_KEY" ]]; then
+  secrets+=( "zai-key=${ZAI_API_KEY}" )
+  env_vars+=( "ZAI_API_KEY=secretref:zai-key" )
+fi
 if [[ -n "$TAVILY_API_KEY" ]]; then
   secrets+=( "tavily-key=${TAVILY_API_KEY}" )
   env_vars+=( "TAVILY_API_KEY=secretref:tavily-key" )
 fi
 
-for pass_through in OPENROUTER_MODELS GEMINI_MODEL_QUALITY GEMINI_MODEL_FAST GEMINI_RPM GEMINI_TPM LLM_REQUEST_TIMEOUT_MS CORS_ORIGINS; do
+for pass_through in OPENROUTER_MODELS ZAI_MODELS ZAI_BASE_URL GEMINI_MODEL_QUALITY GEMINI_MODEL_FAST GEMINI_RPM GEMINI_TPM LLM_REQUEST_TIMEOUT_MS CORS_ORIGINS; do
   [[ -n "${!pass_through}" ]] && env_vars+=( "${pass_through}=${!pass_through}" )
 done
 

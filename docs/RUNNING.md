@@ -155,20 +155,32 @@ What to look for:
 Copy `.env.example` to `.env`. It is read automatically by the dev runner, the batch command and
 the API.
 
-**For a real run you need one model key — either provider:**
+**For a real run you need one model key — any of the three:**
 
 ```bash
 GEMINI_API_KEY=...        # https://aistudio.google.com/apikey — free tier, no card
-# or
+ZAI_API_KEY=...           # https://z.ai/manage-apikey/apikey-list  (GLM_API_KEY also works)
 OPENROUTER_API_KEY=...    # https://openrouter.ai/keys — free tier, no card
 ```
 
-With both set, `LLM_PROVIDER=gemini|openrouter` decides; with one, that one is used.
+Worth having all three, because they fail in three different directions:
 
-Worth having both. Gemini's free tier is a **daily wall**, not a rate limit — once it is spent,
-waiting minutes does nothing and the day's testing is over. OpenRouter's `:free` models draw on a
-different bucket, so `LLM_PROVIDER=openrouter` keeps you working. They are alternatives rather
-than a chain: the gateway falls back between *models* within a provider, not between providers.
+| Provider | A real extraction prompt | How it runs out |
+|---|---|---|
+| Gemini | ~3s | a **daily wall**, roughly 20 requests per model — waiting minutes does nothing |
+| Z.AI (GLM) | ~4s | its own meter, independent of the other two |
+| OpenRouter | ~20s | free capacity moves hour to hour, but it keeps going |
+
+They are **one chain, not alternatives**. With more than one key set, the model list names models
+from every provider in that order and `RoutedTransport` sends each `provider:model` name to the
+transport that understands it. The gateway already walked a list and moved on when a model
+reported itself unavailable, and a spent daily cap reports itself exactly that way — so a run
+that hits Gemini's wall mid-kit continues on GLM rather than ending.
+
+`LLM_PROVIDER=gemini|zai|openrouter` pins one, which is what a measurement wants: a number for a
+provider should not quietly become a number for whichever one answered. A comma list
+(`LLM_PROVIDER=zai,gemini`) changes the order without changing the code. Naming a provider whose
+key is missing is an error rather than a silent drop.
 
 Everything else has a working default:
 
@@ -178,7 +190,9 @@ Everything else has a working default:
 | `MONGODB_URI` | running the API with persistence | unset → in-memory, and the API says so on startup |
 | `CLERK_ISSUER` | running the API with real auth | unset → dev auth (refused under `NODE_ENV=production`) |
 | `ALLOW_PRIVATE_HOSTS` | never set it by hand | `false`; `npm run evaluate` turns it on for itself |
-| `GEMINI_MODEL_QUALITY` / `_FAST` | changing models | `gemini-2.5-flash` / `gemini-2.5-flash-lite` |
+| `GEMINI_MODEL_QUALITY` / `_FAST` | changing models | `gemini-3.5-flash` / `gemini-flash-lite-latest` |
+| `ZAI_MODELS` | changing GLM models | `glm-5.3`, `glm-5.3-flash`, `glm-4.6` |
+| `ZAI_BASE_URL` | only for the mainland endpoint | `https://api.z.ai/api/paas/v4` |
 | `GEMINI_RPM` / `GEMINI_TPM` | a paid tier | `10` / `250000` |
 
 A real one-case run once the key is in place:

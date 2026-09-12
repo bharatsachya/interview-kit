@@ -43,9 +43,9 @@ reads for judgment, not just output.
 
 ## Stack
 
-Next.js + Tailwind · Node + Express · TypeScript · MongoDB · Clerk · Gemini Flash (free tier)
-· Tavily (free tier, key optional) · fetch + Cheerio (no headless browser) · Vitest ·
-Azure Container Apps + Vercel.
+Next.js + Tailwind · Node + Express · TypeScript · MongoDB · Clerk · Gemini Flash → Z.AI (GLM)
+→ OpenRouter, one model list across all three · Tavily (free tier, key optional) · fetch +
+Cheerio (no headless browser) · Vitest · Azure Container Apps + Vercel.
 
 Deviations to justify in the README: Clerk instead of hand-rolled auth (brief says keep auth
 minimal and does not score it), and deployment on Azure credits (the brief expects free tiers —
