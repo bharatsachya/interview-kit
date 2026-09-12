@@ -113,9 +113,17 @@ every gate has passed. Two properties are deliberate:
   an unreachable Atlas, and both have happened here. The job fails if nothing answers.
 * **A web-only commit does not deploy.** Rolling the pod kills whatever generation is in flight,
   because `--min-replicas 1` exists precisely so job state can live in the process. `apps/web`
-  deploys itself on Vercel and has no business restarting Azure.
+  deploys itself on Vercel and has no business restarting Azure. A diff that *cannot* be computed
+  — a force push, a fetch that did not reach the old commit — is treated as a backend change, on
+  the grounds that a needless pod restart is cheaper than silently not shipping one.
+* **An unconfigured fork does not fail.** The deploy is skipped, not attempted, when the
+  credential or any of the three variables is missing, and the run summary says which ones. A red
+  badge should mean the code is broken, not that a clone of this repository has no Azure
+  subscription — and `azure/login` answers an empty `creds` with *"Not all values are present.
+  Ensure 'client-id' and 'tenant-id' are supplied"*, which names neither the secret nor the fact
+  that it is empty.
 
-Setup is one credential and three variables:
+Setup is one credential and three variables. Without all four, the deploy skips:
 
 ```bash
 az ad sp create-for-rbac --name prep-kit-ci --role Contributor \
@@ -127,6 +135,19 @@ Scoped to the one resource group rather than the subscription: it needs to push 
 and update the app, and nothing else. Put the JSON in the repository secret `AZURE_CREDENTIALS`,
 and set the repository *variables* `AZ_ACR`, `AZ_RESOURCE_GROUP` and `AZ_APP` — those are names,
 not secrets, and a workflow log that shows which registry it pushed to is easier to debug.
+
+With the `gh` CLI, which is the whole of it:
+
+```bash
+gh secret set AZURE_CREDENTIALS < creds.json   # the --json-auth output from above
+gh variable set AZ_ACR            --body prepkitacr
+gh variable set AZ_RESOURCE_GROUP --body prep-kit
+gh variable set AZ_APP            --body prep-kit-api
+
+gh secret list && gh variable list             # all four, or the deploy skips
+```
+
+The names must match `.env.deploy` — the same registry, group and app the script pushes to.
 
 ACR Tasks is not used. An Azure for Students subscription refuses it outright
 (`TasksOperationsNotAllowed`), so both the script and the workflow build with Docker — the

@@ -15,10 +15,13 @@ jobs:
     name: Typecheck (dependency rule)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          # The version the Dockerfile ships (`node:22-slim`), not the `engines` floor of 20.
+          # CI was green on a runtime production does not run, which is the wrong half of the
+          # range to test when only one can be afforded.
+          node-version: 22
           cache: npm
       - run: npm ci
       # Every workspace against its OWN tsconfig, whose `paths` list only the packages it may
@@ -30,10 +33,13 @@ jobs:
     name: Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          # The version the Dockerfile ships (`node:22-slim`), not the `engines` floor of 20.
+          # CI was green on a runtime production does not run, which is the wrong half of the
+          # range to test when only one can be afforded.
+          node-version: 22
           cache: npm
       - run: npm ci
       # No database, no model, no network — the suite runs on fakes by design.
@@ -43,10 +49,13 @@ jobs:
     name: Clean clone → batch output
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          # The version the Dockerfile ships (`node:22-slim`), not the `engines` floor of 20.
+          # CI was green on a runtime production does not run, which is the wrong half of the
+          # range to test when only one can be afforded.
+          node-version: 22
           cache: npm
       # `npm ci` rather than `npm install`, from a checkout with no node_modules — which is
       # exactly what a grader does, and the only way a file the repository is missing shows up.
@@ -73,13 +82,13 @@ jobs:
     name: Secrets scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # gitleaks needs history to scan it; a shallow clone silently scans almost nothing.
           fetch-depth: 0
       # The pre-commit hook runs this too, and `--no-verify` skips the hook. This one cannot be
       # skipped, which is the only reason it is worth running twice.
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@v3
         env:
           GITLEAKS_CONFIG: .gitleaks.toml
 
@@ -87,7 +96,7 @@ jobs:
     name: Docker build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # The deploy builds this image. Building it here means a new workspace package breaks a
       # pull request rather than a deployment.
       - run: docker build -t trao-interview-kit:ci .
@@ -102,40 +111,97 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Two commits, so the change detection below has something to diff against.
           fetch-depth: 2
 
-      # A deployment is not free here, and not harmless: `--min-replicas 1 --max-replicas 1`
-      # exists because a job's record and its spans live in the process running it, so rolling
-      # the pod kills whatever generation is in flight. A web-only commit must not do that —
-      # apps/web deploys itself on Vercel and has no business restarting Azure.
-      - name: Did anything the image contains change?
-        id: changed
+      # Two questions, answered before anything is built, because the answer to either one is
+      # "do nothing" and doing nothing must not look like a failure.
+      #
+      # `secrets` is not available in a job-level `if:`, which is why this is a step that writes
+      # an output rather than a condition on the job.
+      - name: Is there anything to deploy, and anywhere to deploy it?
+        id: plan
+        env:
+          # Mapped into the environment because the `secrets` context cannot be read in `run:`
+          # directly. Only its emptiness is ever tested — the value is never echoed.
+          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
         run: |
-          if [ -z "${{ github.event.before }}" ] || [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
-            echo "backend=true" >> "$GITHUB_OUTPUT"   # first push on a branch: nothing to compare
-            exit 0
-          fi
-          files="$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} || echo ALL)"
-          if echo "$files" | grep -qE '^(apps/api/|packages/|scripts/|fixtures/|Dockerfile|\.dockerignore|package-lock\.json|package\.json|tsconfig)'; then
-            echo "backend=true" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+
+          # A deployment is not free here, and not harmless: `--min-replicas 1 --max-replicas 1`
+          # exists because a job's record and its spans live in the process running it, so rolling
+          # the pod kills whatever generation is in flight. A web-only commit must not do that —
+          # apps/web deploys itself on Vercel and has no business restarting Azure.
+          before="${{ github.event.before }}"
+          if [ -z "$before" ] || [ "$before" = "0000000000000000000000000000000000000000" ]; then
+            backend=true   # first push on a branch: nothing to compare against
+          elif ! files="$(git diff --name-only "$before" "${{ github.sha }}" 2>/dev/null)"; then
+            # Fail OPEN. A diff that cannot be computed — a force push, a shallow fetch that did
+            # not reach the old commit — must not be read as "nothing changed", because that
+            # silently does not ship a backend change. An unnecessary pod restart is the cheaper
+            # mistake of the two.
+            #
+            # The previous form was `files="$(git diff … || echo ALL)"`, which looked like this
+            # and was not: "ALL" matches none of the prefixes below, so an uncomputable diff fell
+            # through to `backend=false` — the opposite of what the fallback was written for.
+            echo "Could not diff against $before — assuming the image changed." >> "$GITHUB_STEP_SUMMARY"
+            backend=true
+          elif printf '%s\n' "$files" \
+               | grep -qE '^(apps/api/|packages/|scripts/|fixtures/|Dockerfile|\.dockerignore|package-lock\.json|package\.json|tsconfig)'; then
+            backend=true
           else
-            echo "backend=false" >> "$GITHUB_OUTPUT"
+            backend=false
+          fi
+
+          # Every one of them, not just the credentials. With a service principal but no
+          # `AZ_ACR`, the next step runs `az acr login -n ""` and fails with something that reads
+          # like a broken registry rather than an unset variable.
+          missing=""
+          [ -n "$AZURE_CREDENTIALS" ]              || missing="$missing AZURE_CREDENTIALS(secret)"
+          [ -n "${{ vars.AZ_ACR }}" ]              || missing="$missing AZ_ACR(variable)"
+          [ -n "${{ vars.AZ_APP }}" ]              || missing="$missing AZ_APP(variable)"
+          [ -n "${{ vars.AZ_RESOURCE_GROUP }}" ]   || missing="$missing AZ_RESOURCE_GROUP(variable)"
+
+          if [ -n "$missing" ]; then
+            configured=false
+          else
+            configured=true
+          fi
+
+          echo "backend=$backend" >> "$GITHUB_OUTPUT"
+          echo "configured=$configured" >> "$GITHUB_OUTPUT"
+          echo "deploy=$([ "$backend" = true ] && [ "$configured" = true ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+          # Said out loud either way. A deploy that did not happen and did not say so is how a
+          # commit sits on main for a week believing it shipped.
+          if [ "$configured" = false ]; then
+            {
+              echo "### Deploy skipped — Azure is not configured"
+              echo
+              echo "Every gate passed. Nothing was deployed because this repository has no"
+              echo "deployment credentials set:"
+              echo
+              for name in $missing; do echo "- \`${name}\`"; done
+              echo
+              echo "See \`docs/DEPLOYING.md\`. Until they are set, \`scripts/deploy-api.sh\` from a"
+              echo "local \`.env.deploy\` is the supported way to ship the API."
+            } >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$backend" = false ]; then
             echo "Nothing in the API image changed — skipping the deploy." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Sign in to Azure
-        if: steps.changed.outputs.backend == 'true'
-        uses: azure/login@v2
+        if: steps.plan.outputs.deploy == 'true'
+        uses: azure/login@v3
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       # Built here rather than by ACR Tasks, which an Azure for Students subscription refuses
       # outright — and natively on amd64, so unlike a laptop this needs no cross-compilation.
       - name: Build and push the image
-        if: steps.changed.outputs.backend == 'true'
+        if: steps.plan.outputs.deploy == 'true'
         run: |
           set -euo pipefail
           az acr login -n "${{ vars.AZ_ACR }}"
@@ -152,7 +218,7 @@ jobs:
       # GitHub — a wider blast radius than the deployment is worth. A new variable is a reason to
       # run the script once by hand; a code change is not.
       - name: Ship the revision
-        if: steps.changed.outputs.backend == 'true'
+        if: steps.plan.outputs.deploy == 'true'
         run: |
           set -euo pipefail
           az containerapp update \
@@ -166,7 +232,7 @@ jobs:
       # refuses to boot without MONGODB_URI or CLERK_ISSUER and dies on an unreachable Atlas, and
       # both of those have happened — so the job does not finish until the thing answers.
       - name: Wait for it to answer
-        if: steps.changed.outputs.backend == 'true'
+        if: steps.plan.outputs.deploy == 'true'
         run: |
           set -euo pipefail
           fqdn="$(az containerapp show -n "${{ vars.AZ_APP }}" -g "${{ vars.AZ_RESOURCE_GROUP }}" \
