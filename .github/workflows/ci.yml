@@ -91,3 +91,90 @@ jobs:
       # The deploy builds this image. Building it here means a new workspace package breaks a
       # pull request rather than a deployment.
       - run: docker build -t trao-interview-kit:ci .
+
+  deploy-api:
+    name: Deploy the API
+    # Only after every gate. A deployment restarts the one replica, so shipping something that
+    # does not typecheck costs a running generation as well as a revision.
+    needs: [typecheck, test, clean-clone, secrets, docker]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Two commits, so the change detection below has something to diff against.
+          fetch-depth: 2
+
+      # A deployment is not free here, and not harmless: `--min-replicas 1 --max-replicas 1`
+      # exists because a job's record and its spans live in the process running it, so rolling
+      # the pod kills whatever generation is in flight. A web-only commit must not do that —
+      # apps/web deploys itself on Vercel and has no business restarting Azure.
+      - name: Did anything the image contains change?
+        id: changed
+        run: |
+          if [ -z "${{ github.event.before }}" ] || [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            echo "backend=true" >> "$GITHUB_OUTPUT"   # first push on a branch: nothing to compare
+            exit 0
+          fi
+          files="$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} || echo ALL)"
+          if echo "$files" | grep -qE '^(apps/api/|packages/|scripts/|fixtures/|Dockerfile|\.dockerignore|package-lock\.json|package\.json|tsconfig)'; then
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "backend=false" >> "$GITHUB_OUTPUT"
+            echo "Nothing in the API image changed — skipping the deploy." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Sign in to Azure
+        if: steps.changed.outputs.backend == 'true'
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # Built here rather than by ACR Tasks, which an Azure for Students subscription refuses
+      # outright — and natively on amd64, so unlike a laptop this needs no cross-compilation.
+      - name: Build and push the image
+        if: steps.changed.outputs.backend == 'true'
+        run: |
+          set -euo pipefail
+          az acr login -n "${{ vars.AZ_ACR }}"
+          image="${{ vars.AZ_ACR }}.azurecr.io/prep-kit-api:${GITHUB_SHA::7}"
+          docker build --platform linux/amd64 -f Dockerfile -t "$image" .
+          docker push "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      # The image and nothing else.
+      #
+      # No environment variables and no secrets are sent from here, deliberately. They are set on
+      # the app already, by `scripts/deploy-api.sh` from a local `.env.deploy`, and re-applying
+      # them would mean a second copy of MONGODB_URI, CLERK_ISSUER and three API keys living in
+      # GitHub — a wider blast radius than the deployment is worth. A new variable is a reason to
+      # run the script once by hand; a code change is not.
+      - name: Ship the revision
+        if: steps.changed.outputs.backend == 'true'
+        run: |
+          set -euo pipefail
+          az containerapp update \
+            -n "${{ vars.AZ_APP }}" -g "${{ vars.AZ_RESOURCE_GROUP }}" \
+            --image "$IMAGE" -o none
+          fqdn="$(az containerapp show -n "${{ vars.AZ_APP }}" -g "${{ vars.AZ_RESOURCE_GROUP }}" \
+            --query properties.configuration.ingress.fqdn -o tsv)"
+          echo "https://$fqdn" >> "$GITHUB_STEP_SUMMARY"
+
+      # A revision that starts and then crashes is a deployment that reported success. The API
+      # refuses to boot without MONGODB_URI or CLERK_ISSUER and dies on an unreachable Atlas, and
+      # both of those have happened — so the job does not finish until the thing answers.
+      - name: Wait for it to answer
+        if: steps.changed.outputs.backend == 'true'
+        run: |
+          set -euo pipefail
+          fqdn="$(az containerapp show -n "${{ vars.AZ_APP }}" -g "${{ vars.AZ_RESOURCE_GROUP }}" \
+            --query properties.configuration.ingress.fqdn -o tsv)"
+          for attempt in $(seq 1 30); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "https://$fqdn/health" || true)"
+            if [ "$code" = "200" ]; then echo "healthy after ${attempt} attempts"; exit 0; fi
+            sleep 10
+          done
+          echo "The new revision never answered /health." >&2
+          exit 1

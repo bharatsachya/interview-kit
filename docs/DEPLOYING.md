@@ -103,6 +103,35 @@ request.
 Persisting job state to Mongo — spans included — is what lifts this, and is the first thing to
 do if the app ever needs to scale. It is not done: the kit is persisted, the trace is not.
 
+### Deploying from CI
+
+`.github/workflows/ci.yml` ships a revision on every push to `main` that touches the image, once
+every gate has passed. Two properties are deliberate:
+
+* **It waits for `/health`.** A revision that starts and then crashes is a deployment that
+  reported success — the API refuses to boot without `MONGODB_URI` or `CLERK_ISSUER` and dies on
+  an unreachable Atlas, and both have happened here. The job fails if nothing answers.
+* **A web-only commit does not deploy.** Rolling the pod kills whatever generation is in flight,
+  because `--min-replicas 1` exists precisely so job state can live in the process. `apps/web`
+  deploys itself on Vercel and has no business restarting Azure.
+
+Setup is one credential and three variables:
+
+```bash
+az ad sp create-for-rbac --name prep-kit-ci --role Contributor \
+  --scopes "/subscriptions/$(az account show --query id -o tsv)/resourceGroups/prep-kit" \
+  --json-auth
+```
+
+Scoped to the one resource group rather than the subscription: it needs to push to the registry
+and update the app, and nothing else. Put the JSON in the repository secret `AZURE_CREDENTIALS`,
+and set the repository *variables* `AZ_ACR`, `AZ_RESOURCE_GROUP` and `AZ_APP` — those are names,
+not secrets, and a workflow log that shows which registry it pushed to is easier to debug.
+
+ACR Tasks is not used. An Azure for Students subscription refuses it outright
+(`TasksOperationsNotAllowed`), so both the script and the workflow build with Docker — the
+runner natively on amd64, a laptop by cross-compiling.
+
 ### Building the image yourself
 
 ```bash
@@ -202,9 +231,11 @@ on every run.
 **Traces are not persisted.** They live in the API process, which is why the app runs on a single
 replica. A revision deployed mid-run loses that run's spans; the kit itself is already in Mongo.
 
-**No CI deploy.** Both deployments are triggered by hand: `./scripts/deploy-api.sh` and Vercel's
-git integration. For a one-day build a pipeline that has never run is worth less than a script
-that has.
+**The CI deploy ships the image, and only the image.** Environment variables and secrets are set
+on the Container App by `scripts/deploy-api.sh` from a local `.env.deploy`, and the workflow does
+not re-apply them — a second copy of `MONGODB_URI`, `CLERK_ISSUER` and three API keys living in
+GitHub is a wider blast radius than the convenience is worth. **Changing a variable still means
+running the script once by hand**; changing code does not.
 
 **Prompt injection is mitigated, not solved.** The API fetches arbitrary company pages and puts
 their text in front of a model. Fetched content is fenced and labelled as data, and the model is

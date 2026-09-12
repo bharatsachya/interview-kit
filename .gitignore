@@ -29,3 +29,7 @@ kits.json
 
 # smoke output
 tmp/
+
+# A service-principal credential for the CI deploy. Local only — it belongs in a GitHub
+# secret, never in the repository.
+.azure-ci-credentials.json
