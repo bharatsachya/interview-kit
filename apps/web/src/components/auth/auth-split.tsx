@@ -86,14 +86,17 @@ export function AuthSplit({ children }: { children: ReactNode }) {
             "[&_.cl-cardBox]:!rounded-none [&_.cl-cardBox]:!border-0 [&_.cl-cardBox]:!bg-transparent [&_.cl-cardBox]:!shadow-none",
             "[&_.cl-card]:!rounded-none [&_.cl-card]:!bg-transparent [&_.cl-card]:!px-0 [&_.cl-card]:!py-0 [&_.cl-card]:!shadow-none",
             // The footer: a hairline and quiet text, not a panel of its own.
-            // Separated by space, not by a rule.
+            // `bg-none`, and that is the whole fix.
             //
-            // A hairline was tried first and does not survive: Clerk pins the footer's
-            // border-top-width by a means an `!important` declaration at higher specificity
-            // still loses to — the colour lands and the width stays zero. Rather than leave a
-            // line of CSS in the file that reads as working and does not, the gap does the
-            // separating, which is what the rest of the product does anyway.
-            "[&_.cl-footer]:!mt-7 [&_.cl-footer]:!rounded-none [&_.cl-footer]:!bg-transparent [&_.cl-footer]:!px-0 [&_.cl-footer]:!pt-0 [&_.cl-footer]:!pb-0 [&_.cl-footer]:!shadow-none",
+            // The footer's grey is a `linear-gradient`, not a background *colour* — so
+            // `bg-transparent`, which only ever sets `background-color`, left it exactly as it
+            // was. Three passes at this failed for that reason: the computed backgroundColor
+            // read `rgba(0,0,0,0)` and looked correct while the panel was still plainly on
+            // screen, painted by a property nobody was looking at.
+            "[&_.cl-footer]:!mt-7 [&_.cl-footer]:!rounded-none [&_.cl-footer]:!bg-none [&_.cl-footer]:!bg-transparent [&_.cl-footer]:!px-0 [&_.cl-footer]:!pt-0 [&_.cl-footer]:!pb-0 [&_.cl-footer]:!shadow-none",
+            // Clerk's own divider between the two footer rows, which only made sense while they
+            // sat in a panel of their own.
+            "[&_.cl-footerItem]:!border-t-0",
             "[&_.cl-footer_*]:!bg-transparent [&_.cl-footer_*]:!shadow-none",
             "[&_.cl-footerAction]:!border-0 [&_.cl-footerAction]:!px-0",
             // "Secured by Clerk" and the development badge, turned down to a footnote. Both are
