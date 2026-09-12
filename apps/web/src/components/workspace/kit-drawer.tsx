@@ -12,6 +12,7 @@ import { ConflictBanner } from "@/components/workspace/conflict-banner";
 import { KitIndex } from "@/components/workspace/kit-index";
 import { KitOutputBody } from "@/components/workspace/kit-outputs-body";
 import { usePractice } from "@/lib/use-practice";
+import type { Rewrite } from "@/lib/rewrite";
 
 /**
  * The panel's contents: remember where you were in the kit, and render one output of it.
@@ -42,6 +43,7 @@ export function KitDrawer({
   onClose,
   expanded,
   onToggleExpand,
+  onRewrite,
 }: {
   kitId: string | null;
   builder: BuilderState;
@@ -57,6 +59,8 @@ export function KitDrawer({
   /** Whether the panel has taken the whole window. Only ever true where there is a window to take. */
   expanded: boolean;
   onToggleExpand: () => void;
+  /** Stage a rewrite of one section in the composer. Nothing is sent from this panel. */
+  onRewrite: (target: Pick<Rewrite, "section" | "category">) => void;
 }) {
 
   // Flashcard confidence comes from the server now, keyed by kit by the hook itself. It used to
@@ -182,6 +186,7 @@ export function KitDrawer({
               track={track}
               onTrack={setTrack}
               onOpenOutput={onSelectOutput}
+              onRewrite={onRewrite}
             />
           ) : null}
         </div>

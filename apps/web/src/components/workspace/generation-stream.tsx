@@ -24,12 +24,21 @@ import { Trace } from "@/components/workspace/trace";
 export function GenerationStream({
   jobId,
   showLabel,
+  running: runningLabel,
   onComplete,
   onFailed,
   onRetried,
 }: {
   jobId: string;
   showLabel: boolean;
+  /**
+   * What to say while this run is going, when "Building your kit" would be a lie.
+   *
+   * A rewrite is a run in every respect this component cares about — a job, a trace, steps that
+   * finish — but it is not building a kit from a posting, and the sentence is the only thing on
+   * screen saying what is happening. Omitted for a first generation, which really is building one.
+   */
+  running?: string;
   onComplete: (jobId: string, kitId: string, spans: Span[]) => void;
   /**
    * A run that ended without a kit.
@@ -97,7 +106,8 @@ export function GenerationStream({
               changes, so the text is already telling you it is alive. The sweep is what says the
               app has not simply stopped on that step. */}
           <span className="shimmer-text">
-            Building your kit{progress ? ` — ${stepLabel(progress.step).toLowerCase()}` : ""}
+            {runningLabel ?? "Building your kit"}
+            {progress ? ` — ${stepLabel(progress.step).toLowerCase()}` : ""}
           </span>
         </Assistant>
       ) : null}

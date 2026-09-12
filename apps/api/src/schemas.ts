@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_INSTRUCTION_CHARS } from "@trao/contracts";
 import { QUESTION_CATEGORIES, type QuestionCategory } from "@trao/kit";
 
 /**
@@ -112,11 +113,18 @@ export const schedulePatchSchema = z
  * The category is refused on the other two rather than ignored: `{section: "schedule",
  * category: "technical"}` is a client that thinks it asked for something narrower than it did,
  * and answering it with a full schedule rebuild would look like a bug in the schedule.
+ *
+ * `instructions` is the free text the composer sends with the rewrite. Capped at the same number
+ * of characters the prompt builder truncates to, so the request is refused at the edge rather
+ * than silently shortened three packages later — a user who typed six hundred words deserves to
+ * be told, not to wonder why only the first paragraph was heard.
  */
+const instructions = z.string().trim().max(MAX_INSTRUCTION_CHARS).optional();
+
 export const regenerateSchema = z
   .union([
-    z.object({ section: z.literal("questions"), category }).strict(),
-    z.object({ section: z.enum(["company_brief", "schedule"]) }).strict(),
+    z.object({ section: z.literal("questions"), category, instructions }).strict(),
+    z.object({ section: z.enum(["company_brief", "schedule"]), instructions }).strict(),
   ]);
 
 export const createKitSchema = z

@@ -24,7 +24,7 @@ with **no API key, no database and no network**. It is the fastest way to see th
 | [What it does](#what-it-does) | the nine steps, and what each is responsible for |
 | [Running it](#running-it) | local setup, the batch command, the API and the web app |
 | [Architecture](#architecture) | the one rule the whole repo is arranged around |
-| [The builder](#the-builder-and-the-state-problem) | what is editable, and how an edit survives a regeneration |
+| [The builder](#the-builder-and-the-state-problem) | what is editable, how a rewrite forks, and how an edit survives a regeneration |
 | [Scheduling](#scheduling) | why the schedule is arithmetic and not a prompt |
 | [Coverage](#coverage) | gap detection, two extra passes, and the acceptance gates |
 | [Retrieval](#retrieval) | crawling, link ranking, and what is actually read |
@@ -192,6 +192,33 @@ categories, and can be written by hand — as can flashcards, which are otherwis
 question, any card, and any of the brief, one question category or the schedule can be
 regenerated on its own.
 
+**Regenerating is a prompt, and it forks.** Pressing Regenerate in the kit panel does not call
+anything. It writes a sentence into the composer in the main window — "Rewrite the technical
+questions." — which the user can change before sending: *"…and go harder on replication"*. That
+free text travels as `instructions`, reaches the generation prompt inside an untrusted fence, and
+is allowed to change emphasis and difficulty and nothing else. The schedule accepts the field and
+ignores it, because allocation is arithmetic in code, and the trace records
+`instructions_ignored` rather than letting a dropped request look like an honoured one.
+
+Sending it runs a job with an id, a trace and a progress line, exactly like a first generation —
+and writes the result to a **new kit**. The kit you pressed the button on is not touched: same
+id, same version, same questions, still in the history rail, which now shows the rewrite beside
+it as `v2` labelled with what it did. Three things follow from that, and they are the reason it
+is worth the extra document:
+
+* **A rewrite is undoable by being un-done-to.** Several model calls replacing work you have been
+  editing is not something to put one click away with no way back.
+* **The "did the old one ask this better?" question has an answer.** Both kits are there, and the
+  compare view already reads more than one.
+* **There is nothing to race.** No `If-Match` on the rewrite, no conflict banner, no "your edit
+  landed while the section was rebuilding" — the answer goes somewhere the edit is not.
+
+The fork carries the whole document across with every id intact, so the schedule's question ids
+and the practice deck's card ids still point at the same material. It starts its own `version` at
+1 (two documents both claiming version 8 is how an `If-Match` against one passes against the
+other) and gets a hash that cannot collide with a submission hash, so resubmitting the original
+posting still finds the original kit rather than its third rewrite.
+
 Which is where the hard part is. The 15-point item, and the one the brief says it will look at
 most closely: *regenerating one section must not discard edits made elsewhere, and a question the
 user wrote or edited by hand must survive a regeneration of its category.*
@@ -208,7 +235,9 @@ Every editable item carries four fields that never appear in the Appendix A outp
 **The rule underneath every transition:** a regeneration may only take back what the machine put
 there and the user has not claimed. So regenerating a category archives exactly the questions
 that are `generated`, unpinned and in that category. Edited, manual, pinned and fallback
-questions survive, as does every other section.
+questions survive, as does every other section. Forking does not replace that rule, it sits on
+top of it: what carries into the new kit is decided by provenance, exactly as it was when the
+rewrite wrote in place.
 
 `origin` and `pinned` are separate on purpose. "I changed this" and "keep this" are different
 intents, and editing does not pin — conflating them would silently opt the user out of ever
@@ -230,7 +259,8 @@ Two projections, and both run repair, so the two views can never disagree:
 Concurrency is a `version` on the kit, bumped by exactly one per mutation. Writes send it as
 `If-Match`; a mismatch is a `409` carrying `current_version`, and the builder rebases rather than
 reloading. The check lives inside the same function that does the bump, so a mutation that
-checks and forgets to bump cannot be written.
+checks and forgets to bump cannot be written. Rewrites are outside all of this by construction —
+they never write to the kit they read, so there is nothing for a concurrent edit to conflict with.
 
 ---
 
@@ -354,8 +384,13 @@ override it.
 
 **Prompt injection: mitigated, not solved.** The pipeline fetches arbitrary company pages and
 puts their text in front of a model. Retrieved content is fenced in delimited blocks and labelled
-as data with an explicit instruction that it is not instructions. That raises the bar; it does
-not clear it. What actually bounds the damage is the architecture: the model cannot allocate the
+as data with an explicit instruction that it is not instructions. The rewrite prompt the user
+types in the composer is fenced the same way, even though it came from the signed-in user — a JD
+pasted off a site can be re-pasted into that field, and an instruction block that is trusted for
+one input is a hole for every input that can reach it. Its wrapper grants exactly one power
+(change the emphasis, difficulty and subject matter of this section) and is capped at 600
+characters, refused at the API edge rather than silently truncated later. That raises the bar; it
+does not clear it. What actually bounds the damage is the architecture: the model cannot allocate the
 schedule, cannot decide coverage, cannot rank links and cannot assign requirement ids, so the
 worst a hostile page can achieve is a bad question — not a corrupted kit, and not a request to
 anywhere it chose.

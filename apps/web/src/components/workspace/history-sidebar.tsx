@@ -1,6 +1,7 @@
 "use client";
 
 import { UserButton, useClerk, useUser } from "@clerk/nextjs";
+import { lineageLabel } from "@trao/kit";
 import { kitCount, runLabel, type HistoryEntry } from "@/lib/history";
 import { KIT_OUTPUTS } from "@/lib/kit-outputs";
 import { Button } from "@/components/industry/button";
@@ -178,12 +179,26 @@ export function HistorySidebar({
                     <span className="flex items-center gap-2">
                       {active ? <OpenDot /> : null}
                       <span
-                        className={`font-head truncate text-[15px] font-semibold ${active ? "text-steel-800" : ""}`}
+                        className={`font-head min-w-0 flex-1 truncate text-[15px] font-semibold ${active ? "text-steel-800" : ""}`}
                       >
                         {kit.company}
                       </span>
+                      {/* A rewrite forks, so one company can hold several rows that are alike in
+                          every field this row shows. The number is what tells them apart at a
+                          glance; the line under it says what the rewrite actually did. */}
+                      {kit.revision > 1 ? (
+                        <span
+                          className={`font-head rounded-pill shrink-0 px-1.5 py-0.5 text-[10.5px] tracking-wider tabular-nums ${
+                            active ? "bg-steel-200 text-steel-700" : "bg-tint text-ink/45"
+                          }`}
+                        >
+                          v{kit.revision}
+                        </span>
+                      ) : null}
                     </span>
-                    <span className="text-ink/55 truncate text-xs">{kit.title}</span>
+                    <span className="text-ink/55 truncate text-xs">
+                      {kit.forkedFrom ? lineageLabel(kit.forkedFrom) : kit.title}
+                    </span>
                     <span
                       className={`font-head mt-0.5 text-xs tracking-wider uppercase tabular-nums ${
                         active ? "text-steel-500" : "text-ink/40"

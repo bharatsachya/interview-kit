@@ -13,10 +13,12 @@ import { Button } from "@/components/industry/button";
  * The distinction the two branches draw is the whole reason this is a component rather than a
  * toast. **An edit can be replayed**: `editQuestion(id, { prompt })` means the same thing against
  * version nine that it meant against version seven, so "reload and reapply" does exactly what it
- * says. **A regeneration cannot.** It never ran — the version is checked before a single model
- * call — so running it again is not restoring anything, it is generating new questions that will
- * differ from the ones on screen. Offering both under one button would make that button lie in
- * one of the two cases.
+ * says. **An addition cannot.** Writing a question mints an id on the server, so there is no
+ * local preview to replay and pressing it again is a second question rather than the same one.
+ * Offering both under one button would make that button lie in one of the two cases.
+ *
+ * Rewrites never reach here at all: they fork into a new kit rather than writing to this one, so
+ * there is nothing for anyone else's write to conflict with.
  */
 export function ConflictBanner({
   conflict,
@@ -46,10 +48,10 @@ export function ConflictBanner({
           </>
         ) : (
           <>
-            The regeneration did not run — the kit changed somewhere else first, and it is on
-            version {conflict.currentVersion} now. Nothing was generated and nothing was spent.
-            Running it again will work from the newer kit, so it will produce different questions
-            from the ones you were looking at, not bring these back.
+            That was not saved — the kit changed somewhere else first, and it is on version{" "}
+            {conflict.currentVersion} now. Nothing was half-applied. Reload to see where it got
+            to; this one has to be done again by hand, because repeating it would add a second
+            item rather than the same one.
           </>
         )}
       </p>

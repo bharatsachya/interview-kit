@@ -12,6 +12,7 @@ export {
   type SourcePage,
 } from "./brief";
 export { deriveFlashcards, frontFor } from "./flashcards";
+export { steerLines } from "./steer";
 export { createGapFillWriter, type GapFillDraft, type GapFillWriterOptions } from "./gap-fill";
 export {
   DEFAULT_QUESTIONS_PER_CATEGORY,

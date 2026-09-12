@@ -22,6 +22,16 @@ export function truncateForPrompt(text: string, maxChars: number = DEFAULT_MAX_P
 }
 
 /**
+ * How much of a user's free-text instruction reaches a prompt.
+ *
+ * Lives here rather than in `generation` because two packages need the same number for opposite
+ * reasons: the prompt builder truncates to it, and the API's request schema refuses past it. One
+ * constant is what stops those two drifting into a request that is accepted and then quietly
+ * cut in half.
+ */
+export const MAX_INSTRUCTION_CHARS = 600;
+
+/**
  * Wrap text we did not write.
  *
  * Every fetched page and every pasted job description is untrusted input. Structured delimiting

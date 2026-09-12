@@ -8,6 +8,7 @@ import { normaliseCompanyUrl } from "@/lib/role-guess";
 import { Badge, CalendarIcon, GlobeIcon } from "@/components/industry/badge";
 import { glimpseUrl } from "@/lib/url-glimpse";
 import type { AskParts } from "@/lib/ask";
+import { rewriteKeeps, type Rewrite } from "@/lib/rewrite";
 import { Button } from "@/components/industry/button";
 import { ErrorNotice } from "@/components/industry/states";
 import { Eyebrow } from "@/components/industry/text";
@@ -79,7 +80,22 @@ function formatCount(value: number): string {
   return value.toLocaleString("en-US");
 }
 
-export function Composer({ onStarted }: { onStarted: (jobIds: string[], ask: AskParts) => void }) {
+export function Composer({
+  onStarted,
+  rewrite,
+  onCancelRewrite,
+}: {
+  onStarted: (jobIds: string[], ask: AskParts) => void;
+  /**
+   * A rewrite staged by the kit panel, waiting to be read, changed and sent.
+   *
+   * While this is set the composer is in rewrite mode: no posting, no site, no days — those
+   * belong to the kit this is rewriting and asking for them again would be asking the user to
+   * retype what the kit already knows. Null puts it back to building kits from postings.
+   */
+  rewrite: Rewrite | null;
+  onCancelRewrite: () => void;
+}) {
   const [jd, setJd] = useState("");
   const [companyUrl, setCompanyUrl] = useState("");
   const [days, setDays] = useState("");
@@ -97,6 +113,31 @@ export function Composer({ onStarted }: { onStarted: (jobIds: string[], ask: Ask
   const [open, setOpen] = useState<"url" | "days" | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+
+  // The prompt the panel staged, as editable text.
+  //
+  // Held here rather than in the workspace because it is a draft being typed, and a keystroke
+  // that re-renders three panes is a keystroke you can feel. The workspace owns *which* rewrite
+  // is staged; this owns what it currently says.
+  const [prompt, setPrompt] = useState("");
+
+  // A press of Regenerate arms the composer and puts the caret at the end of the sentence, so
+  // the natural next action — typing what you actually wanted — needs no click. Keyed on
+  // `rewrite.key` rather than on the object, so pressing the same button twice re-arms it
+  // instead of silently doing nothing, and typing does not get reset on every render.
+  const rewriteKey = rewrite?.key ?? null;
+  useEffect(() => {
+    if (rewrite === null) return;
+    setPrompt(rewrite.prompt);
+    setSubmitError(null);
+    const field = promptRef.current;
+    if (field === null) return;
+    field.focus();
+    field.setSelectionRange(rewrite.prompt.length, rewrite.prompt.length);
+    // `rewrite` itself is deliberately not a dependency — see the note above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rewriteKey]);
 
   // What the composer is still missing before the draft in it counts as a role.
   const missing: string[] = [
@@ -106,10 +147,11 @@ export function Composer({ onStarted }: { onStarted: (jobIds: string[], ask: Ask
   ].filter((item): item is string => item !== null);
 
   const draftFilled = missing.length === 0;
-  // Something to build: an uploaded file, roles already queued, or a complete draft. Read in two
-  // places — the disabled state and the tooltip — so the tooltip cannot claim something
-  // different from what the button is enforcing.
-  const ready = batch !== null || queue.length > 0 || draftFilled;
+  // Something to build: an uploaded file, roles already queued, or a complete draft — or, in
+  // rewrite mode, a prompt with something in it. Read in two places — the disabled state and the
+  // tooltip — so the tooltip cannot claim something different from what the button is enforcing.
+  const ready =
+    rewrite !== null ? prompt.trim() !== "" : batch !== null || queue.length > 0 || draftFilled;
   const roleCount = batch ? batch.cases.length : queue.length + (draftFilled ? 1 : 0);
 
   function addRole() {
@@ -149,6 +191,34 @@ export function Composer({ onStarted }: { onStarted: (jobIds: string[], ask: Ask
   async function submit() {
     if (!ready || busy) return;
     setSubmitError(null);
+
+    // A rewrite is its own path and it leaves the composer's own draft alone: whatever posting
+    // you had half-typed is still there afterwards, because sending a rewrite is not finishing
+    // the thing you were writing.
+    if (rewrite !== null) {
+      const text = prompt.trim();
+      // The default sentence carries nothing the section does not already say, so it is not
+      // forwarded as an instruction — a prompt reading "Rewrite the technical questions." would
+      // otherwise reach the model as a steer telling it what it was already being asked to do.
+      const instructions = text === rewrite.prompt.trim() ? undefined : text;
+
+      setBusy(true);
+      try {
+        const response = await api.regenerate(rewrite.kitId, {
+          section: rewrite.section,
+          ...(rewrite.category !== undefined ? { category: rewrite.category } : {}),
+          ...(instructions !== undefined ? { instructions } : {}),
+        });
+        onCancelRewrite();
+        setPrompt("");
+        onStarted([response.job_id], { kind: "change", text, section: rewrite.id });
+      } catch (error) {
+        setSubmitError((previous) => ({ message: messageFor(error), attempts: (previous?.attempts ?? 0) + 1 }));
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
 
     if (batch) {
       await start(
@@ -218,13 +288,7 @@ export function Composer({ onStarted }: { onStarted: (jobIds: string[], ask: Ask
       setQueue([]);
       setErrors({});
     } catch (error) {
-      const message =
-        error instanceof ApiError && error.code === "NETWORK_UNREACHABLE"
-          ? "You appear to be offline. Nothing was sent, and nothing was lost."
-          : error instanceof Error
-            ? error.message
-            : "Could not start the run.";
-      setSubmitError((previous) => ({ message, attempts: (previous?.attempts ?? 0) + 1 }));
+      setSubmitError((previous) => ({ message: messageFor(error), attempts: (previous?.attempts ?? 0) + 1 }));
     } finally {
       setBusy(false);
     }
@@ -339,7 +403,56 @@ export function Composer({ onStarted }: { onStarted: (jobIds: string[], ask: Ask
           focused ? "ring-composer" : "shadow-[0_1px_2px_rgba(29,31,32,0.05)]"
         }`}
       >
-        {batch ? (
+        {rewrite ? (
+          <>
+            {/* What is being rewritten, and what it is being rewritten FROM. Without the kit's
+                name this is a prompt with no object: the panel can be closed, and by the time
+                you have typed two sentences "the technical questions" of which kit is a fair
+                question. */}
+            <div className="flex flex-wrap items-center gap-2 pb-2">
+              <span className="bg-steel-100 text-steel-700 font-head rounded-pill inline-flex h-6 shrink-0 items-center px-3 text-xs tracking-widest uppercase">
+                Rewrite
+              </span>
+              <span className="text-ink/60 min-w-0 flex-1 truncate text-[13px]">{rewrite.kitLabel}</span>
+              <button
+                type="button"
+                onClick={onCancelRewrite}
+                aria-label="Cancel this rewrite"
+                className="text-ink/35 hover:bg-tint hover:text-ink grid size-6 shrink-0 place-items-center rounded-full transition-colors"
+              >
+                <svg aria-hidden width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <label htmlFor="composer-rewrite" className="sr-only">
+              What to change
+            </label>
+            <textarea
+              id="composer-rewrite"
+              ref={promptRef}
+              value={prompt}
+              rows={2}
+              onChange={(event) => setPrompt(event.target.value)}
+              onFocus={() => setFocused(true)}
+              onBlur={() => setFocused(false)}
+              onKeyDown={(event) => {
+                // Stopped here, because the workspace listens for Escape on the document to
+                // close the kit panel — and closing the panel is not what Escape means while
+                // the caret is in a prompt you are about to send.
+                if (event.key === "Escape") {
+                  event.stopPropagation();
+                  onCancelRewrite();
+                  return;
+                }
+                onKeyDown(event);
+              }}
+              aria-describedby="composer-rewrite-hint"
+              className="text-ink placeholder:text-ink/40 w-full resize-none bg-transparent px-0.5 pb-1.5 text-[14.5px] leading-relaxed outline-none"
+            />
+          </>
+        ) : batch ? (
           <div className="flex flex-wrap items-center gap-3 py-2">
             <span className="text-sm">
               <strong className="font-semibold">{batch.cases.length} roles</strong> from{" "}
@@ -389,7 +502,7 @@ export function Composer({ onStarted }: { onStarted: (jobIds: string[], ask: Ask
         )}
 
         <div className="flex flex-wrap items-center gap-2">
-          {!batch ? (
+          {!batch && !rewrite ? (
             <>
               <Popover
                 open={open === "url"}
@@ -497,7 +610,7 @@ export function Composer({ onStarted }: { onStarted: (jobIds: string[], ask: Ask
 
           <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-3">
             {/* Only once the draft is a complete role. Offering it earlier would queue a blank. */}
-            {!batch && draftFilled ? (
+            {!batch && !rewrite && draftFilled ? (
               <button
                 type="button"
                 onClick={addRole}
@@ -516,13 +629,13 @@ export function Composer({ onStarted }: { onStarted: (jobIds: string[], ask: Ask
                 variant="primary"
                 onClick={() => void submit()}
                 busy={busy}
-                busyLabel="Starting"
+                busyLabel={rewrite ? "Sending" : "Starting"}
                 disabled={!ready}
                 className={ready ? "" : "!bg-tint !text-ink/40"}
               >
-                {roleCount > 1 ? `Build ${roleCount} kits` : "Build the kit"}
+                {rewrite ? "Send" : roleCount > 1 ? `Build ${roleCount} kits` : "Build the kit"}
               </Button>
-              {ready || queue.length > 0 ? null : (
+              {rewrite || ready || queue.length > 0 ? null : (
                 <span
                   role="tooltip"
                   className="bg-steel-900 pointer-events-none absolute right-0 bottom-full z-30 mb-2.5 w-56 rounded-[10px] px-3 py-2 text-xs leading-snug text-white opacity-0 transition-opacity group-hover:opacity-100"
@@ -536,7 +649,15 @@ export function Composer({ onStarted }: { onStarted: (jobIds: string[], ask: Ask
       </div>
 
       <div className="flex flex-wrap items-baseline gap-3 px-1.5">
-        {errors.jd ? (
+        {rewrite ? (
+          // What survives, said where it can be read before the button is pressed rather than in
+          // a tooltip. The second sentence is the one that makes this safe to press: the kit on
+          // screen is not touched, so there is nothing to undo.
+          <p id="composer-rewrite-hint" className="text-ink/55 min-w-0 flex-1 text-xs leading-relaxed">
+            {rewriteKeeps(rewrite.section)} This produces a <strong className="font-semibold">new kit</strong>;
+            the one you are looking at stays exactly as it is.
+          </p>
+        ) : errors.jd ? (
           <p id="composer-jd-error" role="alert" className="text-alarm text-xs font-medium">
             {errors.jd}
           </p>
@@ -556,7 +677,7 @@ export function Composer({ onStarted }: { onStarted: (jobIds: string[], ask: Ask
           </p>
         )}
 
-        <span className="ml-auto flex shrink-0 items-baseline gap-3">
+        <span className={`ml-auto flex shrink-0 items-baseline gap-3 ${rewrite ? "hidden" : ""}`}>
           {/* "Several roles at once" used to open a file picker, which is the one thing a
               candidate with four tabs open does not want. It now adds a role to the queue, and
               the file upload is named for what it actually takes. */}
@@ -600,6 +721,14 @@ export function Composer({ onStarted }: { onStarted: (jobIds: string[], ask: Ask
   );
 }
 
+
+/** What went wrong, in words, with the offline case named rather than left as a fetch error. */
+function messageFor(error: unknown): string {
+  if (error instanceof ApiError && error.code === "NETWORK_UNREACHABLE") {
+    return "You appear to be offline. Nothing was sent, and nothing was lost.";
+  }
+  return error instanceof Error ? error.message : "Could not start the run.";
+}
 
 /** "the job posting and how many days you have" — an Oxford-comma list, spoken. */
 function listWords(items: string[]): string {

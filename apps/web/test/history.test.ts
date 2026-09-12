@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import type { JobSummary, KitSummary } from "../src/lib/api/types";
 import { kitCount, kitsOf, mergeHistory, runLabel } from "../src/lib/history";
 
-const kit = (id: string, createdAt: number): KitSummary => ({
+const kit = (id: string, createdAt: number, over: Partial<KitSummary> = {}): KitSummary => ({
   id,
   title: "Senior Backend Engineer",
   company: "Acme",
   days: 5,
   createdAt,
+  revision: 1,
+  ...over,
 });
 
 const job = (id: string, createdAt: number, over: Partial<JobSummary> = {}): JobSummary => ({

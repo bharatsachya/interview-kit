@@ -14,11 +14,14 @@ import type { BuilderState } from "@/lib/use-builder";
 import { InlineEdit } from "@/components/industry/inline-edit";
 import { useMediaQuery } from "@/lib/use-media-query";
 import type { KitOutputId } from "@/lib/kit-outputs";
+import type { Rewrite } from "@/lib/rewrite";
+
+/** Stage a rewrite in the composer. Nothing is sent until the user presses Send. */
+type RewriteHandler = (target: Pick<Rewrite, "section" | "category">) => void;
 import { Button } from "@/components/industry/button";
 import { Frame } from "@/components/industry/frame";
 import { EmptyState, ErrorNotice } from "@/components/industry/states";
 import { Kicker } from "@/components/industry/text";
-import { Ring } from "@/components/industry/mark";
 import { CoverageBar } from "@/components/kit/coverage-bar";
 
 /**
@@ -42,6 +45,7 @@ export function KitOutputBody({
   track,
   onTrack,
   onOpenOutput,
+  onRewrite,
 }: {
   output: KitOutputId;
   builder: BuilderState;
@@ -54,6 +58,14 @@ export function KitOutputBody({
   track: QuestionCategory | null;
   onTrack: (track: QuestionCategory | null) => void;
   onOpenOutput: (id: KitOutputId) => void;
+  /**
+   * Stage a rewrite of one section in the composer.
+   *
+   * Deliberately not a call to the server. Pressing this writes a prompt into the main window
+   * and hands the user back control — see `lib/rewrite.ts` for why a rewrite stopped being a
+   * button press. Nothing on this panel changes as a result; the answer arrives as a new kit.
+   */
+  onRewrite: RewriteHandler;
 }) {
   return (
     <div
@@ -63,10 +75,10 @@ export function KitOutputBody({
       tabIndex={0}
       className="flex flex-col gap-4 px-4 pt-1 pb-6 md:px-5"
     >
-      {output === "brief" ? <BriefBody kit={kit} builder={builder} /> : null}
+      {output === "brief" ? <BriefBody kit={kit} builder={builder} onRewrite={onRewrite} /> : null}
       {output === "role" ? <RoleBody kit={kit} /> : null}
       {output === "questions" ? (
-        <QuestionsBody kit={kit} builder={builder} track={track} onTrack={onTrack} />
+        <QuestionsBody kit={kit} builder={builder} track={track} onTrack={onTrack} onRewrite={onRewrite} />
       ) : null}
       {output === "flashcards" ? (
         <FlashcardsBody
@@ -78,7 +90,7 @@ export function KitOutputBody({
           onRate={onRate}
         />
       ) : null}
-      {output === "schedule" ? <ScheduleBody kit={kit} builder={builder} /> : null}
+      {output === "schedule" ? <ScheduleBody kit={kit} builder={builder} onRewrite={onRewrite} /> : null}
       {output === "practice" ? (
         <PracticeBody
           kit={kit}
@@ -94,34 +106,27 @@ export function KitOutputBody({
 }
 
 /**
- * Rebuild this section.
+ * Ask for this section to be rewritten.
  *
- * Ghost rather than primary: regenerating is destructive to generated work — it is the one
- * control here that takes something away — and it should not be the most obvious thing on a
- * panel whose other buttons all add. The label says what will survive, because "regenerate"
- * alone reads as "lose my edits" and that is precisely what it does not do.
+ * It no longer regenerates anything. It writes a prompt into the composer in the main window and
+ * stops — the user reads it, adds what they actually wanted, and sends it, and the answer comes
+ * back as a new kit beside this one. So the button has no running state and no disabled state:
+ * there is nothing to wait for, and staging a second rewrite while one is in flight is a
+ * perfectly reasonable thing to do.
+ *
+ * Ghost rather than primary for the same reason as before — a panel whose other controls all add
+ * something should not make the one that replaces generated work the loudest thing on it.
  */
-function RegenerateButton({
-  label,
-  running,
-  disabled,
-  onClick,
-}: {
-  label: string;
-  running: boolean;
-  disabled: boolean;
-  onClick: () => void;
-}) {
+function RegenerateButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      disabled={disabled || running}
-      title="Edited, pinned and hand-written items are kept"
-      className="font-head text-ink/45 hover:bg-steel-100 hover:text-steel-700 rounded-pill inline-flex h-7 shrink-0 items-center gap-1.5 px-2.5 text-xs tracking-widest uppercase transition-colors disabled:cursor-not-allowed disabled:opacity-45"
+      title="Writes a prompt in the composer — nothing is sent until you send it"
+      className="font-head text-ink/45 hover:bg-steel-100 hover:text-steel-700 rounded-pill inline-flex h-7 shrink-0 items-center gap-1.5 px-2.5 text-xs tracking-widest uppercase transition-colors"
     >
-      {running ? <Ring size={11} /> : <span aria-hidden>↻</span>}
-      {running ? "Regenerating" : label}
+      <span aria-hidden>↻</span>
+      {label}
     </button>
   );
 }
@@ -137,7 +142,15 @@ function Section({ label, children }: { label: string; children: React.ReactNode
   );
 }
 
-function BriefBody({ kit, builder }: { kit: InternalKit; builder: BuilderState }) {
+function BriefBody({
+  kit,
+  builder,
+  onRewrite,
+}: {
+  kit: InternalKit;
+  builder: BuilderState;
+  onRewrite: RewriteHandler;
+}) {
   const brief = kit.companyBrief;
   const busy = builder.busy === "brief";
   const nothingFound =
@@ -167,12 +180,7 @@ function BriefBody({ kit, builder }: { kit: InternalKit; builder: BuilderState }
                 onSave={(summary) => builder.editBrief({ summary })}
               />
             </div>
-            <RegenerateButton
-              label="Rewrite"
-              running={builder.regenerating === "company_brief"}
-              disabled={builder.regenerating !== null}
-              onClick={() => builder.regenerate({ section: "company_brief" })}
-            />
+            <RegenerateButton label="Rewrite" onClick={() => onRewrite({ section: "company_brief" })} />
           </div>
 
           <Section label="What they do">
@@ -383,9 +391,11 @@ function QuestionsBody({
   builder,
   track,
   onTrack,
+  onRewrite,
 }: {
   kit: InternalKit;
   builder: BuilderState;
+  onRewrite: RewriteHandler;
   track: QuestionCategory | null;
   onTrack: (track: QuestionCategory | null) => void;
 }) {
@@ -471,9 +481,7 @@ function QuestionsBody({
               )}
               <RegenerateButton
                 label={`Regenerate ${CATEGORY_META[track].label.toLowerCase()}`}
-                running={builder.regenerating === `questions:${track}`}
-                disabled={builder.regenerating !== null}
-                onClick={() => builder.regenerate({ section: "questions", category: track })}
+                onClick={() => onRewrite({ section: "questions", category: track })}
               />
             </div>
           ) : (
@@ -1334,7 +1342,15 @@ function RateButton({
  * flag — so rewriting Tuesday survives a regeneration that reshuffles everything else. The note
  * under the heading says so, because a user who does not know that will not risk the edit.
  */
-function ScheduleBody({ kit, builder }: { kit: InternalKit; builder: BuilderState }) {
+function ScheduleBody({
+  kit,
+  builder,
+  onRewrite,
+}: {
+  kit: InternalKit;
+  builder: BuilderState;
+  onRewrite: RewriteHandler;
+}) {
   const byId = new Map(kit.questions.map((question) => [question.id, question]));
 
   return (
@@ -1345,12 +1361,7 @@ function ScheduleBody({ kit, builder }: { kit: InternalKit; builder: BuilderStat
           minutes. Rewrite any day and the plan will work around it — a day you have edited is
           left alone when the schedule is rebuilt.
         </p>
-        <RegenerateButton
-          label="Replan"
-          running={builder.regenerating === "schedule"}
-          disabled={builder.regenerating !== null}
-          onClick={() => builder.regenerate({ section: "schedule" })}
-        />
+        <RegenerateButton label="Replan" onClick={() => onRewrite({ section: "schedule" })} />
       </div>
 
       {kit.schedule.days.length === 0 ? (

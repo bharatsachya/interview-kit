@@ -21,21 +21,19 @@ export type AskParts =
    * A change asked of a kit that already exists — a rewrite of one section.
    *
    * Its own kind rather than a `summary`, because the turn that follows it says something
-   * different: a first run reports a kit built, a rewrite reports one section replaced, and the
-   * conversation should not claim to have built a kit it only edited.
+   * different: a first run reports a kit built, a rewrite reports one section rewritten into a
+   * new kit, and the conversation should not claim to have built a kit from a posting when it
+   * forked one from another kit.
+   *
+   * `text` is what the person actually sent — the prompt as it stood in the composer when they
+   * pressed Send, edits and all — rather than a label derived from `section`. The point of
+   * putting the rewrite in the composer was that the words could be theirs; showing a canned
+   * sentence back would take that away again at the only moment it is visible.
    */
   | { kind: "change"; text: string; section: string };
 
 /** An ask, plus when *you* sent it — captured at submit, not when the server got round to it. */
 export type Ask = AskParts & { at: number };
-
-/** What a rewrite of this section is called, in the conversation. */
-export function sectionLabel(section: string): string {
-  if (section === "company_brief") return "Rewrite the brief";
-  if (section === "schedule") return "Rebuild the schedule";
-  const [, category] = section.split(":");
-  return category === undefined ? "Rewrite the questions" : `Rewrite the ${category} questions`;
-}
 
 /** Narrowing helper, so callers read as prose rather than as a discriminant check. */
 export function isPosting(ask: Ask): ask is Extract<Ask, { kind: "posting" }> & { at: number } {

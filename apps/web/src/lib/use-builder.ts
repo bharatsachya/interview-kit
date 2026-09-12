@@ -33,6 +33,10 @@ import { ApiError, VersionConflict } from "@/lib/api/types";
  * **A conflict is recoverable, so the intent is kept.** When a write is refused because someone
  * else moved the kit on, the operation is held. Refetching and replaying it is then a real
  * offer rather than a hopeful one — see `reapply`.
+ *
+ * What is deliberately NOT here is regeneration. Rewriting a section forks into a new kit rather
+ * than writing to this one, so it is not a builder mutation at all: it is a prompt the composer
+ * sends and a job the conversation watches, exactly like a first run. This hook never sees it.
  */
 
 export interface Conflict {
@@ -45,8 +49,9 @@ export interface Conflict {
    * Whether replaying means the same thing it did the first time.
    *
    * True for an edit: the change is a patch, and a patch replayed against a newer kit is still
-   * the change the user asked for. False for a regeneration, which never ran at all — replaying
-   * it produces different questions from the ones on screen, so it needs different words.
+   * the change the user asked for. False where the server mints the ids — adding a question or a
+   * flashcard — because there the operation has no local preview and replaying it is a second
+   * write, not the same one. Those need different words and a plain reload.
    */
   replayable: boolean;
 }
@@ -66,8 +71,6 @@ export interface BuilderState {
   /** Label of the operation in flight, for disabling the control that started it. */
   busy: string | null;
   conflict: Conflict | null;
-  /** Section currently regenerating, if any. */
-  regenerating: string | null;
 
   refetch: () => void;
   dismissConflict: () => void;
@@ -91,7 +94,6 @@ export interface BuilderState {
   editFlashcard: (id: string, fields: { front?: string; back?: string }) => void;
   deleteFlashcard: (id: string) => void;
   editScheduleDay: (day: number, fields: { focus?: string; minutes?: number }) => void;
-  regenerate: (target: { section: "company_brief" | "schedule" } | { section: "questions"; category: QuestionCategory }) => void;
 }
 
 /** A write: what it is called, what it looks like locally, and what the server is asked to do. */
@@ -112,18 +114,6 @@ export function useBuilder(
    * render has to keep consulting.
    */
   onNotFound?: (kitId: string) => void,
-  /**
-   * Called when a regeneration is accepted, with the job it created.
-   *
-   * A regeneration is a job with an id and a trace, exactly like a first run — it was simply
-   * never shown as one. Polling it behind a spinner on a button meant the most interesting thing
-   * the app does to an existing kit happened silently: no record of having asked, no steps, and
-   * a kit that changed under you with nothing to say what had been done or why.
-   *
-   * The hook keeps polling (it owns the refetch); this only lets the conversation put the same
-   * job on screen as a turn.
-   */
-  onRegenerating?: (jobId: string, section: string) => void,
 ): BuilderState {
   // Held in a ref so a caller passing an inline function cannot restart the request.
   const notify = useRef(onNotFound);
@@ -131,17 +121,11 @@ export function useBuilder(
     notify.current = onNotFound;
   }, [onNotFound]);
 
-  const announce = useRef(onRegenerating);
-  useEffect(() => {
-    announce.current = onRegenerating;
-  }, [onRegenerating]);
-
   const [kit, setKit] = useState<InternalKit | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [conflict, setConflict] = useState<Conflict | null>(null);
-  const [regenerating, setRegenerating] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
   const [notFound, setNotFound] = useState(false);
 
@@ -248,38 +232,6 @@ export function useBuilder(
 
   const id = kitId ?? "";
 
-  /**
-   * Watch a regeneration and refetch when it lands.
-   *
-   * Polling rather than the event stream: a regeneration finishes in seconds, the builder has
-   * one of them at a time, and the stream is worth its reconnection logic for a nine-step run
-   * being watched live, not for a spinner on a button.
-   */
-  const watch = useCallback(
-    async (jobId: string, section: string) => {
-      setRegenerating(section);
-      const started = Date.now();
-      try {
-        while (Date.now() - started < 120_000) {
-          await new Promise((resolve) => setTimeout(resolve, 1200));
-          const view = await api.getJob(jobId);
-          if (view.job.status === "done") {
-            refetch();
-            return;
-          }
-          if (view.job.status === "failed") {
-            setError(view.job.error?.message ?? "The regeneration failed. The kit is unchanged.");
-            return;
-          }
-        }
-        setError("The regeneration is taking longer than expected. Reload to see where it got to.");
-      } finally {
-        setRegenerating(null);
-      }
-    },
-    [refetch],
-  );
-
   return {
     kit,
     loading,
@@ -287,7 +239,6 @@ export function useBuilder(
     notFound,
     busy,
     conflict,
-    regenerating,
     refetch,
     dismissConflict: () => {
       held.current = null;
@@ -406,20 +357,6 @@ export function useBuilder(
         preview: (k) => applyEditScheduleDay(k, day, fields),
         send: (v) => api.editScheduleDay(id, day, fields, v),
       }),
-
-    regenerate: (target) => {
-      if (kitId === null || regenerating !== null) return;
-      const section = target.section === "questions" ? `questions:${target.category}` : target.section;
-      void api
-        .regenerate(kitId, target)
-        .then((response) => {
-          announce.current?.(response.job_id, section);
-          return watch(response.job_id, section);
-        })
-        .catch((cause: unknown) =>
-          setError(cause instanceof Error ? cause.message : "Could not start the regeneration."),
-        );
-    },
   };
 }
 

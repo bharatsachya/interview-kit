@@ -1,5 +1,5 @@
 import type { JobRecord, Span } from "@trao/contracts";
-import type { BuilderKit, EvaluationCase, KitJSON, QuestionCategory } from "@trao/kit";
+import type { BuilderKit, EvaluationCase, KitJSON, KitLineage, QuestionCategory } from "@trao/kit";
 
 /**
  * @trao/api-contract — the wire shapes shared by `apps/web` and `apps/api`.
@@ -56,16 +56,31 @@ export interface RegenerateRequest {
   section: RegenerateSection;
   /** Required when `section` is "questions": the four categories are regenerated one at a time. */
   category?: QuestionCategory;
+  /**
+   * What the person typed in the composer before sending, if anything.
+   *
+   * The rewrite arrives as a prompt rather than as a button press, so there is somewhere to say
+   * what you actually wanted — "harder", "more about the streaming work". Fenced as untrusted on
+   * the way into the prompt, and ignored outright by the schedule, which is allocated in code.
+   */
+  instructions?: string;
 }
 
 /**
- * Regeneration is a background job, like first generation.
+ * Regeneration is a background job, like first generation — and it forks.
  *
- * `existing: true` means this request joined one already running for the same kit, section and
- * category — two clicks on Regenerate produce one job and one set of model calls.
+ * `kit_id` is the NEW kit the rewrite will produce, reserved before any model is called, exactly
+ * as `POST /kits` reserves one. The kit in the URL is not written to: a rewrite leaves the
+ * document you pressed the button on byte-identical and puts its answer in a sibling, so the
+ * version you had is still there to go back to. The client uses this id to switch the panel over
+ * when the job lands.
+ *
+ * `existing: true` means this request joined one already running for the same kit, section,
+ * category and instructions — two clicks on Send produce one job and one set of model calls.
  */
 export interface RegenerateResponse {
   job_id: string;
+  kit_id: string;
   existing: boolean;
 }
 
@@ -116,6 +131,15 @@ export interface KitSummary {
   company: string;
   days: number;
   createdAt: number;
+  /**
+   * How many rewrites deep this kit is — 1 for one the pipeline built from a posting.
+   *
+   * The rail needs it because forking means a company can hold four rows with the same name and
+   * the same role, and "Vaultline — Senior Backend" four times over is a list you cannot use.
+   */
+  revision: number;
+  /** What the rewrite that produced this kit was asked to do. Absent on an original. */
+  forkedFrom?: KitLineage;
 }
 
 export interface KitListView {

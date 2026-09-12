@@ -181,6 +181,9 @@ export function createApp(options: ApiOptions): express.Express {
           company: record.kit.role.company,
           days: record.kit.schedule.daysAvailable,
           createdAt: record.createdAt,
+          // A kit written before rewrites forked is an original, which is what `?? 1` says.
+          revision: record.kit.revision ?? 1,
+          ...(record.kit.forkedFrom !== undefined ? { forkedFrom: record.kit.forkedFrom } : {}),
         })),
       } satisfies KitListView);
     }),

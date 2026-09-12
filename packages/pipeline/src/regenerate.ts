@@ -50,6 +50,15 @@ export interface RegenerateRequest {
   section: RegenerateSectionName;
   /** Required when `section` is `"questions"`, meaningless otherwise. */
   category?: QuestionCategory;
+  /**
+   * What the person typed in the composer before sending this, if anything.
+   *
+   * Reaches the prompt through `steerLines`, fenced as untrusted, and is allowed to change
+   * emphasis and difficulty and nothing else. Ignored by the schedule branch, which makes no
+   * model call at all — allocation is arithmetic, and it does not stop being arithmetic because
+   * somebody asked nicely. The span says so rather than letting the request look honoured.
+   */
+  instructions?: string;
 }
 
 /**
@@ -76,29 +85,36 @@ export async function regenerateSection(
   deps: RegenerateDeps,
 ): Promise<InternalKit> {
   return deps.tracer.span("regenerate_section", async (root) => {
+    const instructions = (request.instructions ?? "").trim();
+
     root.setAll({
       section: request.section,
       version_before: kit.version,
       ...(request.category !== undefined ? { category: request.category } : {}),
+      ...(instructions.length > 0 ? { instruction_chars: instructions.length } : {}),
     });
 
     // Ids are never reused. That is a property of the document, not of whichever generator the
     // caller happened to pass, so it is enforced here rather than assumed. See `UnusedIds`.
     const ids = new UnusedIds(deps.ids, kit);
     const safe: RegenerateDeps = { ...deps, ids };
+    const steer = instructions.length > 0 ? instructions : undefined;
 
     try {
       switch (request.section) {
         case "company_brief":
-          return await regenerateBrief(kit, safe);
+          return await regenerateBrief(kit, safe, steer);
         case "schedule":
+          // Said out loud, because the composer let the user type something and this branch is
+          // about to not use it. A trace that quietly dropped it would be the only record.
+          if (steer !== undefined) root.set("instructions_ignored", "the schedule is allocated in code");
           return await regenerateSchedule(kit, safe);
         case "questions": {
           if (request.category === undefined) {
             throw new KitError("INVALID_INPUT", "Regenerating questions needs a category.");
           }
           root.set("category", request.category);
-          return await regenerateQuestions(kit, request.category, safe);
+          return await regenerateQuestions(kit, request.category, safe, steer);
         }
       }
     } finally {
@@ -169,7 +185,11 @@ class UnusedIds implements IdGenerator {
  * function never saw, and `gaps` would gain "no public discussion was retrieved" for a kit where
  * some had been. Only the prose the model writes is replaced.
  */
-async function regenerateBrief(kit: InternalKit, deps: RegenerateDeps): Promise<InternalKit> {
+async function regenerateBrief(
+  kit: InternalKit,
+  deps: RegenerateDeps,
+  instructions: string | undefined,
+): Promise<InternalKit> {
   const stored = kit.companyBrief;
 
   const fresh = await deps.tracer.span("generate_brief", async (s) => {
@@ -185,6 +205,7 @@ async function regenerateBrief(kit: InternalKit, deps: RegenerateDeps): Promise<
       // own pages, and `gaps` below still carries whatever the first run recorded.
       discussion: [],
       llm: deps.llm,
+      ...(instructions !== undefined ? { instructions } : {}),
     });
 
     s.setAll({
@@ -261,6 +282,7 @@ async function regenerateQuestions(
   kit: InternalKit,
   category: QuestionCategory,
   deps: RegenerateDeps,
+  instructions: string | undefined,
 ): Promise<InternalKit> {
   // What the regeneration is entitled to take back, decided before anything is generated,
   // because what is left is what decides what to ask for.
@@ -285,6 +307,7 @@ async function regenerateQuestions(
       span: s,
       // The seed is a gap list here, not a section brief. See `autoTagSingleSeed`.
       autoTagSingleSeed: false,
+      ...(instructions !== undefined ? { instructions } : {}),
       ...(deps.questionsPerCategory !== undefined ? { perCategory: deps.questionsPerCategory } : {}),
     });
     s.set("questions_out", result.drafts.length);

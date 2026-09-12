@@ -423,6 +423,56 @@ describe("regenerateSection", () => {
     });
   });
 
+  describe("what the user typed in the composer", () => {
+    it("reaches the question prompt, fenced as data rather than as an instruction", async () => {
+      const d = deps({
+        generate_questions: () => QUESTIONS("A harder PostgreSQL replication question.", ["r1"]),
+        gap_fill: () => ({ prompt: "x", answer_outline: "", difficulty: 2 }),
+      });
+
+      await regenerateSection(
+        kit(),
+        { section: "questions", category: "technical", instructions: "Harder, and more about replication." },
+        d.deps,
+      );
+
+      const call = d.llm.calls.find((c) => c.purpose.startsWith("generate_questions"));
+      expect(call?.prompt).toContain("Harder, and more about replication.");
+      // Inside the untrusted fence, not loose in the instructions. A steer the model is told to
+      // obey as an instruction is a steer that can say "ignore the rules above it".
+      expect(call?.prompt).toContain("<<<CANDIDATE_REQUEST");
+    });
+
+    it("reaches the brief prompt", async () => {
+      const d = deps({ generate_brief: () => ({ summary: "s", what_they_do: "w", hiring_process: "" }) });
+
+      await regenerateSection(kit(), { section: "company_brief", instructions: "Say more about who they sell to." }, d.deps);
+
+      expect(d.llm.calls[0]?.prompt).toContain("Say more about who they sell to.");
+    });
+
+    it("says on the trace when the schedule ignored one", async () => {
+      const d = deps({});
+
+      await regenerateSection(kit(), { section: "schedule", instructions: "Put the hard days last." }, d.deps);
+
+      // Allocation is arithmetic in code and no model is called, so this instruction cannot be
+      // honoured. The trace says so rather than letting a dropped request look like an applied
+      // one — the composer let the user type it, and silence would be the only record.
+      const root = d.tracer.spans.find((span) => span.step === "regenerate_section");
+      expect(root?.attrs["instructions_ignored"]).toBe("the schedule is allocated in code");
+      expect(d.llm.calls).toHaveLength(0);
+    });
+
+    it("is absent from the prompt when nothing was typed", async () => {
+      const d = deps({ generate_brief: () => ({ summary: "s", what_they_do: "w", hiring_process: "" }) });
+
+      await regenerateSection(kit(), { section: "company_brief" }, d.deps);
+
+      expect(d.llm.calls[0]?.prompt).not.toContain("CANDIDATE_REQUEST");
+    });
+  });
+
   it("leaves an edit made by hand exactly as the user left it", async () => {
     const edited = editQuestion(kit(), "q1", { prompt: "I rewrote this myself." });
     const d = deps({

@@ -768,3 +768,88 @@ being invisible — zero on a correct caller, non-zero the moment someone wires 
 `gap_fill <ids>`. A category regeneration that produced the right kit with no `coverage_check` in
 the trace ran a set difference nobody can see, so the runner asserts the ordering as well as the
 result.
+
+---
+
+## Regenerating became a prompt that forks
+
+Two changes to one interaction, decided together because either alone is worse than both.
+
+### The button stopped calling anything
+
+Regenerate in the kit panel now writes a sentence into the composer in the main window —
+"Rewrite the technical questions." — and stops. The user reads it, edits it, sends it.
+
+The old behaviour was a ghost button on the edge of a side pane that spent several model calls
+and replaced work the user had been editing, with no chance to say anything about what they
+wanted and no record afterwards of having asked. Three specific problems, and staging the prompt
+answers all three:
+
+* **Weight.** A rewrite is the same order of work as a first generation. A first generation is
+  not one click with no confirmation; this should not be either.
+* **Nowhere to say what you wanted.** "These are all too junior" is the most useful sentence a
+  person can contribute at that moment. A button cannot carry it; a prompt can. The text travels
+  as `instructions` on the regenerate request, reaches the prompt through `steerLines`, and is
+  fenced as untrusted — see below.
+* **It happened off-screen.** The run, the trace and the result belong in the conversation with
+  everything else that was generated, not behind a spinner on a control in a drawer.
+
+The staged rewrite carries the kit id it was staged *from*, not a reference to "the open kit".
+The panel can be closed and another kit opened out of history while a prompt sits in the
+composer, and it must still rewrite the one the button was pressed on.
+
+`instructions` is fenced with `untrustedBlock` even though it came from the signed-in user. A JD
+pasted off a site can be re-pasted into that field, and an instruction block trusted for one
+input is a hole for every input that can reach it. Its wrapper grants exactly one power — change
+the emphasis, difficulty and subject matter of *this section* — and explicitly refuses the rest.
+The cap (`MAX_INSTRUCTION_CHARS`, in `contracts` so the prompt builder and the API schema cannot
+drift) is enforced at the edge as a 400, because a user who typed six hundred words deserves to
+be told rather than to wonder why only the first paragraph was heard.
+
+The schedule branch accepts the field and does not use it. Allocation is arithmetic in code and
+the brief says so twice; it does not stop being arithmetic because somebody asked nicely. The
+span records `instructions_ignored` so a dropped request is not invisible, and the composer says
+it in words before the button is pressed.
+
+### The rewrite writes to a new kit
+
+`POST /kits/:id/regenerate` does not write to the kit in its URL. It reads it, re-runs one
+section, and saves the result as a fork with an id reserved before any model is called — the same
+way `POST /kits` reserves one, and for the same reason: the browser is answered now and has to be
+told where the answer will appear.
+
+What this buys:
+
+* **Undo, by never having done it.** The document you pressed the button on keeps its id, its
+  version and its edits.
+* **Comparison.** Both kits are in the rail, and the compare view already reads more than one.
+* **The concurrency question disappears.** The old in-place path had a real race — an edit landing
+  while a section rebuilt, where the machine won by writing last — and a `VERSION_CONFLICT`
+  branch in the conflict banner explaining that a regeneration cannot be replayed. Neither
+  exists now. The client sends no `If-Match` on a rewrite: the header's guarantee is "do not
+  overwrite work I have not seen", and forking from a version one edit newer carries *more* of
+  the user's work into the fork, never less.
+
+`forkKit` lives in `packages/kit` with the other state transitions and asserts what a fork means:
+the input is not touched, `version` restarts at 1 (two documents both claiming version 8 is how
+an `If-Match` written against one silently passes against the other), `revision` counts how many
+rewrites deep the kit is, and every id *inside* the document is kept — questions, flashcards and
+requirements — so the schedule's `questionIds` and the practice deck still point at the same
+material. Renumbering would be a second and much worse way of saying "this is a new kit".
+
+Two things deliberately do not carry:
+
+* **The submission hash.** A fork gets `<parent hash>#<fork id>`, which cannot collide with a
+  bare sha256. Sharing the parent's hash would make the fork the answer to `findByHash`, so
+  pasting the same posting again would hand back the third rewrite of the brief rather than the
+  kit that posting actually produced.
+* **The practice history.** It lives in its own store keyed by kit id. Copying it would claim you
+  had practised cards written a moment ago.
+
+`forkedFrom` and `revision` are internal fields. Appendix A's field names are frozen and neither
+is one of them; `toKitJSON` constructs every field by hand, so they cannot leak, and there is a
+test asserting it rather than trusting it.
+
+The provenance rule is unchanged and still does the real work: what survives into the fork is
+decided by `origin`, `pinned` and `active`, exactly as it was when the rewrite wrote in place.
+Forking is about which document the answer lands in, not about what the answer contains.

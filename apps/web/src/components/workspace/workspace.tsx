@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import type { Span } from "@trao/contracts";
 import { api } from "@/lib/api/client";
-import { askTitle, isPosting, sectionLabel, type Ask, type AskParts } from "@/lib/ask";
+import { askTitle, isPosting, type Ask, type AskParts } from "@/lib/ask";
+import { nextRewriteKey, rewritePrompt, rewritingLabel, type Rewrite } from "@/lib/rewrite";
 import { kitsOf, mergeHistory, type HistoryEntry } from "@/lib/history";
 import { AskDocument } from "@/components/workspace/ask-document";
 import { KIT_OUTPUTS, seconds, type KitOutputId } from "@/lib/kit-outputs";
@@ -109,38 +110,55 @@ export function Workspace() {
 
   const [staleKitId, setStaleKitId] = useState<string | null>(null);
 
+  /**
+   * A rewrite the kit panel has asked for, waiting in the composer to be sent.
+   *
+   * Staged rather than sent, because a rewrite costs several model calls and produces a whole
+   * new kit — the same weight as a first run, which nobody would expect from one click on the
+   * edge of a side panel. See `lib/rewrite.ts`.
+   */
+  const [rewrite, setRewrite] = useState<Rewrite | null>(null);
+
   const forgetStaleKit = useCallback((missingId: string) => {
     setStaleKitId(missingId);
     setActiveKitId(null);
     setPanelOpen(false);
+    // Including anything staged against it — a rewrite of a kit that is not there can only fail.
+    setRewrite((staged) => (staged?.kitId === missingId ? null : staged));
   }, []);
 
   // One builder for the whole workspace, so the output grid counts the same kit the panel edits
   // and deleting a question updates the card in the conversation without a second fetch.
-  /**
-   * A rewrite, shown as a turn.
-   *
-   * The kit stays open and the panel stays where it is — this is a change to the thing you are
-   * looking at, not a navigation. What arrives is a turn in the conversation: what you asked
-   * for, the steps as they run, and a line saying what changed. `jobIds` is replaced rather than
-   * appended, because the previous run is finished business and two live traces read as two
-   * things happening at once.
-   */
-  const onRegenerating = useCallback((jobId: string, section: string) => {
-    setAsks((previous) => ({
-      ...previous,
-      [jobId]: { kind: "change", text: sectionLabel(section), section, at: Date.now() },
-    }));
-    // Appended, not replaced. Each rewrite is a turn: ask, steps, what changed — and the ones
-    // before it stay above, because the value of a transcript is being able to read back what
-    // you asked for and what it did. Replacing left one turn on screen and no history at all.
-    setJobIds((previous) => (previous.includes(jobId) ? previous : [...previous, jobId]));
-    setComparing(false);
-  }, []);
-
-  const builder = useBuilder(activeKitId, forgetStaleKit, onRegenerating);
+  const builder = useBuilder(activeKitId, forgetStaleKit);
   const { kit, loading: kitLoading, error: kitError } = builder;
   const retryKit = builder.refetch;
+
+  /**
+   * Regenerate, pressed in the panel: write the prompt into the composer and stop.
+   *
+   * The kit is named on the staged rewrite rather than read from `activeKitId` when it is sent,
+   * because the two can drift — the panel can be closed, another kit opened out of history, and
+   * a prompt sitting in the composer must still rewrite the kit it was staged from.
+   */
+  const stageRewrite = useCallback(
+    (target: Pick<Rewrite, "section" | "category">) => {
+      if (activeKitId === null || kit === null) return;
+      setRewrite({
+        key: nextRewriteKey(),
+        kitId: activeKitId,
+        kitLabel: `${kit.role.company} — ${kit.role.title}`,
+        section: target.section,
+        ...(target.category !== undefined ? { category: target.category } : {}),
+        id: target.section === "questions" ? `questions:${target.category}` : target.section,
+        prompt: rewritePrompt(target.section, target.category),
+      });
+      setComparing(false);
+      // On a phone the panel covers the composer, so staging a prompt into something the user
+      // cannot see would look like the button did nothing at all.
+      if (!isWide) setPanelOpen(false);
+    },
+    [activeKitId, kit, isWide],
+  );
 
   /**
    * A `?kit=` pointing at a kit that is not there.
@@ -241,6 +259,10 @@ export function Workspace() {
     setJobIds([]);
     setActiveKitId(null);
     setPanelOpen(false);
+    // A staged rewrite belongs to the kit it came from, and New means there is no kit. Leaving
+    // it armed would put an empty workspace in front of someone whose composer still says it is
+    // about to rewrite the technical questions of something they can no longer see.
+    setRewrite(null);
     setHistoryOverride((open) => (open === true ? null : open));
   }, []);
 
@@ -261,12 +283,25 @@ export function Workspace() {
     setHistoryOverride((open) => (open === true ? null : open));
   }, []);
 
+  /**
+   * Something was sent: a posting, a batch, or a rewrite.
+   *
+   * These are not the same shape. A posting or a batch is a new conversation — the kit you had
+   * open is not what the run is about, so the panel closes and the transcript starts again. A
+   * rewrite is the next turn in the conversation you are already having: the kit stays open, the
+   * panel stays where it is, and the job is appended so the turns above it remain readable. The
+   * value of a transcript is being able to read back what you asked for and what each ask did.
+   */
   const startRun = useCallback((ids: string[], ask: AskParts) => {
     setStaleKitId(null);
     setComparing(false);
-    setJobIds(ids);
-    setActiveKitId(null);
-    setPanelOpen(false);
+    if (ask.kind === "change") {
+      setJobIds((previous) => [...previous, ...ids.filter((id) => !previous.includes(id))]);
+    } else {
+      setJobIds(ids);
+      setActiveKitId(null);
+      setPanelOpen(false);
+    }
     const at = Date.now();
     setAsks((previous) => {
       const next = { ...previous };
@@ -317,7 +352,11 @@ export function Workspace() {
       }));
       setKitsLoading(true);
       setHistoryNonce((nonce) => nonce + 1);
-      setActiveKitId((current) => current ?? kitId);
+      // A rewrite forks, so this kit id is a NEW document and the one on screen is its parent,
+      // untouched. Switching is the point: you asked for these questions to be rewritten, and
+      // leaving the parent open would show you the questions you were trying to replace while
+      // claiming the rewrite had landed. The parent is one row away in the rail.
+      setActiveKitId((current) => (changed !== undefined ? kitId : (current ?? kitId)));
       setPanelOpen(true);
     },
     [asks],
@@ -549,8 +588,9 @@ export function Workspace() {
                                 </>
                               ) : (
                                 <>
-                                  {changedLabel(run.changed)} in {seconds(totalMs(run.spans))}. Your
-                                  edits elsewhere are untouched.
+                                  {changedLabel(run.changed)} in {seconds(totalMs(run.spans))}, into a
+                                  new kit — now open. The one you rewrote is unchanged, in your
+                                  history.
                                 </>
                               )}
                             </Assistant>
@@ -563,6 +603,7 @@ export function Workspace() {
                             <GenerationStream
                               jobId={jobId}
                               showLabel={jobIds.length > 1}
+                              {...(ask?.kind === "change" ? { running: rewritingLabel(ask.section) } : {})}
                               onComplete={onKitReady}
                               onFailed={onRunFailed}
                               onRetried={onRetried}
@@ -616,7 +657,7 @@ export function Workspace() {
               badges. It sits on the band at the bottom, at the conversation's measure. */}
           <div className="bg-tint shrink-0 px-3 py-3 md:px-8 md:py-4">
             <div className="max-w-centre mx-auto">
-              <Composer onStarted={startRun} />
+              <Composer onStarted={startRun} rewrite={rewrite} onCancelRewrite={() => setRewrite(null)} />
             </div>
           </div>
         </main>
@@ -644,6 +685,7 @@ export function Workspace() {
             onClose={closePanel}
             expanded={panelExpanded}
             onToggleExpand={() => setPanelExpanded((on) => !on)}
+            onRewrite={stageRewrite}
           />
         </KitPanel>
         </div>
@@ -663,8 +705,9 @@ export function Workspace() {
 /**
  * What a rewrite says it did, in the past tense.
  *
- * Deliberately narrower than "regenerated the kit". A rewrite replaces one section and leaves
- * everything else byte-identical, and a sentence that overstated it would make people check.
+ * Deliberately narrower than "regenerated the kit". A rewrite rewrites one section, copies
+ * everything else across byte-identical, and puts the result in a new document — so the sentence
+ * has two halves to be honest about, and overstating either would make people check.
  */
 function changedLabel(section: string): string {
   if (section === "company_brief") return "Rewrote the brief";

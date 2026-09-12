@@ -389,6 +389,19 @@ async function seed(owner = "alice", version = 1): Promise<InternalKit> {
 
 const alice = (): [string, string] => ["authorization", "Bearer alice"];
 
+/** Send a rewrite of the seeded kit, wait for it, and hand back the id of the fork it made. */
+async function rewrite(body: Record<string, unknown>, from = "kit_seed"): Promise<string> {
+  const started = await request(h.app).post(`/kits/${from}/regenerate`).set(...alice()).send(body);
+  expect(started.status).toBe(202);
+  const { job_id: jobId, kit_id: kitId } = started.body as { job_id: string; kit_id: string };
+  const finished = (await waitForJob(h, jobId)) as { job: { status: string; kitId: string } };
+  // The id is promised before a model is called, and the job has to land on that exact id —
+  // otherwise the browser has been told where to look and the answer is somewhere else.
+  expect(finished.job.status).toBe("done");
+  expect(finished.job.kitId).toBe(kitId);
+  return kitId;
+}
+
 describe("the builder", () => {
   it("answers every write with the projection and the new version in an ETag", async () => {
     await seed();
@@ -542,10 +555,9 @@ describe("the builder", () => {
 
   it("gives a regenerated question an id the kit has never used", async () => {
     await seed();
-    const started = await request(h.app).post("/kits/kit_seed/regenerate").set(...alice()).send({ section: "questions", category: "technical" });
-    await waitForJob(h, (started.body as { job_id: string }).job_id);
+    const forkId = await rewrite({ section: "questions", category: "technical" });
 
-    const stored = (await h.kits.findById("kit_seed")) as { kit: InternalKit };
+    const stored = (await h.kits.findById(forkId)) as { kit: InternalKit };
     const ids = stored.kit.questions.map((q) => q.id);
 
     // Soft delete rests entirely on ids never being reused: two records sharing one id leaves a
@@ -556,6 +568,73 @@ describe("the builder", () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(stored.kit.questions.find((q) => q.id === "q1")?.active).toBe(false);
     expect(stored.kit.questions.some((q) => q.active && q.category === "technical")).toBe(true);
+  });
+
+  it("writes the rewrite into a new kit and leaves the original untouched", async () => {
+    const before = await seed();
+    const forkId = await rewrite({ section: "questions", category: "technical" });
+
+    expect(forkId).not.toBe("kit_seed");
+
+    // The whole promise of forking, asserted on the document rather than on the response: the
+    // kit the user pressed the button on is the same bytes it was, on the same version, with
+    // q1 still active. Anything they were editing is still editable, and still there.
+    const parent = (await h.kits.findById("kit_seed")) as { kit: InternalKit; hash: string };
+    expect(parent.kit).toEqual(before);
+
+    const fork = (await h.kits.findById(forkId)) as { kit: InternalKit; hash: string };
+    // A new document starts its own version count — two kits both claiming version 8 is how an
+    // `If-Match` written against one of them silently passes against the other.
+    expect(fork.kit.version).toBe(1);
+    expect(fork.kit.revision).toBe(2);
+    // Not the parent's hash. `findByHash` is what recognises a resubmitted posting as already
+    // generated, and a fork answering to it would hand back the rewrite rather than the kit the
+    // posting actually produced.
+    expect(fork.hash).not.toBe(parent.hash);
+  });
+
+  it("records on the fork what the rewrite was asked to do", async () => {
+    await seed();
+    const forkId = await rewrite({ section: "questions", category: "technical", instructions: "Harder, and more about replication." });
+
+    const fork = (await h.kits.findById(forkId)) as { kit: InternalKit };
+    expect(fork.kit.forkedFrom).toMatchObject({
+      fromKitId: "kit_seed",
+      section: "questions",
+      category: "technical",
+      instructions: "Harder, and more about replication.",
+    });
+
+    // Listed as its own row, with the number the rail labels it by. Without this a company with
+    // four rewrites is four identical rows.
+    const list = await request(h.app).get("/kits").set(...alice());
+    const kits = (list.body as { kits: { id: string; revision: number }[] }).kits;
+    expect(kits.map((entry) => entry.id).sort()).toEqual([forkId, "kit_seed"].sort());
+    expect(kits.find((entry) => entry.id === forkId)?.revision).toBe(2);
+  });
+
+  it("treats a rewrite asked for in different words as a different run", async () => {
+    await seed();
+    modelLatencyMs = 100;
+    const [first, second] = await Promise.all([
+      request(h.app).post("/kits/kit_seed/regenerate").set(...alice()).send({ section: "questions", category: "technical", instructions: "Harder." }),
+      request(h.app).post("/kits/kit_seed/regenerate").set(...alice()).send({ section: "questions", category: "technical", instructions: "Easier." }),
+    ]);
+
+    // Deduplicating these would not be saving a model call, it would be refusing the second
+    // request and answering it with someone else's answer.
+    expect((first.body as { job_id: string }).job_id).not.toBe((second.body as { job_id: string }).job_id);
+    expect((first.body as { kit_id: string }).kit_id).not.toBe((second.body as { kit_id: string }).kit_id);
+  });
+
+  it("refuses an instruction longer than the prompt will carry", async () => {
+    await seed();
+    const response = await request(h.app)
+      .post("/kits/kit_seed/regenerate")
+      .set(...alice())
+      .send({ section: "company_brief", instructions: "x".repeat(601) });
+    // Refused at the edge rather than silently truncated three packages later.
+    expect(response.status).toBe(400);
   });
 
   it("refuses a regeneration of questions with no category, and a category on the others", async () => {

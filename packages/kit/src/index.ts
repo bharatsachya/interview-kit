@@ -55,6 +55,8 @@ export {
 
 export { commit, VersionConflictError, type MutationOptions } from "./version";
 
+export { forkKit, lineageLabel } from "./fork";
+
 export { MINUTES_BY_DIFFICULTY, minutesForDifficulty, minutesForQuestions } from "./minutes";
 
 export { getKitForBuilder, toKitJSON, tryToKitJSON, type BuilderKit, type ToKitJSONResult } from "./projections";
@@ -71,6 +73,7 @@ export {
   type InternalKit,
   type InternalQuestion,
   type InternalSchedule,
+  type KitLineage,
   type Origin,
   type Provenance,
   type QuestionCategory,

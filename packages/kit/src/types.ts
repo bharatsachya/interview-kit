@@ -157,9 +157,46 @@ export interface CoverageReport {
   uncoveredRequirementIds: string[];
 }
 
+/**
+ * What a rewrite was asked to do, kept on the kit it produced.
+ *
+ * A rewrite forks: the kit you were looking at is left exactly as it was and a new document is
+ * written beside it. That only reads as a version history if each fork says where it came from
+ * and what it was asked for — without this a user with four Vaultline kits in the rail has four
+ * identical rows and no way to tell which one has the questions they wanted.
+ *
+ * `instructions` is the candidate's own words from the composer, stored verbatim. It is the
+ * only part of this a model ever sees, and it is fenced as untrusted input when it gets there.
+ */
+export interface KitLineage {
+  /** The kit this one was rewritten from. Still present; a fork never touches its parent. */
+  fromKitId: string;
+  section: "company_brief" | "questions" | "schedule";
+  /** Set only when `section` is `questions` — the one category that was rewritten. */
+  category?: QuestionCategory;
+  /** What the composer was sent with, if anything was typed. Never invented. */
+  instructions?: string;
+  at: number;
+}
+
 export interface InternalKit {
   id: string;
   createdAt: number;
+  /**
+   * Where this kit came from, when it was not built from a posting.
+   *
+   * Absent on a kit the pipeline built — that one came from a job description, which the run's
+   * own job record already holds. Present on every fork a rewrite produced.
+   */
+  forkedFrom?: KitLineage;
+  /**
+   * How many rewrites deep this kit is. 1 for anything the pipeline built.
+   *
+   * Stored rather than derived by walking `forkedFrom` back through the store: the rail labels
+   * every row and a walk would be one round trip per row per render. Optional because kits
+   * written before forking existed have no number, and those are all originals.
+   */
+  revision?: number;
   /**
    * Bumped by exactly one on every builder mutation.
    *

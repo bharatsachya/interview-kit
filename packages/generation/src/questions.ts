@@ -1,4 +1,5 @@
 import { NOOP_SPAN, truncateForPrompt, untrustedBlock, type IdGenerator, type LlmProvider, type SpanHandle } from "@trao/contracts";
+import { steerLines } from "./steer";
 import type { Difficulty, InternalQuestion, QuestionCategory, Requirement } from "@trao/kit";
 import { z } from "zod";
 
@@ -114,6 +115,13 @@ export interface QuestionGenerationInput {
    * tagged it and the tag survives on its own merit.
    */
   autoTagSingleSeed?: boolean;
+  /**
+   * What the candidate asked for, when this category is being rewritten from the composer.
+   *
+   * Only ever set on a regeneration, and only for the one category the button named. A first
+   * generation has no instructions because nobody has read the questions yet. See `steerLines`.
+   */
+  instructions?: string;
 }
 
 export interface CategoryReport {
@@ -373,6 +381,7 @@ function buildPrompt(
     "Each question needs an `answer_outline`: the three or four points a strong answer covers.",
     "`difficulty` is 1, 2 or 3.",
     "",
+    ...steerLines(input.instructions),
   ];
 
   if (seed.length > 0) {

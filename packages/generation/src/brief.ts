@@ -1,4 +1,5 @@
 import { truncateForPrompt, untrustedBlock, type LlmProvider } from "@trao/contracts";
+import { steerLines } from "./steer";
 import type { CompanyBrief } from "@trao/kit";
 import { z } from "zod";
 
@@ -37,6 +38,13 @@ export interface BriefInput {
   retrievalGaps?: readonly string[];
   llm: LlmProvider;
   maxCharsPerPage?: number;
+  /**
+   * What the candidate asked for, when this brief is being rewritten from the composer.
+   *
+   * Absent on a first generation — nobody has seen the brief yet, so there is nothing to say
+   * about it. See `steerLines` for how it reaches the prompt and what it is allowed to do.
+   */
+  instructions?: string;
 }
 
 export interface BriefResult {
@@ -156,6 +164,7 @@ function buildPrompt(input: BriefInput): string {
     "",
     "`summary` is two or three sentences a candidate would want to know before walking in.",
     "",
+    ...steerLines(input.instructions),
     pages.length > 0 ? pages : "(no pages were retrieved)",
     "",
     discussion.length > 0 ? discussion : "(no public discussion was retrieved)",

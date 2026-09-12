@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { askPlainText, askSize, askTitle, sectionLabel } from "../src/lib/ask";
+import { askPlainText, askSize, askTitle } from "../src/lib/ask";
 
 describe("describing the posting a run was started from", () => {
   it("titles it by its first real line", () => {
@@ -29,15 +29,3 @@ describe("describing the posting a run was started from", () => {
   });
 });
 
-describe("naming a rewrite in the conversation", () => {
-  it("names the section, not 'the kit' — a rewrite replaces one part of it", () => {
-    expect(sectionLabel("company_brief")).toBe("Rewrite the brief");
-    expect(sectionLabel("schedule")).toBe("Rebuild the schedule");
-    expect(sectionLabel("questions:technical")).toBe("Rewrite the technical questions");
-    expect(sectionLabel("questions:system-design")).toBe("Rewrite the system-design questions");
-  });
-
-  it("stays sensible for a section it has never heard of", () => {
-    expect(sectionLabel("questions")).toBe("Rewrite the questions");
-  });
-});

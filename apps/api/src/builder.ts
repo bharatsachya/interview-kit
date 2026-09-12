@@ -251,17 +251,27 @@ export function builderRoutes(deps: BuilderDeps): Router {
   // ── Regeneration ─────────────────────────────────────────────────────────────────────
 
   /**
-   * Rebuild one section, in the background, exactly once.
+   * Rewrite one section into a new kit, in the background, exactly once.
    *
-   * 202 and a job id rather than a finished kit: regenerating the technical questions is several
+   * **This route does not write to the kit in its URL.** It reads it, re-runs one section over
+   * it, and saves the result as a fork with its own id — returned as `kit_id`, reserved before
+   * any model is called. The kit you were looking at keeps its version, its edits and its
+   * questions, and stays in the history rail beside the rewrite. That is the whole reason the
+   * rewrite is a prompt in the composer rather than a button that changes what is on screen: a
+   * generation you cannot undo should not be one click away from work you have been editing.
+   *
+   * 202 and a job id rather than a finished kit: rewriting the technical questions is several
    * model calls, and the builder must stay usable while it happens. The client watches
-   * `/jobs/:id/events` and refetches the kit when the job completes.
+   * `/jobs/:id/events` and opens the new kit when the job completes.
    *
-   * A second request for the same kit, section and category while one is running is answered
-   * with the same job id and starts nothing. Two clicks on a button that takes twenty seconds is
-   * the normal case, not the pathological one, and the alternative is two sets of model calls
-   * racing to write the same section — where the loser's work is discarded and the user's quota
-   * is not.
+   * A second request for the same kit, section, category and instructions while one is running
+   * is answered with the same job id and starts nothing. Two sends of a button that takes twenty
+   * seconds is the normal case, not the pathological one. Different instructions are a different
+   * request and get their own run — they are asking for something else.
+   *
+   * `If-Match` still means something even though nothing is overwritten: it says "fork the
+   * version I am looking at", and a mismatch means the section on screen is not the section that
+   * would be rewritten.
    */
   router.post(
     "/kits/:kitId/regenerate",
@@ -282,12 +292,15 @@ export function builderRoutes(deps: BuilderDeps): Router {
         return versionConflict(res, record.kit.version);
       }
 
-      const request = body.value.section === "questions"
-        ? { section: "questions" as const, category: body.value.category }
-        : { section: body.value.section };
+      const instructions = body.value.instructions?.trim();
+      const steer = instructions !== undefined && instructions.length > 0 ? { instructions } : {};
 
-      const { jobId, existing } = await deps.runner.regenerate(userId, record.id, request);
-      res.status(202).json({ job_id: jobId, existing } satisfies RegenerateResponse);
+      const request = body.value.section === "questions"
+        ? { section: "questions" as const, category: body.value.category, ...steer }
+        : { section: body.value.section, ...steer };
+
+      const { jobId, kitId, existing } = await deps.runner.regenerate(userId, record.id, request);
+      res.status(202).json({ job_id: jobId, kit_id: kitId, existing } satisfies RegenerateResponse);
     }),
   );
 

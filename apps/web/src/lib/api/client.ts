@@ -313,11 +313,17 @@ export const api = {
   },
 
   /**
-   * Rebuild a section. Answers 202 with a job id, not a kit.
+   * Rewrite a section into a new kit. Answers 202 with a job id and the fork's id, not a kit.
    *
-   * Regeneration is several model calls and the builder stays usable while it runs, so the
-   * caller watches the job and refetches when it lands. `existing: true` means a run for this
-   * same section was already going and nothing new was started.
+   * The kit in the path is read, never written: the answer lands in a new document, so the one
+   * the user is looking at keeps its version and its edits. The caller watches the job and opens
+   * `kit_id` when it lands. `existing: true` means a run for this same section and these same
+   * instructions was already going and nothing new was started.
+   *
+   * No `If-Match`. The header's guarantee is "do not overwrite work I have not seen", and there
+   * is nothing to overwrite — a rewrite that forks from a version one edit newer than the one on
+   * screen carries MORE of the user's work into the fork, never less. Refusing that would be
+   * friction bought with nothing.
    */
   async regenerate(kitId: string, target: RegenerateRequest): Promise<RegenerateResponse> {
     return request<RegenerateResponse>(kitPath(kitId, "regenerate"), {

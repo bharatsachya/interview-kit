@@ -10,7 +10,7 @@ import {
   type Tracer,
 } from "@trao/contracts";
 import type { RegenerateRequest } from "@trao/api-contract";
-import type { EvaluationCase, InternalKit } from "@trao/kit";
+import { forkKit, type EvaluationCase, type InternalKit, type KitLineage } from "@trao/kit";
 import { generateKit, hashSubmission, type PipelineDeps } from "@trao/pipeline";
 import type { JobSpanFeed } from "./spans";
 
@@ -28,6 +28,8 @@ import type { JobSpanFeed } from "./spans";
  * Regeneration from the builder is the same machinery: a section is smaller than a whole kit but
  * it is still several model calls, and giving it its own synchronous path would mean a second
  * answer to "is something running for this kit" and a second way for a double click to pay twice.
+ * It is also the same *shape* — a rewrite forks into a new kit, so like a first run it reserves
+ * an id up front, runs in the background, and ends with a kit the history rail can list.
  */
 
 /** Rebuild one section of an existing kit. Supplied by the composition root, like the pipeline. */
@@ -115,7 +117,7 @@ export class JobRunner {
    */
   readonly #creating = new Map<string, Promise<StartedJob>>();
   /** Keys join their parts with a NUL, which is the one character none of the parts can contain. */
-  readonly #regenerating = new Map<string, Promise<string>>();
+  readonly #regenerating = new Map<string, Promise<StartedJob>>();
 
   constructor(private readonly options: JobRunnerOptions) {}
 
@@ -223,25 +225,32 @@ export class JobRunner {
   }
 
   /**
-   * Rebuild one section of a kit, or join the run already doing it.
+   * Rewrite one section of a kit into a NEW kit, or join the run already doing it.
    *
-   * Keyed on kit + section + category, which is the unit the button represents. Two clicks on
-   * Regenerate get the same job id and one set of model calls; regenerating the behavioural
-   * questions while the technical ones are still going is a different key and runs alongside.
+   * Keyed on kit + section + category + instructions, which is the unit the prompt represents.
+   * Two sends of the same rewrite get the same job id and one set of model calls; asking for the
+   * behavioural questions while the technical ones are still going is a different key and runs
+   * alongside, and so is the same section asked for in different words.
+   *
+   * The kit id in the arguments is the source. Nothing here writes to it — see
+   * `#runRegeneration`. The returned `kitId` is the fork the run will produce.
    *
    * The caller has already proved the kit is this user's — ownership is not rechecked here,
    * because a runner that could load any kit by id is a runner that can be asked to.
    */
-  regenerate(userId: string, kitId: string, request: RegenerateRequest): Promise<{ jobId: string; existing: boolean }> {
-    const key = `${kitId}\u0000${request.section}\u0000${request.category ?? ""}`;
+  regenerate(userId: string, kitId: string, request: RegenerateRequest): Promise<StartedJob> {
+    // The instructions are part of the key. Without them a second rewrite of the same section
+    // saying something different would be handed the first one's job id and its answer — which
+    // is the one case where deduplicating is not saving a call, it is refusing the request.
+    const key = [kitId, request.section, request.category ?? "", (request.instructions ?? "").trim()].join("\u0000");
 
     const pending = this.#regenerating.get(key);
-    if (pending !== undefined) return pending.then((jobId) => ({ jobId, existing: true }));
+    if (pending !== undefined) return pending.then((started) => ({ ...started, existing: true }));
 
     const started = this.#beginRegeneration(userId, kitId, request, key);
     this.#regenerating.set(key, started);
     void started.catch(() => this.#regenerating.delete(key));
-    return started.then((jobId) => ({ jobId, existing: false }));
+    return started;
   }
 
   async #beginRegeneration(
@@ -249,13 +258,20 @@ export class JobRunner {
     kitId: string,
     request: RegenerateRequest,
     key: string,
-  ): Promise<string> {
+  ): Promise<StartedJob> {
     const jobId = this.options.ids.next("job_");
+    // Reserved before a single model is called, exactly as `#begin` reserves one for a first
+    // run, and for the same reason: the browser is answered now and has to be told where the
+    // answer will appear. The kit named in the URL is the SOURCE — it is read and never written.
+    const forkId = this.options.ids.next("kit_");
+
     await this.options.jobs.create({
       id: jobId,
       userId,
       label: regenerationLabel(request),
-      kitId,
+      // The fork, not the source. The history rail keys rows by the kit a run produced, and a
+      // job pointing back at the kit it read from would put this run's row on the parent.
+      kitId: forkId,
       // A regeneration runs from a kit, not from a posting. There is no posting to retry with.
       request: null,
       status: "queued",
@@ -266,9 +282,12 @@ export class JobRunner {
     });
 
     // Held until the regeneration is over — see `#begin`. This is the entry that makes a second
-    // click on Regenerate cost nothing.
-    this.#enqueue(() => this.#runRegeneration({ jobId, kitId, userId, request }), () => this.#regenerating.delete(key));
-    return jobId;
+    // click on Send cost nothing.
+    this.#enqueue(
+      () => this.#runRegeneration({ jobId, forkId, sourceKitId: kitId, userId, request }),
+      () => this.#regenerating.delete(key),
+    );
+    return { jobId, kitId: forkId, existing: false };
   }
 
   /** Spans for a job still in flight. Finished jobs keep theirs until the process restarts. */
@@ -343,14 +362,28 @@ export class JobRunner {
     });
   }
 
+  /**
+   * A rewrite: read one kit, write a different one.
+   *
+   * The source record is opened for reading and never saved. Everything that used to make a
+   * regeneration frightening — an edit landing mid-run and losing, two tabs disagreeing about
+   * which version they hold, a user pressing the button and wanting the old questions back —
+   * stops being a question the moment the answer goes somewhere else. The parent is still on
+   * disk, on the version it was on, with the edits it had.
+   *
+   * What still holds from the in-place days is the provenance rule inside `regenerateSection`:
+   * pinned, edited and hand-written material carries into the fork untouched, so a rewrite of
+   * the technical questions does not quietly drop the one you wrote yourself.
+   */
   async #runRegeneration(entry: {
     jobId: string;
-    kitId: string;
+    forkId: string;
+    sourceKitId: string;
     userId: string;
     request: RegenerateRequest;
   }): Promise<void> {
     await this.#traced(entry.jobId, regenerationLabel(entry.request), null, async (deps, settle) => {
-      const record = await this.options.kits.findById(entry.kitId);
+      const record = await this.options.kits.findById(entry.sourceKitId);
       if (record === null || record.userId !== entry.userId) {
         // Deleted, or reassigned, between the click and the job reaching the front of the queue.
         settle();
@@ -363,15 +396,34 @@ export class JobRunner {
       // which is what `makeDeps` builds under `--fake-llm`, so the trace reads r1/q1/f1 — starts
       // from scratch on every job and would hand back ids the kit is already using. The runner's
       // own generator is the one that mints ids for things that outlive a run.
-      const kit = await this.options.regenerate(record.kit, entry.request, { ...deps, ids: this.options.ids });
+      const rewritten = await this.options.regenerate(record.kit, entry.request, { ...deps, ids: this.options.ids });
       settle();
 
-      // Written back under the version the regeneration produced. An edit that landed while the
-      // section was rebuilding is already inside `kit` — the regenerator was handed the record as
-      // it was when the job started, so the last writer wins here, and that writer is the machine.
-      // This is the one place where that is the right answer: the user asked for this section to
-      // be replaced, and anything of theirs inside it survives on provenance, not on timing.
-      await this.options.kits.save({ ...record, kit, updatedAt: this.options.clock.now() });
+      const at = this.options.clock.now();
+      const asked = instructionsOf(entry.request);
+      const lineage: KitLineage = {
+        fromKitId: record.id,
+        section: entry.request.section,
+        ...(entry.request.category !== undefined ? { category: entry.request.category } : {}),
+        ...(asked !== undefined ? { instructions: asked } : {}),
+        at,
+      };
+
+      const kit = forkKit(rewritten, { id: entry.forkId, at, from: lineage });
+
+      await this.options.kits.save({
+        id: kit.id,
+        userId: entry.userId,
+        // Not the parent's hash. `findByHash` is how a resubmitted posting is recognised as
+        // already generated, and a fork sharing its parent's hash would make it the answer to
+        // that question — so pasting the same JD again would hand back the third rewrite of the
+        // brief rather than the kit that was actually built from it. The suffix cannot collide
+        // with a submission hash, which is bare sha256 hex.
+        hash: `${record.hash}#${kit.id}`,
+        createdAt: at,
+        updatedAt: at,
+        kit,
+      });
       await this.options.jobs.complete(entry.jobId, kit.id);
     });
   }
@@ -504,6 +556,12 @@ function labelFor(testCase: EvaluationCase): string {
 function regenerationLabel(request: RegenerateRequest): string {
   if (request.section === "questions") return `Regenerating ${request.category ?? ""} questions`.replace(/\s+/g, " ");
   return request.section === "company_brief" ? "Regenerating the company brief" : "Regenerating the schedule";
+}
+
+/** The typed instruction, or nothing. Whitespace is not an instruction. */
+function instructionsOf(request: RegenerateRequest): string | undefined {
+  const text = (request.instructions ?? "").trim();
+  return text.length > 0 ? text : undefined;
 }
 
 export function isTerminal(job: JobRecord): boolean {
