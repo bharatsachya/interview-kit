@@ -8,6 +8,12 @@ import { HeroStage } from "@/components/hero/hero-stage";
  * the page exists, and a hero above it would push the fields under the fold — the object is
  * decoration, and decoration does not get to come first.
  *
+ * Hiding the hero was only half of it, though, and the half that is easy to check. What was left
+ * was a card sized for a desktop: `min-h-screen` reserving height a phone browser's toolbars
+ * occupy, 64px of vertical padding on a 700px screen, and — the actual break — Clerk's 400px-wide
+ * box inside a container that is 286px on a 390px phone, overflowing and clipping every control
+ * at the right edge. See the width note on the card.
+ *
  * The plate is the copy from the standalone export, unchanged. It says what the product does in
  * three beats, which is the whole job of a sign-in page that nobody asked to be on.
  */
@@ -20,7 +26,7 @@ const BEATS = [
 
 export function AuthSplit({ children }: { children: ReactNode }) {
   return (
-    <div className="grid min-h-screen grid-cols-1 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+    <div className="grid min-h-dvh grid-cols-1 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
       {/* Left: the object. Hidden outright on small screens — not scaled down, not stacked. */}
       <div className="relative hidden overflow-hidden bg-tint-soft lg:block">
         <div className="absolute inset-x-0 top-0 z-10 p-10">
@@ -56,7 +62,7 @@ export function AuthSplit({ children }: { children: ReactNode }) {
       </div>
 
       {/* Right: the form, and nothing else. */}
-      <div className="flex items-center justify-center bg-paper px-6 py-16">
+      <div className="flex items-center justify-center bg-paper px-4 py-8 sm:px-6 sm:py-16">
         {/*
           One card, and one card only.
 
@@ -79,7 +85,22 @@ export function AuthSplit({ children }: { children: ReactNode }) {
             // that width resolves against a wrapper of Clerk's own and not against this card.
             // Letting it keep the width it wants and sizing the card around it is the version
             // that survives Clerk changing its internals.
-            "w-full max-w-[28.5rem] rounded-card border border-tint-line bg-surface px-7 py-8",
+            "w-full max-w-[28.5rem] rounded-card border border-tint-line bg-surface px-4 py-6 sm:px-7 sm:py-8",
+            // Clerk's box is 400px WIDE — not max-width — and on a phone there is no 400px to
+            // give it. Under a 390px viewport the available content width is about 286px, so the
+            // box overflowed its card and every control was clipped at the right edge: the exact
+            // symptom the desktop comment below describes, arriving from the other direction.
+            //
+            // `max-width` rather than `width`. Setting `width: 100%` was tried and collapses the
+            // box to 238px, because that percentage resolves against a wrapper of Clerk's own
+            // rather than against this card. A max-width caps the 400px it asks for without
+            // giving it a different basis to resolve against, so it stays 400px wherever there
+            // is room and shrinks to the card everywhere else.
+            "[&_.cl-cardBox]:!max-w-full [&_.cl-card]:!max-w-full",
+            // Long provider labels and the email a person is signing in with are the two strings
+            // that overflow a 286px box, and neither may push the page sideways.
+            "[&_.cl-formButtonPrimary]:!whitespace-normal",
+            "overflow-hidden",
             "[&_.cl-cardBox]:!mx-auto",
             "shadow-[0_1px_2px_rgba(29,31,32,0.04),0_8px_24px_-12px_rgba(29,31,32,0.10)]",
             // Clerk's own surfaces, removed so they cannot stack inside this one.
