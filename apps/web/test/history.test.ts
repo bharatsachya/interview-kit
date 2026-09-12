@@ -1,78 +1,100 @@
 import { describe, expect, it } from "vitest";
-import type { JobSummary, KitSummary } from "../src/lib/api/types";
-import { kitCount, kitsOf, mergeHistory, runLabel } from "../src/lib/history";
+import type { SessionKitView, SessionSummary } from "../src/lib/api/types";
+import { kitCount, kitRowLabel, kitsOf, sessionLabel, sessionOfKit } from "../src/lib/history";
 
-const kit = (id: string, createdAt: number, over: Partial<KitSummary> = {}): KitSummary => ({
+const kit = (id: string, over: Partial<SessionKitView> = {}): SessionKitView => ({
   id,
   title: "Senior Backend Engineer",
   company: "Acme",
   days: 5,
-  createdAt,
+  created_at: 100,
   revision: 1,
   ...over,
 });
 
-const job = (id: string, createdAt: number, over: Partial<JobSummary> = {}): JobSummary => ({
+const session = (id: string, over: Partial<SessionSummary> = {}): SessionSummary => ({
   id,
-  label: "Acme — Senior Backend Engineer",
-  status: "failed",
-  kitId: null,
-  createdAt,
-  progress: null,
-  retryable: true,
-  error: { code: "TIMEOUT", message: "The operation was aborted due to timeout" },
+  title: "Acme — Senior Backend Engineer",
+  created_at: 100,
+  updated_at: 100,
+  kits: [kit("kit_1")],
+  running: false,
+  status: "done",
   ...over,
 });
 
-describe("merging kits and runs into one history", () => {
-  it("keeps a failed run, which has no kit and would otherwise vanish on reload", () => {
-    const entries = mergeHistory([], [job("job_1", 100)]);
-
-    expect(entries).toHaveLength(1);
-    expect(entries[0]?.kind).toBe("run");
+/**
+ * The rail lists conversations.
+ *
+ * It listed kits, then kits merged with runs, and forking made that worse: one piece of work can
+ * hold four kits alike in every field a row shows. The grouping moved to the API; what is left
+ * here is what the rail says about a group it is handed.
+ */
+describe("kitCount", () => {
+  it("counts kits across conversations, not conversations", () => {
+    expect(kitCount([session("s1", { kits: [kit("k1"), kit("k2")] }), session("s2")])).toBe(3);
   });
 
-  it("drops a finished job in favour of the kit it produced", () => {
-    // Both describe the same run, and the kit says more: company, role, days.
-    const entries = mergeHistory(
-      [kit("kit_1", 100)],
-      [job("job_1", 100, { status: "done", kitId: "kit_1", error: null })],
-    );
+  it("does not count a conversation whose only run failed", () => {
+    // The compare control appears at two kits. A failure making it appear at one would offer a
+    // comparison with nothing on the other side.
+    expect(kitCount([session("s1"), session("s2", { kits: [], status: "failed" })])).toBe(1);
+  });
+});
 
-    expect(entries).toHaveLength(1);
-    expect(entries[0]?.kind).toBe("kit");
+describe("kitsOf", () => {
+  it("flattens every kit, newest first, whichever conversation it came from", () => {
+    const sessions = [
+      session("s1", { kits: [kit("k2", { created_at: 300 }), kit("k1", { created_at: 100 })] }),
+      session("s2", { kits: [kit("k3", { created_at: 200 })] }),
+    ];
+    expect(kitsOf(sessions).map((k) => k.id)).toEqual(["k2", "k3", "k1"]);
   });
 
-  it("keeps a finished job whose kit has gone missing rather than losing the row", () => {
-    const entries = mergeHistory([], [job("job_1", 100, { status: "done", kitId: "kit_gone", error: null })]);
+  it("keeps the conversation each kit came from, so compare can open it", () => {
+    expect(kitsOf([session("s1")])[0]?.sessionId).toBe("s1");
+  });
+});
 
-    expect(entries).toHaveLength(1);
-    expect(entries[0]?.kind).toBe("run");
-    expect(runLabel((entries[0] as { job: JobSummary }).job)).toBe("Kit missing");
+describe("sessionOfKit", () => {
+  it("finds the conversation holding a kit, for a link written before sessions existed", () => {
+    const sessions = [session("s1", { kits: [kit("k1")] }), session("s2", { kits: [kit("k2")] })];
+    expect(sessionOfKit(sessions, "k2")).toBe("s2");
+    expect(sessionOfKit(sessions, "gone")).toBeNull();
+  });
+});
+
+describe("sessionLabel", () => {
+  it("offers the count of what expanding would show", () => {
+    expect(sessionLabel(session("s1"))).toBe("1 kit");
+    expect(sessionLabel(session("s1", { kits: [kit("a"), kit("b")] }))).toBe("2 kits");
   });
 
-  it("interleaves runs and kits by time rather than grouping them apart", () => {
-    const entries = mergeHistory(
-      [kit("kit_old", 100), kit("kit_new", 300)],
-      [job("job_mid", 200)],
-    );
-
-    expect(entries.map((entry) => entry.id)).toEqual(["kit_new", "job_mid", "kit_old"]);
+  it("says what happened when there is no kit to count", () => {
+    expect(sessionLabel(session("s1", { kits: [], status: "failed" }))).toBe("Failed");
+    expect(sessionLabel(session("s1", { kits: [], status: "queued" }))).toBe("Queued");
   });
 
-  it("counts only kits, so one failed run does not offer a comparison of one", () => {
-    const entries = mergeHistory([kit("kit_1", 100)], [job("job_1", 200)]);
+  it("says running while anything in it is, whatever the newest turn's status says", () => {
+    // A conversation with two finished kits and a rewrite in flight is running, and the row has
+    // to say so — it is the one state where the rail is telling you to wait.
+    expect(sessionLabel(session("s1", { running: true, status: "done" }))).toBe("Running");
+  });
+});
 
-    expect(kitCount(entries)).toBe(1);
-    expect(kitsOf(entries).map((k) => k.id)).toEqual(["kit_1"]);
+describe("kitRowLabel", () => {
+  it("says what the rewrite did, not the role title every revision shares", () => {
+    expect(kitRowLabel(kit("k2", { changed: "Rewrote the brief" }))).toBe("Rewrote the brief");
   });
 
-  it("says how far a running job got, and admits when it does not know", () => {
-    expect(runLabel(job("j", 1, { status: "running", progress: { step: "crawl_site", stepIndex: 2, stepCount: 9 } }))).toBe(
-      "Step 3 of 9",
-    );
-    expect(runLabel(job("j", 1, { status: "running", progress: null }))).toBe("Running");
-    expect(runLabel(job("j", 1, { status: "queued" }))).toBe("Queued");
-    expect(runLabel(job("j", 1, { status: "failed" }))).toBe("Failed");
+  it("names an original by its role, because a batch holds several of them", () => {
+    // "Built from the posting" is true of every kit a batch produced, so six rows would all say
+    // the same sentence under a session titled after the first of them.
+    expect(kitRowLabel(kit("k1"))).toBe("Acme — Senior Backend Engineer");
+  });
+
+  it("falls back only when there is genuinely nothing to say", () => {
+    expect(kitRowLabel(kit("k1", { company: "", title: "" }))).toBe("Built from the posting");
+    expect(kitRowLabel(kit("k1", { company: "" }))).toBe("Senior Backend Engineer");
   });
 });

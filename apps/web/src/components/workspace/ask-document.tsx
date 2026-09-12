@@ -1,9 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { askPlainText, askSize, askTitle, type Ask } from "@/lib/ask";
-
-type Posting = Extract<Ask, { kind: "posting" }>;
+import { askPlainText, askSize, askTitle, type Posting } from "@/lib/ask";
 import { copyText } from "@/lib/copy";
 import { glimpseUrl } from "@/lib/url-glimpse";
 import { IconButton } from "@/components/industry/button";

@@ -1,10 +1,9 @@
 "use client";
 
 import { UserButton, useClerk, useUser } from "@clerk/nextjs";
-import { lineageLabel } from "@trao/kit";
-import { kitCount, runLabel, type HistoryEntry } from "@/lib/history";
-import type { KitSummary } from "@/lib/api/types";
-import { KIT_OUTPUTS } from "@/lib/kit-outputs";
+import { useState } from "react";
+import { kitCount, kitRowLabel, sessionLabel } from "@/lib/history";
+import type { SessionSummary } from "@/lib/api/types";
 import { Button } from "@/components/industry/button";
 import { EmptyState, Skeleton } from "@/components/industry/states";
 import { Eyebrow, OpenDot } from "@/components/industry/text";
@@ -19,37 +18,55 @@ import { Eyebrow, OpenDot } from "@/components/industry/text";
  * The user chip is pinned to the foot rather than sitting in the centre column's header. Who
  * you are signed in as is an attribute of the application, not of the kit you happen to have
  * open, and the header has a run line to say instead.
+ *
+ * **One row per conversation, not per kit.** A rewrite forks, so a single piece of work can hold
+ * four kits that are identical in every field a row shows — "Vaultline — Senior Backend" four
+ * times over is a list you cannot use. The revisions nest under the conversation instead, and
+ * the one you have open expands on its own so you are never hunting for where you are.
  */
 export function HistorySidebar({
   comparing,
   onCompare,
-  entries,
+  sessions,
   loading,
   error,
+  activeSessionId,
   activeKitId,
-  activeJobId,
-  onSelect,
-  onOpenRun,
+  onOpenSession,
+  onOpenKit,
   onNew,
   onRetry,
 }: {
   comparing: boolean;
   onCompare: () => void;
-  entries: HistoryEntry[];
+  sessions: SessionSummary[];
   loading: boolean;
   error: string | null;
+  /** The conversation on screen. Its row is expanded whether or not the user expanded it. */
+  activeSessionId: string | null;
+  /** Which of that conversation's kits is in the panel, so the right nested row is marked. */
   activeKitId: string | null;
-  activeJobId: string | null;
-  onSelect: (kitId: string) => void;
-  onOpenRun: (jobId: string) => void;
+  onOpenSession: (sessionId: string) => void;
+  onOpenKit: (sessionId: string, kitId: string) => void;
   onNew: () => void;
   onRetry: () => void;
 }) {
   const { user } = useUser();
   const { signOut } = useClerk();
-  // Only finished kits can be compared, and only they are counted below — a failed run in the
-  // list must not make "Compare 2 kits" appear when there is one kit to compare.
-  const kits = kitCount(entries);
+  // Only finished kits can be compared, and only they are counted below — a conversation whose
+  // only run failed must not make "Compare 2 kits" appear when there is one kit to compare.
+  const kits = kitCount(sessions);
+
+  /**
+   * Conversations the user has opened by hand.
+   *
+   * Only those. The one you are *in* is expanded at render by `active ||` below rather than by
+   * being written here, which is both simpler and the behaviour that is wanted: a conversation
+   * that gains a second kit while you are looking at it — which is what a rewrite landing does —
+   * opens itself, and collapsing the row you are standing in is not an offer worth making.
+   * Clicking the chevron on a row you are *not* in stays a way of looking without navigating.
+   */
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
 
   return (
     <div className="bg-tint-soft flex h-full w-full flex-col gap-5 overflow-hidden p-4">
@@ -94,7 +111,7 @@ export function HistorySidebar({
           </button>
         ) : null}
 
-        {loading && entries.length === 0 ? (
+        {loading && sessions.length === 0 ? (
           <div className="flex flex-col gap-3">
             <Skeleton lines={2} />
             <Skeleton lines={2} />
@@ -109,106 +126,124 @@ export function HistorySidebar({
           >
             {error}
           </EmptyState>
-        ) : entries.length === 0 ? (
+        ) : sessions.length === 0 ? (
           <EmptyState>Nothing built yet. Paste a job description to start one.</EmptyState>
         ) : (
           <ul className="flex list-none flex-col gap-1">
-            {entries.map((entry) => {
-              // A run row and a kit row are the same row with different things known about it.
-              // A failed run has no company and no role — the job's label, taken from the
-              // posting's first line, is all there is, and inventing more would be a lie about
-              // work that did not finish.
-              if (entry.kind === "run") {
-                const { job } = entry;
-                const active = job.id === activeJobId;
-                const failed = job.status === "failed";
-                return (
-                  <li key={job.id}>
+            {sessions.map((session) => {
+              const active = session.id === activeSessionId;
+              const open = active || expanded.has(session.id);
+              const failed = !session.running && session.kits.length === 0 && session.status === "failed";
+              // Nesting is only worth its chevron once there is more than one thing under it. A
+              // conversation with a single kit is a single row, which is what most of them are.
+              const nests = session.kits.length > 1;
+
+              return (
+                <li key={session.id}>
+                  <div
+                    className={`flex items-center gap-1 rounded-xl transition-colors ${
+                      active ? "bg-steel-100" : "hover:bg-tint"
+                    }`}
+                  >
                     <button
                       type="button"
-                      onClick={() => onOpenRun(job.id)}
+                      onClick={() => onOpenSession(session.id)}
                       aria-current={active ? "true" : undefined}
-                      className={`flex w-full flex-col rounded-xl px-3 py-2.5 text-left transition-colors ${
-                        active ? "bg-steel-100" : "hover:bg-tint"
-                      }`}
+                      className="flex min-w-0 flex-1 flex-col px-3 py-2.5 text-left"
                     >
                       <span className="flex items-center gap-2">
                         {active ? <OpenDot /> : null}
                         <span
-                          className={`font-head truncate text-[15px] font-semibold ${
-                            active ? "text-steel-800" : failed ? "text-ink/70" : ""
+                          className={`font-head min-w-0 flex-1 truncate text-[15px] font-semibold ${
+                            active ? "text-steel-800" : ""
                           }`}
                         >
-                          {job.label === "" ? "Untitled run" : job.label}
+                          {session.title}
                         </span>
                       </span>
-                      {/* The reason, not just the state. Reaching a failure from the rail and
-                          being told only "Failed" would mean opening it to learn anything. */}
-                      <span className="text-ink/55 truncate text-xs">
-                        {failed ? (job.error?.message ?? "No kit could be produced") : "In progress"}
-                      </span>
                       <span
-                        className={`font-head mt-0.5 flex items-center gap-1.5 text-xs tracking-wider uppercase ${
+                        className={`font-head mt-0.5 flex items-center gap-1.5 text-xs tracking-wider uppercase tabular-nums ${
                           failed ? "text-alarm" : active ? "text-steel-500" : "text-ink/40"
                         }`}
                       >
-                        {!failed ? (
+                        {session.running ? (
                           <span
                             aria-hidden
                             className="bg-steel-400 inline-block size-1.5 shrink-0 animate-pulse rounded-full"
                           />
                         ) : null}
-                        {runLabel(job)}
+                        {sessionLabel(session)}
                       </span>
                     </button>
-                  </li>
-                );
-              }
 
-              const { kit } = entry;
-              const active = kit.id === activeKitId;
-              const name = kitName(kit);
-              return (
-                <li key={kit.id}>
-                  <button
-                    type="button"
-                    onClick={() => onSelect(kit.id)}
-                    aria-current={active ? "true" : undefined}
-                    className={`flex w-full flex-col rounded-xl px-3 py-2.5 text-left transition-colors ${
-                      active ? "bg-steel-100 hover:bg-steel-200" : "hover:bg-tint"
-                    }`}
-                  >
-                    <span className="flex items-center gap-2">
-                      {active ? <OpenDot /> : null}
-                      <span
-                        className={`font-head min-w-0 flex-1 truncate text-[15px] font-semibold ${active ? "text-steel-800" : ""}`}
+                    {nests ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpanded((previous) => {
+                            const next = new Set(previous);
+                            if (next.has(session.id)) next.delete(session.id);
+                            else next.add(session.id);
+                            return next;
+                          })
+                        }
+                        aria-expanded={open}
+                        aria-label={`${open ? "Hide" : "Show"} the ${session.kits.length} kits in ${session.title}`}
+                        className="text-ink/35 hover:text-ink mr-1.5 grid size-6 shrink-0 place-items-center rounded-lg transition-colors"
                       >
-                        {name.primary}
-                      </span>
-                      {/* A rewrite forks, so one company can hold several rows that are alike in
-                          every field this row shows. The number is what tells them apart at a
-                          glance; the line under it says what the rewrite actually did. */}
-                      {kit.revision > 1 ? (
-                        <span
-                          className={`font-head rounded-pill shrink-0 px-1.5 py-0.5 text-[10.5px] tracking-wider tabular-nums ${
-                            active ? "bg-steel-200 text-steel-700" : "bg-tint text-ink/45"
-                          }`}
+                        <svg
+                          aria-hidden
+                          width="11"
+                          height="11"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          className={`transition-transform ${open ? "rotate-90" : ""}`}
                         >
-                          v{kit.revision}
-                        </span>
-                      ) : null}
-                    </span>
-                    {name.secondary === null ? null : (
-                      <span className="text-ink/55 truncate text-xs">{name.secondary}</span>
-                    )}
-                    <span
-                      className={`font-head mt-0.5 text-xs tracking-wider uppercase tabular-nums ${
-                        active ? "text-steel-500" : "text-ink/40"
-                      }`}
-                    >
-                      {kit.days === 1 ? "1 day" : `${kit.days} days`} · {KIT_OUTPUTS.length} outputs
-                    </span>
-                  </button>
+                          <path d="M6 3l5 5-5 5" />
+                        </svg>
+                      </button>
+                    ) : null}
+                  </div>
+
+                  {/* The revisions. Newest first, so the top one is what opening the
+                      conversation shows — and each says what its rewrite did rather than
+                      repeating the role title it shares with every other revision. */}
+                  {nests && open ? (
+                    <ul className="mt-0.5 ml-4 flex list-none flex-col gap-0.5 border-l border-[color:var(--color-tint-line)] pl-2">
+                      {session.kits.map((kit) => {
+                        const here = kit.id === activeKitId;
+                        return (
+                          <li key={kit.id}>
+                            <button
+                              type="button"
+                              onClick={() => onOpenKit(session.id, kit.id)}
+                              aria-current={here ? "true" : undefined}
+                              className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors ${
+                                here ? "bg-steel-100" : "hover:bg-tint"
+                              }`}
+                            >
+                              <span
+                                className={`font-head shrink-0 text-[10.5px] tracking-wider tabular-nums ${
+                                  here ? "text-steel-700" : "text-ink/40"
+                                }`}
+                              >
+                                v{kit.revision}
+                              </span>
+                              <span
+                                className={`min-w-0 flex-1 truncate text-xs ${here ? "text-steel-800" : "text-ink/60"}`}
+                              >
+                                {kitRowLabel(kit)}
+                              </span>
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : null}
                 </li>
               );
             })}
@@ -265,30 +300,4 @@ export function HistorySidebar({
       </div>
     </div>
   );
-}
-
-/**
- * The two lines a kit row shows, neither of which may come out empty.
- *
- * The row was `company` over `title`, and a kit whose company extraction came back blank — a
- * posting that never names the employer, a company URL that would not resolve — rendered its
- * loudest line as nothing at all. What was left was a grey caption and a blue meta line under a
- * dot, which next to a bold failed run reads as disabled rather than as the one kit that worked.
- * The run rows had guarded this since they were written (`"Untitled run"`); the kit rows never
- * did.
- *
- * So the identity line takes the first field that actually says something, and the second line
- * is dropped rather than allowed to repeat it — "AI/ML Developer" twice is not more informative
- * than once, and a blank line is a row that looks broken.
- */
-export function kitName(kit: KitSummary): { primary: string; secondary: string | null } {
-  const company = kit.company.trim();
-  const title = kit.title.trim();
-  // A fork's second line says what the rewrite did, which beats the role title it shares with
-  // every other revision of the same kit.
-  const lineage = kit.forkedFrom ? lineageLabel(kit.forkedFrom) : null;
-
-  if (company !== "") return { primary: company, secondary: lineage ?? (title === "" ? null : title) };
-  if (title !== "") return { primary: title, secondary: lineage };
-  return { primary: "Untitled kit", secondary: lineage };
 }

@@ -853,3 +853,81 @@ test asserting it rather than trusting it.
 The provenance rule is unchanged and still does the real work: what survives into the fork is
 decided by `origin`, `pinned` and `active`, exactly as it was when the rewrite wrote in place.
 Forking is about which document the answer lands in, not about what the answer contains.
+
+---
+
+## Sessions: a grouping, not a fourth store
+
+The URL carried `?kit=<id>&jobs=<id>,<id>,<id>` and grew a job id on every rewrite. The history
+rail merged two lists of different entity types in the browser and re-sorted them against each
+other on every render. And forking had just made a third problem: one piece of work could hold
+four kits that were identical in every field a row shows.
+
+All three are the same missing noun. The workspace had always been a conversation — a composer, a
+transcript of turns, an assistant line per run — and the only thing it could not name was the
+conversation itself.
+
+### Derived, not stored
+
+A session is `GROUP BY sessionId` over the jobs and kits the API already reads on every page
+load, both already indexed by `userId`. `apps/api/src/sessions.ts` is the whole implementation.
+
+A `sessions` collection was the obvious alternative and is worse in a specific way: its `turns`
+array would be a second source of truth about what ran, and it would disagree with the job
+records the first time a write half-succeeded — a job created but not appended, or appended
+twice. A grouping cannot disagree with itself. It is also a fourth store to implement twice
+(memory and Mongo) for a read that was already free.
+
+What is stored is one nullable field on each of two records. The stores pass records through
+whole, so neither adapter needed a line changed.
+
+### Kit ids and job ids do not go away
+
+They could not. A kit is a document the builder writes to at `/kits/:id` with an `If-Match`; a
+job is what the progress stream polls and what the trace belongs to. The session is a layer over
+them — what the URL, the rail and the transcript are organised around, not a replacement for the
+identity of anything.
+
+### Null in batch mode, exactly like ownership
+
+`pipeline` never learns the field exists. Batch has no browser, no transcript and nobody to show
+one to, so the API layer attaches `sessionId` on the way in — the same treatment `userId` gets,
+and for the same reason: `npm run evaluate` has to run from a clean clone with no user.
+
+### Records written before it existed
+
+They are grouped by a synthetic id derived from what they already have — `kit:<id>` when the run
+produced one, `job:<id>` when it did not. That puts a legacy kit and the run that made it in the
+same one-turn conversation without writing to either, and the ids cannot collide with a minted
+`sess_…`. The rewrite route passes the same synthetic string, so a rewrite of a legacy kit joins
+that conversation rather than stranding itself in a new one.
+
+A migration script would have been a deployment order, a way to be half-done, and a thing to
+delete later. Four lines of read-time normalisation are none of those.
+
+### The ask became the point
+
+`JobRecord.request` was the retry payload — a posting, or null on a regeneration. It is now a
+discriminated `JobAsk`: a posting, or a rewrite carrying the sentence the user actually typed.
+
+That field is what makes a transcript survive a reload, and it closed a hole the rewrite work had
+just opened. Putting the rewrite in the composer was a bet that the words could be the user's;
+holding those words in React state meant a refresh took them back. `askOf` reads the
+pre-discriminated records as `posting` rather than migrating them.
+
+`JobRecordView` still omits it. The progress screen polls `/jobs/:id` every couple of seconds and
+a job description is a page long; the transcript is read once, from `GET /sessions/:id`.
+
+### What a settled turn says
+
+Traces live in the API process and are not persisted, so a conversation reopened tomorrow has its
+asks and its outcomes and no spans. The transcript renders those turns with what they did and no
+duration. The alternative — replaying every past turn through `GenerationStream` — would have
+been one poll per turn on open and an assistant line claiming the kit was built in zero seconds.
+
+### One session per batch
+
+Six roles uploaded together are one thing the user did. Six sessions would put that single ask at
+the head of six transcripts it is only partly about. The nested rows name each role, which is
+also why `kitRowLabel` does not say "Built from the posting" for an original — that sentence is
+true of all six.

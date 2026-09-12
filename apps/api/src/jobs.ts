@@ -10,6 +10,8 @@ import {
   type Tracer,
 } from "@trao/contracts";
 import type { RegenerateRequest } from "@trao/api-contract";
+import type { JobAsk } from "@trao/contracts";
+import { askOf } from "./sessions";
 import { forkKit, type EvaluationCase, type InternalKit, type KitLineage } from "@trao/kit";
 import { generateKit, hashSubmission, type PipelineDeps } from "@trao/pipeline";
 import type { JobSpanFeed } from "./spans";
@@ -89,6 +91,13 @@ export interface StartedJob {
   jobId: string;
   kitId: string;
   /**
+   * The conversation this run is a turn in.
+   *
+   * Minted here when a posting opens one, inherited when a rewrite or a retry joins one. The
+   * client needs it to point the URL at something that does not grow a job id per rewrite.
+   */
+  sessionId: string;
+  /**
    * Whether this response joined work that already existed.
    *
    * True both for a resubmission of something already generated and for one that arrived while
@@ -150,40 +159,56 @@ export class JobRunner {
     // `?? null` rather than `=== null`, belt to the store's braces. A job recorded before
     // `request` existed reads back without the field, and a strict null check waves `undefined`
     // straight through to be dereferenced — which is exactly what it did.
-    const request = job.request ?? null;
-    if (job.status !== "failed" || request === null) return null;
+    const request = askOf(job.request);
+    // Only a posting can be sent again. A rewrite is a turn against a kit, not a submission.
+    if (job.status !== "failed" || request === null || request.kind !== "posting") return null;
 
-    return this.start(userId, {
-      id: jobId,
-      jd: request.jd,
-      company_url: request.companyUrl,
-      days: request.days,
-    });
+    return this.start(
+      userId,
+      { id: jobId, jd: request.jd, company_url: request.companyUrl, days: request.days },
+      // The retry belongs to the conversation it repeats, not to a new one. Otherwise the rail
+      // grows a second row for what the user experienced as one attempt at one thing.
+      job.sessionId ?? undefined,
+    );
   }
 
-  async start(userId: string, testCase: EvaluationCase): Promise<StartedJob> {
+  /**
+   * Start a run, in a conversation.
+   *
+   * `sessionId` is supplied when this run joins one that already exists — a retry, or every case
+   * of one batch submission — and minted when it does not. A posting is the only thing that
+   * opens a session, because it is the only thing that starts a conversation from nothing.
+   */
+  async start(userId: string, testCase: EvaluationCase, sessionId?: string): Promise<StartedJob> {
     const key = `${userId}\u0000${hashSubmission(testCase.jd, testCase.company_url, testCase.days)}`;
 
     const pending = this.#creating.get(key);
     if (pending !== undefined) return { ...(await pending), existing: true };
 
-    const started = this.#begin(userId, testCase, key);
+    const started = this.#begin(userId, testCase, key, sessionId ?? this.options.ids.next("sess_"));
     this.#creating.set(key, started);
     // A start that never got as far as queueing anything holds the key for nothing.
     void started.catch(() => this.#creating.delete(key));
     return started;
   }
 
-  async #begin(userId: string, testCase: EvaluationCase, key: string): Promise<StartedJob> {
+  async #begin(userId: string, testCase: EvaluationCase, key: string, sessionId: string): Promise<StartedJob> {
     const hash = hashSubmission(testCase.jd, testCase.company_url, testCase.days);
 
     const existing = await this.options.kits.findByHash(hash);
     if (existing !== null && existing.userId === userId) {
       // Already generated. Hand back a job that is already complete rather than regenerating.
+      //
+      // It joins the EXISTING kit's conversation rather than the one just minted for this
+      // request: resubmitting a posting you have already built is a way of reopening that work,
+      // and putting it in a session of its own would list the same kit twice in the rail under
+      // two conversations that cannot both be the one it belongs to.
+      const joined = existing.sessionId ?? sessionId;
       const jobId = this.options.ids.next("job_");
       await this.options.jobs.create({
         id: jobId,
         userId,
+        sessionId: joined,
         label: labelFor(testCase),
         kitId: existing.id,
         request: requestOf(testCase),
@@ -194,7 +219,7 @@ export class JobRunner {
         updatedAt: this.options.clock.now(),
       });
       this.options.feed.finish(jobId);
-      return { jobId, kitId: existing.id, existing: true };
+      return { jobId, kitId: existing.id, sessionId: joined, existing: true };
     }
 
     const jobId = this.options.ids.next("job_");
@@ -202,6 +227,7 @@ export class JobRunner {
     await this.options.jobs.create({
       id: jobId,
       userId,
+      sessionId,
       label: labelFor(testCase),
       kitId,
       // Kept so a failed run can be run again. The browser cannot supply it after a reload.
@@ -220,8 +246,11 @@ export class JobRunner {
     // the work is plainly in flight and the map says nothing is — which is the whole window a
     // double-clicked button lives in. Afterwards the store's `findByHash` is the better answer:
     // it survives a restart, and a failed run is not remembered as a success.
-    this.#enqueue(() => this.#runGeneration({ jobId, kitId, userId, testCase, hash }), () => this.#creating.delete(key));
-    return { jobId, kitId, existing: false };
+    this.#enqueue(
+      () => this.#runGeneration({ jobId, kitId, userId, sessionId, testCase, hash }),
+      () => this.#creating.delete(key),
+    );
+    return { jobId, kitId, sessionId, existing: false };
   }
 
   /**
@@ -238,7 +267,7 @@ export class JobRunner {
    * The caller has already proved the kit is this user's — ownership is not rechecked here,
    * because a runner that could load any kit by id is a runner that can be asked to.
    */
-  regenerate(userId: string, kitId: string, request: RegenerateRequest): Promise<StartedJob> {
+  regenerate(userId: string, kitId: string, request: RegenerateRequest, sessionId: string): Promise<StartedJob> {
     // The instructions are part of the key. Without them a second rewrite of the same section
     // saying something different would be handed the first one's job id and its answer — which
     // is the one case where deduplicating is not saving a call, it is refusing the request.
@@ -247,7 +276,7 @@ export class JobRunner {
     const pending = this.#regenerating.get(key);
     if (pending !== undefined) return pending.then((started) => ({ ...started, existing: true }));
 
-    const started = this.#beginRegeneration(userId, kitId, request, key);
+    const started = this.#beginRegeneration(userId, kitId, request, key, sessionId);
     this.#regenerating.set(key, started);
     void started.catch(() => this.#regenerating.delete(key));
     return started;
@@ -258,6 +287,7 @@ export class JobRunner {
     kitId: string,
     request: RegenerateRequest,
     key: string,
+    sessionId: string,
   ): Promise<StartedJob> {
     const jobId = this.options.ids.next("job_");
     // Reserved before a single model is called, exactly as `#begin` reserves one for a first
@@ -268,12 +298,17 @@ export class JobRunner {
     await this.options.jobs.create({
       id: jobId,
       userId,
+      // The conversation the source kit is already in. A rewrite is the next turn of it, not the
+      // start of a new one — which is the whole reason a kit and its three revisions collapse to
+      // one row in the rail instead of four.
+      sessionId,
       label: regenerationLabel(request),
       // The fork, not the source. The history rail keys rows by the kit a run produced, and a
       // job pointing back at the kit it read from would put this run's row on the parent.
       kitId: forkId,
-      // A regeneration runs from a kit, not from a posting. There is no posting to retry with.
-      request: null,
+      // No posting, so nothing to retry with — but this is still the ask, and the transcript
+      // needs it or a reload loses the sentence the user actually typed.
+      request: askFor(request),
       status: "queued",
       progress: null,
       error: null,
@@ -284,10 +319,10 @@ export class JobRunner {
     // Held until the regeneration is over — see `#begin`. This is the entry that makes a second
     // click on Send cost nothing.
     this.#enqueue(
-      () => this.#runRegeneration({ jobId, forkId, sourceKitId: kitId, userId, request }),
+      () => this.#runRegeneration({ jobId, forkId, sourceKitId: kitId, userId, sessionId, request }),
       () => this.#regenerating.delete(key),
     );
-    return { jobId, kitId: forkId, existing: false };
+    return { jobId, kitId: forkId, sessionId, existing: false };
   }
 
   /** Spans for a job still in flight. Finished jobs keep theirs until the process restarts. */
@@ -331,6 +366,7 @@ export class JobRunner {
     jobId: string;
     kitId: string;
     userId: string;
+    sessionId: string;
     testCase: EvaluationCase;
     hash: string;
   }): Promise<void> {
@@ -353,6 +389,7 @@ export class JobRunner {
       await this.options.kits.save({
         id: kit.id,
         userId: entry.userId,
+        sessionId: entry.sessionId,
         hash: result.hash,
         createdAt: kit.createdAt,
         updatedAt: this.options.clock.now(),
@@ -380,6 +417,7 @@ export class JobRunner {
     forkId: string;
     sourceKitId: string;
     userId: string;
+    sessionId: string;
     request: RegenerateRequest;
   }): Promise<void> {
     await this.#traced(entry.jobId, regenerationLabel(entry.request), null, async (deps, settle) => {
@@ -414,6 +452,8 @@ export class JobRunner {
       await this.options.kits.save({
         id: kit.id,
         userId: entry.userId,
+        // The parent's conversation. A fork is a revision of the same work, not new work.
+        sessionId: entry.sessionId,
         // Not the parent's hash. `findByHash` is how a resubmitted posting is recognised as
         // already generated, and a fork sharing its parent's hash would make it the answer to
         // that question — so pasting the same JD again would hand back the third rewrite of the
@@ -539,8 +579,8 @@ async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
 
 /** A human-readable name for a job before any kit exists to name it. */
 export /** The half of a case worth keeping on the job: what a retry would have to send again. */
-function requestOf(testCase: EvaluationCase): { jd: string; companyUrl: string; days: number } {
-  return { jd: testCase.jd, companyUrl: testCase.company_url, days: testCase.days };
+function requestOf(testCase: EvaluationCase): JobAsk {
+  return { kind: "posting", jd: testCase.jd, companyUrl: testCase.company_url, days: testCase.days };
 }
 
 function labelFor(testCase: EvaluationCase): string {
@@ -556,6 +596,24 @@ function labelFor(testCase: EvaluationCase): string {
 function regenerationLabel(request: RegenerateRequest): string {
   if (request.section === "questions") return `Regenerating ${request.category ?? ""} questions`.replace(/\s+/g, " ");
   return request.section === "company_brief" ? "Regenerating the company brief" : "Regenerating the schedule";
+}
+
+/**
+ * A rewrite, as the ask the transcript renders.
+ *
+ * `prompt` is what the person actually sent — the default sentence when they left it alone, or
+ * their own words when they did not. Stored rather than recomposed from `section` on the way
+ * out: the point of putting the rewrite in the composer was that the words could be theirs, and
+ * regenerating a label from the section would take that back on every reload.
+ */
+function askFor(request: RegenerateRequest): JobAsk {
+  const typed = instructionsOf(request);
+  return {
+    kind: "rewrite",
+    section: request.section,
+    ...(request.category !== undefined ? { category: request.category } : {}),
+    prompt: typed ?? regenerationLabel(request),
+  };
 }
 
 /** The typed instruction, or nothing. Whitespace is not an instruction. */

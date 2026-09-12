@@ -1,6 +1,14 @@
 import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
-import type { CreateJobsResponse, CreateKitResponse, JobListView, KitListView } from "@trao/api-contract";
+import type {
+  CreateJobsResponse,
+  CreateKitResponse,
+  JobListView,
+  KitListView,
+  SessionListView,
+  SessionSummary,
+  SessionView,
+} from "@trao/api-contract";
 import {
   isKitError,
   type Clock,
@@ -12,6 +20,7 @@ import {
 import { isAuthError, type Authenticator } from "@trao/auth";
 import { parseCases, type EvaluationCase, type InternalKit } from "@trao/kit";
 import { builderRoutes } from "./builder";
+import { buildSessions, type Session } from "./sessions";
 import { eventRoutes } from "./events";
 import { practiceRoutes } from "./practice";
 import { guarded, notFound, unauthenticated } from "./http";
@@ -86,6 +95,7 @@ export function createApp(options: ApiOptions): express.Express {
       res.status(started.existing ? 200 : 202).json({
         job_id: started.jobId,
         kit_id: started.kitId,
+        session_id: started.sessionId,
         existing: started.existing,
         job_ids: [started.jobId],
       } satisfies CreateKitResponse);
@@ -102,14 +112,19 @@ export function createApp(options: ApiOptions): express.Express {
         return;
       }
 
+      // One session for the whole upload. Six roles sent together are one thing the user did,
+      // and the ask that produced them — "6 roles from cases.json" — belongs at the head of one
+      // transcript rather than at the head of six it is only partly about.
+      const sessionId = options.ids.next("sess_");
+
       // Started in input order so the rows can be labelled before any kit exists.
       const jobIds: string[] = [];
       for (const testCase of parsed.cases) {
-        const { jobId } = await options.runner.start(userId, testCase);
+        const { jobId } = await options.runner.start(userId, testCase, sessionId);
         jobIds.push(jobId);
       }
 
-      res.status(202).json({ job_ids: jobIds } satisfies CreateJobsResponse);
+      res.status(202).json({ job_ids: jobIds, session_id: sessionId } satisfies CreateJobsResponse);
     }),
   );
 
@@ -146,7 +161,10 @@ export function createApp(options: ApiOptions): express.Express {
       // it, so there is nothing to gain from telling them apart.
       if (started === null) return notFound(res, "job");
 
-      res.status(202).json({ job_ids: [started.jobId] } satisfies CreateJobsResponse);
+      res.status(202).json({
+        job_ids: [started.jobId],
+        session_id: started.sessionId,
+      } satisfies CreateJobsResponse);
     }),
   );
 
@@ -181,11 +199,77 @@ export function createApp(options: ApiOptions): express.Express {
           company: record.kit.role.company,
           days: record.kit.schedule.daysAvailable,
           createdAt: record.createdAt,
+          // Synthesised for a kit written before sessions existed, matching `buildSessions`, so
+          // every kit in this list names a session `GET /sessions` will actually return.
+          sessionId: record.sessionId ?? `kit:${record.id}`,
           // A kit written before rewrites forked is an original, which is what `?? 1` says.
           revision: record.kit.revision ?? 1,
           ...(record.kit.forkedFrom !== undefined ? { forkedFrom: record.kit.forkedFrom } : {}),
         })),
       } satisfies KitListView);
+    }),
+  );
+
+  /**
+   * The conversations, newest activity first.
+   *
+   * One query the history rail can render whole: a session, its kits nested under it, and
+   * whether anything in it is still running. It replaces the rail's client-side merge of two
+   * lists that had to be re-sorted against each other on every render — the merge still has to
+   * happen, but it happens once, here, where both lists are already in hand.
+   *
+   * `turns` is deliberately not in the list response. A session's transcript carries the whole
+   * posting, and the rail renders a title and a row count; shipping every job description the
+   * user has ever submitted to draw a sidebar would be a strange way to spend a phone's data.
+   */
+  app.get(
+    "/sessions",
+    guarded(options.auth, async (_req, res, userId) => {
+      const [jobs, kits] = await Promise.all([
+        options.jobs.listByUser(userId),
+        options.kits.listByUser(userId),
+      ]);
+      res.set("cache-control", "no-store").json({
+        sessions: buildSessions(jobs, kits).map(summaryOf),
+      } satisfies SessionListView);
+    }),
+  );
+
+  /**
+   * One conversation in full.
+   *
+   * This is what a reload reads to put the transcript back — every ask in the words it was
+   * asked, in order, with the run it started and the kit it produced. Before sessions the asks
+   * lived in React state on the workspace, so a refresh returned the runs and their traces and
+   * lost what the user had actually typed, which is the half a transcript is for.
+   *
+   * Ownership is enforced by construction rather than by a check: the sessions are built from
+   * this user's own jobs and kits, so a session id belonging to someone else simply is not in
+   * the map and 404s.
+   */
+  app.get(
+    "/sessions/:sessionId",
+    guarded(options.auth, async (req, res, userId) => {
+      const [jobs, kits] = await Promise.all([
+        options.jobs.listByUser(userId),
+        options.kits.listByUser(userId),
+      ]);
+      const wanted = req.params["sessionId"] as string;
+      const session = buildSessions(jobs, kits).find((entry) => entry.id === wanted);
+      if (session === undefined) return notFound(res, "session");
+
+      res.set("cache-control", "no-store").json({
+        ...summaryOf(session),
+        turns: session.turns.map((turn) => ({
+          job_id: turn.jobId,
+          ask: turn.ask,
+          status: turn.status,
+          kit_id: turn.kitId,
+          error: turn.error,
+          progress: turn.progress,
+          created_at: turn.createdAt,
+        })),
+      } satisfies SessionView);
     }),
   );
 
@@ -236,4 +320,31 @@ export function createApp(options: ApiOptions): express.Express {
   });
 
   return app;
+}
+
+/**
+ * A session without its transcript.
+ *
+ * `status` is the newest turn's, so a conversation whose last run failed can say so in the rail
+ * without being expanded — which is the case a user most wants to find again.
+ */
+function summaryOf(session: Session): SessionSummary {
+  const newest = session.turns[session.turns.length - 1];
+  return {
+    id: session.id,
+    title: session.title,
+    created_at: session.createdAt,
+    updated_at: session.updatedAt,
+    running: session.running,
+    status: newest?.status ?? null,
+    kits: session.kits.map((kit) => ({
+      id: kit.id,
+      title: kit.title,
+      company: kit.company,
+      days: kit.days,
+      created_at: kit.createdAt,
+      revision: kit.revision,
+      ...(kit.changed !== undefined ? { changed: kit.changed } : {}),
+    })),
+  };
 }

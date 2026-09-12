@@ -7,6 +7,8 @@ import {
   type JobView,
   type KitListView,
   type KitView,
+  type SessionListView,
+  type SessionView,
   VersionConflict,
 } from "./types";
 import type { RegenerateRequest, RegenerateResponse } from "@trao/api-contract";
@@ -213,6 +215,23 @@ export const api = {
    */
   async listJobs(signal?: AbortSignal): Promise<JobListView> {
     return request<JobListView>("/jobs", { signal });
+  },
+
+  /**
+   * The conversations, newest activity first — what the history rail draws.
+   *
+   * One request where there used to be two. `/kits` and `/jobs` are both still there and still
+   * used (the builder reads one kit, the progress screen polls one job); what moved is the
+   * *merge* of the two lists, which the rail did on every render and which the API can do once
+   * with both already in hand.
+   */
+  async listSessions(signal?: AbortSignal): Promise<SessionListView> {
+    return request<SessionListView>("/sessions", { signal });
+  },
+
+  /** One conversation in full: every ask, in order, with its run and its kit. */
+  async getSession(sessionId: string, signal?: AbortSignal): Promise<SessionView> {
+    return request<SessionView>(`/sessions/${encodeURIComponent(sessionId)}`, { signal });
   },
 
   async getKit(kitId: string, signal?: AbortSignal): Promise<KitView> {

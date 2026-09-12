@@ -3,11 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import { parseCasesJSON, type EvaluationCase } from "@trao/kit";
 import { api } from "@/lib/api/client";
+import type { SessionTurnView } from "@/lib/api/types";
 import { ApiError } from "@/lib/api/types";
 import { normaliseCompanyUrl } from "@/lib/role-guess";
 import { Badge, CalendarIcon, GlobeIcon } from "@/components/industry/badge";
 import { glimpseUrl } from "@/lib/url-glimpse";
-import type { AskParts } from "@/lib/ask";
 import { rewriteKeeps, type Rewrite } from "@/lib/rewrite";
 import { Button } from "@/components/industry/button";
 import { ErrorNotice } from "@/components/industry/states";
@@ -85,7 +85,15 @@ export function Composer({
   rewrite,
   onCancelRewrite,
 }: {
-  onStarted: (jobIds: string[], ask: AskParts) => void;
+  /**
+   * Something was sent: the conversation it belongs to, the turns it added, and whether it
+   * opened that conversation or continued one.
+   *
+   * The turns are built in the same shape `GET /sessions/:id` returns, so what is on screen a
+   * second after sending and what a reload reads back are the same thing rather than two
+   * representations that drift.
+   */
+  onStarted: (sessionId: string, turns: SessionTurnView[], opensNew: boolean) => void;
   /**
    * A rewrite staged by the kit panel, waiting to be read, changed and sent.
    *
@@ -211,7 +219,20 @@ export function Composer({
         });
         onCancelRewrite();
         setPrompt("");
-        onStarted([response.job_id], { kind: "change", text, section: rewrite.id });
+        onStarted(
+          response.session_id,
+          [
+            turnFor(response.job_id, {
+              kind: "rewrite",
+              section: rewrite.section,
+              ...(rewrite.category !== undefined ? { category: rewrite.category } : {}),
+              // What was actually sent, not a label rebuilt from the section — the point of
+              // putting the rewrite in the composer was that the words could be theirs.
+              prompt: text,
+            }),
+          ],
+          false,
+        );
       } catch (error) {
         setSubmitError((previous) => ({ message: messageFor(error), attempts: (previous?.attempts ?? 0) + 1 }));
       } finally {
@@ -221,10 +242,7 @@ export function Composer({
     }
 
     if (batch) {
-      await start(
-        () => api.createBatch({ cases: batch.cases }),
-        { kind: "summary", text: `${batch.cases.length} ${batch.cases.length === 1 ? "role" : "roles"} from ${batch.fileName}` },
-      );
+      await start(() => api.createBatch({ cases: batch.cases }), batch.cases);
       return;
     }
 
@@ -239,10 +257,7 @@ export function Composer({
         company_url: role.companyUrl,
         days: Number(role.days),
       }));
-      await start(
-        () => api.createBatch({ cases }),
-        { kind: "summary", text: `${cases.length} roles — ${drafted.map((role) => hostOf(role.companyUrl)).join(", ")}` },
-      );
+      await start(() => api.createBatch({ cases }), cases);
       return;
     }
 
@@ -268,17 +283,41 @@ export function Composer({
 
     // The posting as written, not the one with the note appended: the card shows what the
     // person sent, and the note is already visible as its own control in the composer.
-    await start(
-      () => api.createKit({ jd: description, company_url: url, days: dayCount }),
-      { kind: "posting", jd: trimmedJd, url, days: dayCount },
-    );
+    // The posting as written, not the one with the note appended: the card shows what the person
+    // sent, and the note is already visible as its own control in the composer.
+    await start(() => api.createKit({ jd: description, company_url: url, days: dayCount }), [
+      { id: "", jd: trimmedJd, company_url: url, days: dayCount },
+    ]);
   }
 
-  async function start(request: () => Promise<{ job_ids: string[] }>, asked: AskParts) {
+  /**
+   * Send, and put what was sent on screen.
+   *
+   * One turn per job, zipped against the cases in the order they were submitted — the API starts
+   * them in input order for exactly this reason. A batch therefore reads as the six postings it
+   * was rather than as one opaque "6 roles from cases.json", and it reads the same way after a
+   * reload, because that is what the session holds.
+   */
+  async function start(
+    request: () => Promise<{ job_ids: string[]; session_id: string }>,
+    sent: readonly EvaluationCase[],
+  ) {
     setBusy(true);
     try {
       const response = await request();
-      onStarted(response.job_ids, asked);
+      onStarted(
+        response.session_id,
+        response.job_ids.map((jobId, index) => {
+          const role = sent[index];
+          return turnFor(
+            jobId,
+            role === undefined
+              ? null
+              : { kind: "posting", jd: role.jd, companyUrl: role.company_url, days: role.days },
+          );
+        }),
+        true,
+      );
       setJd("");
       setCompanyUrl("");
       setDays("");
@@ -721,6 +760,24 @@ export function Composer({
   );
 }
 
+
+/**
+ * A turn as the server will hand it back, built a moment before it does.
+ *
+ * `queued` rather than `running`: the API accepted it and has not necessarily started it, and
+ * claiming otherwise would make the first tick of the progress line a correction.
+ */
+function turnFor(jobId: string, ask: SessionTurnView["ask"]): SessionTurnView {
+  return {
+    job_id: jobId,
+    ask,
+    status: "queued",
+    kit_id: null,
+    error: null,
+    progress: null,
+    created_at: Date.now(),
+  };
+}
 
 /** What went wrong, in words, with the offline case named rather than left as a fetch error. */
 function messageFor(error: unknown): string {

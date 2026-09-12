@@ -383,7 +383,7 @@ async function seed(owner = "alice", version = 1): Promise<InternalKit> {
     coverage: { passes: 1, uncoveredRequirementIds: [] },
   };
 
-  await h.kits.save({ id: kit.id, userId: owner, hash: "hash_seed", createdAt: 0, updatedAt: 0, kit });
+  await h.kits.save({ id: kit.id, userId: owner, sessionId: "sess_seed", hash: "hash_seed", createdAt: 0, updatedAt: 0, kit });
   return kit;
 }
 
@@ -627,6 +627,46 @@ describe("the builder", () => {
     expect((first.body as { kit_id: string }).kit_id).not.toBe((second.body as { kit_id: string }).kit_id);
   });
 
+  it("puts a rewrite in the conversation the kit it forked from is already in", async () => {
+    await seed();
+    const started = await request(h.app)
+      .post("/kits/kit_seed/regenerate")
+      .set(...alice())
+      .send({ section: "company_brief", instructions: "Say more about who they sell to." });
+
+    expect((started.body as { session_id: string }).session_id).toBe("sess_seed");
+    await waitForJob(h, (started.body as { job_id: string }).job_id);
+
+    const list = await request(h.app).get("/sessions").set(...alice());
+    const sessions = (list.body as { sessions: { id: string; kits: unknown[] }[] }).sessions;
+
+    // One conversation holding both revisions, not two holding one each.
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]?.id).toBe("sess_seed");
+    expect(sessions[0]?.kits).toHaveLength(2);
+  });
+
+  it("keeps the sentence the user typed, so a reload does not lose it", async () => {
+    await seed();
+    const started = await request(h.app)
+      .post("/kits/kit_seed/regenerate")
+      .set(...alice())
+      .send({ section: "questions", category: "technical", instructions: "Go harder on replication." });
+    await waitForJob(h, (started.body as { job_id: string }).job_id);
+
+    const view = await request(h.app).get("/sessions/sess_seed").set(...alice());
+    const turns = (view.body as { turns: { ask: Record<string, unknown> | null }[] }).turns;
+
+    // The ask used to live in React state on the workspace, so a refresh returned the run and
+    // its trace and lost what had actually been asked for.
+    expect(turns.at(-1)?.ask).toEqual({
+      kind: "rewrite",
+      section: "questions",
+      category: "technical",
+      prompt: "Go harder on replication.",
+    });
+  });
+
   it("refuses an instruction longer than the prompt will carry", async () => {
     await seed();
     const response = await request(h.app)
@@ -678,6 +718,7 @@ describe("the event stream", () => {
     await h.jobs.create({
       id: "job_watch",
       userId: "alice",
+      sessionId: null,
       kitId: null,
       label: "Backend Engineer",
       status: "running",
@@ -704,7 +745,7 @@ describe("the event stream", () => {
   });
 
   it("shows a stranger a 404 rather than another user's trace", async () => {
-    await h.jobs.create({ id: "job_watch", userId: "alice", kitId: null, label: "x", status: "running", progress: null, request: null, error: null, createdAt: 0, updatedAt: 0 });
+    await h.jobs.create({ id: "job_watch", userId: "alice", sessionId: null, kitId: null, label: "x", status: "running", progress: null, request: null, error: null, createdAt: 0, updatedAt: 0 });
     const response = await request(h.app).get("/jobs/job_watch/events").set("authorization", "Bearer bob");
     expect(response.status).toBe(404);
   });
@@ -713,8 +754,8 @@ describe("the event stream", () => {
 describe("retrying a failed run", () => {
   it("starts a new run from the posting the failed one stored", async () => {
     await h.jobs.create({
-      id: "job_dead", userId: "alice", kitId: null, label: "Acme", status: "failed",
-      progress: null, request: { jd: "Senior Backend Engineer at Acme", companyUrl: "http://127.0.0.1:8099/acme/", days: 5 },
+      id: "job_dead", userId: "alice", sessionId: null, kitId: null, label: "Acme", status: "failed",
+      progress: null, request: { kind: "posting" as const, jd: "Senior Backend Engineer at Acme", companyUrl: "http://127.0.0.1:8099/acme/", days: 5 },
       error: { code: "TIMEOUT", message: "timed out" }, createdAt: 0, updatedAt: 0,
     });
 
@@ -732,7 +773,7 @@ describe("retrying a failed run", () => {
     // it missing, and `undefined` walks through a `=== null` guard — which is how this returned
     // a 500 in production instead of a 404, on the very runs a user would most want to retry.
     const ancient = {
-      id: "job_ancient", userId: "alice", kitId: null, label: "x", status: "failed" as const,
+      id: "job_ancient", userId: "alice", sessionId: null, kitId: null, label: "x", status: "failed" as const,
       progress: null, error: { code: "INTERNAL", message: "x" }, createdAt: 0, updatedAt: 0,
     };
     await h.jobs.create(ancient as unknown as Parameters<typeof h.jobs.create>[0]);
@@ -748,7 +789,7 @@ describe("retrying a failed run", () => {
 
   it("refuses a run that stored no posting, rather than starting an empty one", async () => {
     await h.jobs.create({
-      id: "job_old", userId: "alice", kitId: null, label: "x", status: "failed",
+      id: "job_old", userId: "alice", sessionId: null, kitId: null, label: "x", status: "failed",
       progress: null, request: null, error: { code: "INTERNAL", message: "x" }, createdAt: 0, updatedAt: 0,
     });
 
@@ -758,8 +799,8 @@ describe("retrying a failed run", () => {
 
   it("refuses to retry a run that did not fail", async () => {
     await h.jobs.create({
-      id: "job_fine", userId: "alice", kitId: "kit_1", label: "x", status: "done",
-      progress: null, request: { jd: "x", companyUrl: "http://127.0.0.1:8099/acme/", days: 3 },
+      id: "job_fine", userId: "alice", sessionId: null, kitId: "kit_1", label: "x", status: "done",
+      progress: null, request: { kind: "posting" as const, jd: "x", companyUrl: "http://127.0.0.1:8099/acme/", days: 3 },
       error: null, createdAt: 0, updatedAt: 0,
     });
 
@@ -769,8 +810,8 @@ describe("retrying a failed run", () => {
 
   it("shows a stranger a 404 rather than retrying someone else's run", async () => {
     await h.jobs.create({
-      id: "job_hers", userId: "alice", kitId: null, label: "x", status: "failed",
-      progress: null, request: { jd: "x", companyUrl: "http://127.0.0.1:8099/acme/", days: 3 },
+      id: "job_hers", userId: "alice", sessionId: null, kitId: null, label: "x", status: "failed",
+      progress: null, request: { kind: "posting" as const, jd: "x", companyUrl: "http://127.0.0.1:8099/acme/", days: 3 },
       error: { code: "INTERNAL", message: "x" }, createdAt: 0, updatedAt: 0,
     });
 
@@ -780,12 +821,12 @@ describe("retrying a failed run", () => {
 
   it("tells the list which runs can be retried and which cannot", async () => {
     await h.jobs.create({
-      id: "job_a", userId: "carol", kitId: null, label: "x", status: "failed",
-      progress: null, request: { jd: "x", companyUrl: "http://127.0.0.1:8099/acme/", days: 3 },
+      id: "job_a", userId: "carol", sessionId: null, kitId: null, label: "x", status: "failed",
+      progress: null, request: { kind: "posting" as const, jd: "x", companyUrl: "http://127.0.0.1:8099/acme/", days: 3 },
       error: { code: "INTERNAL", message: "x" }, createdAt: 1, updatedAt: 1,
     });
     await h.jobs.create({
-      id: "job_b", userId: "carol", kitId: null, label: "x", status: "failed",
+      id: "job_b", userId: "carol", sessionId: null, kitId: null, label: "x", status: "failed",
       progress: null, request: null, error: { code: "INTERNAL", message: "x" }, createdAt: 2, updatedAt: 2,
     });
 
@@ -798,8 +839,8 @@ describe("retrying a failed run", () => {
 
   it("keeps the posting server-side rather than shipping it back on every poll", async () => {
     await h.jobs.create({
-      id: "job_poll", userId: "alice", kitId: null, label: "x", status: "failed",
-      progress: null, request: { jd: "a very long posting".repeat(50), companyUrl: "http://127.0.0.1:8099/acme/", days: 3 },
+      id: "job_poll", userId: "alice", sessionId: null, kitId: null, label: "x", status: "failed",
+      progress: null, request: { kind: "posting" as const, jd: "a very long posting".repeat(50), companyUrl: "http://127.0.0.1:8099/acme/", days: 3 },
       error: { code: "INTERNAL", message: "x" }, createdAt: 0, updatedAt: 0,
     });
 

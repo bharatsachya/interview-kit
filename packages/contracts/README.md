@@ -13,7 +13,7 @@ arguments, and only the three composition roots (`apps/api/src/main.ts`, `script
 |---|---|
 | `llm.ts` | `LlmProvider`, `LlmRequest`, `LlmResult` — the one shape a model call has |
 | `retrieval.ts` | `HttpFetcher`, `SearchProvider`, and the fetch result types |
-| `persistence.ts` | `KitStore`, `JobStore`, `UserStore`, `KitRecord`, `JobRecord` |
+| `persistence.ts` | `KitStore`, `JobStore`, `UserStore`, `KitRecord`, `JobRecord`, `JobAsk` |
 | `practice.ts` | `PracticeStore` and the rating log's shape |
 | `cache.ts` | `CacheStore` |
 | `tracing.ts` | `Tracer`, `SpanHandle`, `Span`, `NOOP_SPAN` |

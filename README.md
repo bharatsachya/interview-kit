@@ -192,6 +192,36 @@ categories, and can be written by hand — as can flashcards, which are otherwis
 question, any card, and any of the brief, one question category or the schedule can be
 regenerated on its own.
 
+### Conversations
+
+The workspace is organised around a **session**: one conversation holding the posting you sent,
+every rewrite you asked for since, the runs they started and the kits they produced. The URL is
+`?session=<id>` — it used to be `?kit=…&jobs=…,…,…`, which grew a job id on every rewrite.
+
+There is **no `sessions` collection.** A session is `GROUP BY sessionId` over the jobs and kits
+the API already reads on every page load, both already indexed by user. A fourth store would be a
+fourth thing to keep in step, and its `turns` array would be a second source of truth about what
+ran — disagreeing with the job records the first time a write half-succeeded. Grouping cannot
+disagree with itself.
+
+Kit ids and job ids do not go away and could not: a kit is a document the builder writes to at
+`/kits/:id`, and a job is what the progress stream polls. The session is a grouping over them.
+
+Two things follow, and the second is the one that mattered:
+
+* **The history rail lists conversations, not documents.** A rewrite forks, so one piece of work
+  can hold four kits alike in every field a row shows; the revisions nest under the conversation
+  instead, each labelled with what its rewrite did.
+* **The transcript survives a reload.** What you typed is stored on the job record as a
+  discriminated `JobAsk` — a posting or a rewrite, in the words you sent it. It used to live in
+  React state, so a refresh returned the runs and their traces and lost the asks, which is the
+  half a transcript is for. Traces are still not persisted, so a conversation reopened tomorrow
+  says what each turn did and declines to say how long it took rather than claiming zero seconds.
+
+Batch mode has no session, for the same reason it has no user: no browser, no transcript, nobody
+to show one to. `sessionId` is null there and the API layer attaches it, exactly like ownership —
+`pipeline` and `npm run evaluate` never learn the field exists.
+
 **Regenerating is a prompt, and it forks.** Pressing Regenerate in the kit panel does not call
 anything. It writes a sentence into the composer in the main window — "Rewrite the technical
 questions." — which the user can change before sending: *"…and go harder on replication"*. That

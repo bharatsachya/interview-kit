@@ -1,66 +1,84 @@
-import type { JobSummary, KitSummary } from "@/lib/api/types";
+import type { KitSummary, SessionKitView, SessionSummary } from "@/lib/api/types";
 
 /**
- * The history rail lists runs, not kits.
+ * The history rail lists conversations.
  *
- * It used to list kits, and a kit does not exist until its job succeeds — so a run that failed
- * left nothing behind. The trace was on screen while you watched it and gone the moment you
- * reloaded, which is the worst possible time to lose it: a failure is the thing you most want to
- * go back and read. Queued and running jobs had the same hole; navigating away lost them too.
+ * It listed kits first, and a kit does not exist until its job succeeds — so a run that failed
+ * left nothing behind, and the trace you most wanted to read was gone the moment you reloaded.
+ * The fix at the time was to list runs as well and merge the two lists in the browser, which
+ * worked but left the rail rendering two different entity types side by side and re-sorting them
+ * against each other on every render.
  *
- * Both halves are needed, and neither is a superset of the other. A kit carries what a finished
- * run is *about* — company, role, how many days — which the job record never holds. A job
- * carries the runs that have no kit yet or never will. So the two lists are merged rather than
- * one being chosen.
+ * Forking made that worse rather than better: one kit and its three rewrites are four rows that
+ * are identical in every field the row shows.
+ *
+ * So the merge moved to the API, where both lists are already in hand, and what comes back is
+ * one row per conversation with its kits nested under it. See `apps/api/src/sessions.ts` — a
+ * session is a `GROUP BY`, not a collection.
  */
-export type HistoryEntry =
-  | { kind: "kit"; id: string; createdAt: number; kit: KitSummary }
-  | { kind: "run"; id: string; createdAt: number; job: JobSummary };
+
+/** How many kits the user has, across every conversation — the count under the user chip. */
+export function kitCount(sessions: readonly SessionSummary[]): number {
+  return sessions.reduce((total, session) => total + session.kits.length, 0);
+}
 
 /**
- * Merge finished kits with the runs that have not produced one.
+ * Every kit, newest first, for the comparison view.
  *
- * A `done` job is deliberately dropped: its kit is already in the list and says more than the
- * job does. The exception is a `done` job whose kit is missing — a kit deleted out from under a
- * finished run — which would otherwise vanish silently, so it is kept as a run row.
- *
- * Newest first, by the same clock for both kinds, so a failed run sits in the position it
- * actually happened rather than being grouped apart from the successes.
+ * Flattened back out on purpose: comparing is the one place where the conversation a kit came
+ * from does not matter — you are holding two kits up against each other, and two revisions of
+ * one kit is as legitimate a comparison as two different roles.
  */
-export function mergeHistory(kits: KitSummary[], jobs: JobSummary[]): HistoryEntry[] {
-  const kitIds = new Set(kits.map((kit) => kit.id));
+export function kitsOf(sessions: readonly SessionSummary[]): KitSummary[] {
+  return sessions
+    .flatMap((session) => session.kits.map((kit) => ({ kit, sessionId: session.id })))
+    .sort((a, b) => b.kit.created_at - a.kit.created_at)
+    .map(({ kit, sessionId }) => ({
+      id: kit.id,
+      title: kit.title,
+      company: kit.company,
+      days: kit.days,
+      createdAt: kit.created_at,
+      sessionId,
+      revision: kit.revision,
+    }));
+}
 
-  const entries: HistoryEntry[] = kits.map((kit) => ({
-    kind: "kit",
-    id: kit.id,
-    createdAt: kit.createdAt,
-    kit,
-  }));
+/** Which session holds a given kit, for a `?kit=` link written before sessions existed. */
+export function sessionOfKit(sessions: readonly SessionSummary[], kitId: string): string | null {
+  return sessions.find((session) => session.kits.some((kit) => kit.id === kitId))?.id ?? null;
+}
 
-  for (const job of jobs) {
-    if (job.status === "done" && job.kitId !== null && kitIds.has(job.kitId)) continue;
-    entries.push({ kind: "run", id: job.id, createdAt: job.createdAt, job });
+/**
+ * What a conversation's row says under its title.
+ *
+ * A number of kits when it has them, because that is the thing the row is offering to expand.
+ * The state of the newest run when it has none — which is every conversation whose only attempt
+ * failed, and those are the rows a user is most often looking for.
+ */
+export function sessionLabel(session: SessionSummary): string {
+  if (session.running) return "Running";
+  if (session.kits.length === 0) {
+    if (session.status === "failed") return "Failed";
+    if (session.status === "queued") return "Queued";
+    return "No kit";
   }
-
-  return entries.sort((a, b) => b.createdAt - a.createdAt);
+  return session.kits.length === 1 ? "1 kit" : `${session.kits.length} kits`;
 }
 
-/** How many entries are finished kits — what the compare control and the user chip count. */
-export function kitCount(entries: HistoryEntry[]): number {
-  return entries.reduce((total, entry) => total + (entry.kind === "kit" ? 1 : 0), 0);
-}
-
-/** The kits among the entries, for the comparison view, newest first. */
-export function kitsOf(entries: HistoryEntry[]): KitSummary[] {
-  return entries.flatMap((entry) => (entry.kind === "kit" ? [entry.kit] : []));
-}
-
-/** What a run row says it is. `done` never reaches here unless its kit went missing. */
-export function runLabel(job: JobSummary): string {
-  if (job.status === "failed") return "Failed";
-  if (job.status === "queued") return "Queued";
-  if (job.status === "done") return "Kit missing";
-  return job.progress === null
-    ? "Running"
-    : `Step ${job.progress.stepIndex + 1} of ${job.progress.stepCount}`;
+/**
+ * What a nested kit row says.
+ *
+ * What the rewrite did, when a rewrite produced it. Otherwise the role itself — *not* a fixed
+ * "Built from the posting", because a batch submission puts several originals in one
+ * conversation and that phrase is true of every one of them. Under a session titled after the
+ * first role, six rows all saying the same sentence is a list you cannot use, which is the
+ * problem nesting was supposed to solve.
+ */
+export function kitRowLabel(kit: SessionKitView): string {
+  if (kit.changed !== undefined) return kit.changed;
+  const company = kit.company.trim();
+  const title = kit.title.trim();
+  if (company !== "" && title !== "") return `${company} — ${title}`;
+  return company || title || "Built from the posting";
 }

@@ -4,9 +4,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import type { Span } from "@trao/contracts";
 import { api } from "@/lib/api/client";
-import { askTitle, isPosting, type Ask, type AskParts } from "@/lib/ask";
 import { nextRewriteKey, rewritePrompt, rewritingLabel, type Rewrite } from "@/lib/rewrite";
-import { kitsOf, mergeHistory, type HistoryEntry } from "@/lib/history";
+import { kitsOf, sessionOfKit } from "@/lib/history";
+import type { SessionSummary, SessionTurnView } from "@/lib/api/types";
 import { AskDocument } from "@/components/workspace/ask-document";
 import { KIT_OUTPUTS, seconds, type KitOutputId } from "@/lib/kit-outputs";
 import { DESKTOP, WIDE, useMediaQuery } from "@/lib/use-media-query";
@@ -36,7 +36,6 @@ interface Run {
   jobId: string;
   kitId: string;
   spans: Span[];
-  ask: string;
   /**
    * What this run did, when it was not a first generation.
    *
@@ -66,8 +65,19 @@ export function Workspace() {
   const searchParams = useSearchParams();
 
   // Read once. After mount this component owns the state and mirrors it back to the URL.
+  /**
+   * The conversation on screen.
+   *
+   * One id where the URL used to carry a kit and a comma-separated list of jobs that grew by one
+   * on every rewrite. `?kit=` is still *read*, because links to it exist — it is resolved to the
+   * session that holds it once the rail lands, and the URL rewrites itself to `?session=`.
+   */
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(() => searchParams.get("session"));
   const [activeKitId, setActiveKitId] = useState<string | null>(() => searchParams.get("kit"));
-  const [jobIds, setJobIds] = useState<string[]>(() => splitIds(searchParams.get("jobs")));
+  /** A `?kit=` from an older link, waiting for the rail to say which session it holds it. */
+  const [, setPendingKitLink] = useState<string | null>(() =>
+    searchParams.get("session") === null ? searchParams.get("kit") : null,
+  );
 
   const [panelOpen, setPanelOpen] = useState(() => searchParams.get("kit") !== null);
   // Deliberately not in the URL. Which of two ways you are reading a panel is a preference of
@@ -78,15 +88,20 @@ export function Workspace() {
   // kits. Not a route — navigating would remount the shell and lose the run in progress.
   const [comparing, setComparing] = useState(false);
 
+  /**
+   * The transcript: every turn of the open conversation, oldest first.
+   *
+   * Loaded from the API rather than accumulated in the browser. The asks used to live here as
+   * React state, which meant a reload returned the runs and their traces and lost what had
+   * actually been asked for — the half a transcript is for. Sending something appends a turn
+   * optimistically in the same shape the server will hand back, so there is one shape rather
+   * than a local one and a remote one that drift.
+   */
+  const [turns, setTurns] = useState<SessionTurnView[]>([]);
   // Finished runs, keyed by job. The spans are what the trace and the per-output build times are
-  // read from — a kit opened from history has none, and both simply say less rather than guess.
+  // read from — a run watched in an earlier browser session has none (they are not persisted),
+  // and both simply say less rather than guess.
   const [runs, setRuns] = useState<Record<string, Run>>({});
-  /** Jobs that ended without a kit. A run is only still going if it is in neither collection. */
-  const [failedJobs, setFailedJobs] = useState<ReadonlySet<string>>(() => new Set());
-  // The ask and the moment it was made. The time is captured at submit rather than derived from
-  // the job later: what the conversation shows is when *you* sent it, which is not the same as
-  // when the server got round to it.
-  const [asks, setAsks] = useState<Record<string, Ask>>({});
 
   // The history column follows the viewport until somebody says otherwise: open on a laptop,
   // closed on a phone. `null` means "no opinion yet", which is what keeps the default from
@@ -101,12 +116,14 @@ export function Workspace() {
   const [historyOverride, setHistoryOverride] = useState<boolean | null>(null);
   const historyOpen = historyOverride ?? isDesktop;
 
-  // Kits and runs, merged. A kit does not exist until its job succeeds, so a list built from
-  // kits alone loses every failure the moment the page reloads — see lib/history.ts.
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  // Conversations, grouped by the API. A kit does not exist until its job succeeds, so a list
+  // built from kits alone loses every failure the moment the page reloads — and a rewrite forks,
+  // so a list of kits alone shows four rows for one piece of work. See lib/history.ts.
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [kitsLoading, setKitsLoading] = useState(true);
   const [kitsError, setKitsError] = useState<string | null>(null);
   const [historyNonce, setHistoryNonce] = useState(0);
+  const [transcriptNonce, setTranscriptNonce] = useState(0);
 
   const [staleKitId, setStaleKitId] = useState<string | null>(null);
 
@@ -172,14 +189,26 @@ export function Workspace() {
    * conversation and anything running are untouched — only the pointer was stale.
    */
 
+  // One request where there used to be two. The grouping of kits and runs into conversations
+  // moved to the API, which already holds both lists — see lib/history.ts.
   useEffect(() => {
     const controller = new AbortController();
-    // Both, together. Neither list is a superset of the other: kits carry what a finished run
-    // was about, jobs carry the runs that have no kit — queued, running, and above all failed.
-    Promise.all([api.listKits(controller.signal), api.listJobs(controller.signal)])
-      .then(([kitView, jobView]) => {
-        setHistory(mergeHistory(kitView.kits, jobView.jobs));
+    api
+      .listSessions(controller.signal)
+      .then((view) => {
+        setSessions(view.sessions);
         setKitsError(null);
+        // A `?kit=` link written before the URL carried a session, resolved once against the list
+        // that just arrived and then forgotten. Those links are real — they were the shareable
+        // thing for as long as the workspace existed — and answering one with an empty workspace
+        // because the parameter changed name would be worse than any amount of migration code. A
+        // kit that no longer exists simply stops pending; the panel reports it as it always did.
+        setPendingKitLink((pending) => {
+          if (pending === null) return null;
+          const found = sessionOfKit(view.sessions, pending);
+          if (found !== null) setActiveSessionId(found);
+          return null;
+        });
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
@@ -191,13 +220,40 @@ export function Workspace() {
     return () => controller.abort();
   }, [historyNonce]);
 
+  /**
+   * Load the open conversation's transcript.
+   *
+   * Turns already on screen are kept while it is in flight, so sending a rewrite does not blink
+   * the conversation away and back — the optimistic turn is already correct, and this is
+   * reconciling rather than replacing.
+   */
+  useEffect(() => {
+    if (activeSessionId === null) return;
+    const controller = new AbortController();
+    api
+      .getSession(activeSessionId, controller.signal)
+      .then((view) => {
+        setTurns(view.turns);
+        // Opening a conversation shows its newest kit unless a link named a revision.
+        setActiveKitId((current) => current ?? view.kits[0]?.id ?? null);
+        if (view.kits.length > 0) setPanelOpen(true);
+      })
+      .catch(() => {
+        // A session that is not there is not worth an error banner: the rail is the way back and
+        // it is right there. The stale-link notice below covers the one case worth naming.
+      });
+    return () => controller.abort();
+  }, [activeSessionId, transcriptNonce]);
+
   useEffect(() => {
     const query = new URLSearchParams();
-    if (jobIds.length > 0) query.set("jobs", jobIds.join(","));
+    // The session is the address. The kit rides along so a link can point at one revision of a
+    // conversation rather than at its newest, which is what the rail's nested rows select.
+    if (activeSessionId) query.set("session", activeSessionId);
     if (activeKitId) query.set("kit", activeKitId);
     const search = query.toString();
     window.history.replaceState(null, "", search === "" ? window.location.pathname : `?${search}`);
-  }, [jobIds, activeKitId]);
+  }, [activeSessionId, activeKitId]);
 
   const closePanel = useCallback(() => {
     setPanelOpen(false);
@@ -221,31 +277,25 @@ export function Workspace() {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [panelOpen, panelExpanded, closePanel]);
 
-  const selectKit = useCallback(
-    (kitId: string) => {
-      setStaleKitId(null);
+  /**
+   * Open a conversation.
+   *
+   * The transcript comes from the API; the kit shown is the session's newest unless a specific
+   * revision was asked for. Nothing here has to reconcile which runs belong with which kit any
+   * more — that question only existed because the transcript was a list of job ids the workspace
+   * maintained by hand, and a conversation is now a thing the server can hand over whole.
+   */
+  const openSession = useCallback((sessionId: string, kitId?: string) => {
+    setStaleKitId(null);
+    setComparing(false);
+    setActiveSessionId(sessionId);
+    setPendingKitLink(null);
+    if (kitId !== undefined) {
       setActiveKitId(kitId);
-      setComparing(false);
       setPanelOpen(true);
-      setHistoryOverride((open) => (open === true ? null : open));
-      // Drop any run that is not this kit's.
-      //
-      // The conversation renders whatever is in `jobIds` above whatever kit is open, and those
-      // two were allowed to drift apart: picking a kit out of history left the previous run's
-      // turn in place, so a failed run's "No kit could be produced" sat directly above a kit
-      // that had very much been produced. Runs that made *this* kit stay, because their traces
-      // belong with it — and so does anything still in flight, since clicking the kit a rewrite
-      // is running against should not be a way to lose sight of the rewrite.
-      setJobIds((ids) =>
-        ids.filter((id) => {
-          const run = runs[id];
-          if (run !== undefined) return run.kitId === kitId;
-          return !failedJobs.has(id);
-        }),
-      );
-    },
-    [runs, failedJobs],
-  );
+    }
+    setHistoryOverride((open) => (open === true ? null : open));
+  }, []);
 
   const openOutput = useCallback((id: KitOutputId) => {
     setActiveOutput(id);
@@ -256,7 +306,8 @@ export function Workspace() {
     setPanelExpanded(false);
     setStaleKitId(null);
     setComparing(false);
-    setJobIds([]);
+    setTurns([]);
+    setActiveSessionId(null);
     setActiveKitId(null);
     setPanelOpen(false);
     // A staged rewrite belongs to the kit it came from, and New means there is no kit. Leaving
@@ -267,91 +318,68 @@ export function Workspace() {
   }, []);
 
   /**
-   * Reopen a run from history — one that failed, or one still going.
-   *
-   * Nothing new is needed to show it: putting the id back in `jobIds` is exactly the state a
-   * fresh run is in, and `GenerationStream` re-reads the job and its spans from the API. So a
-   * failure reached from the rail renders the same trace and the same message it showed while
-   * it was happening, which is the whole point of keeping the row.
-   */
-  const openRun = useCallback((jobId: string) => {
-    setStaleKitId(null);
-    setComparing(false);
-    setJobIds([jobId]);
-    setActiveKitId(null);
-    setPanelOpen(false);
-    setHistoryOverride((open) => (open === true ? null : open));
-  }, []);
-
-  /**
    * Something was sent: a posting, a batch, or a rewrite.
    *
-   * These are not the same shape. A posting or a batch is a new conversation — the kit you had
-   * open is not what the run is about, so the panel closes and the transcript starts again. A
-   * rewrite is the next turn in the conversation you are already having: the kit stays open, the
-   * panel stays where it is, and the job is appended so the turns above it remain readable. The
-   * value of a transcript is being able to read back what you asked for and what each ask did.
+   * The turns are appended in the same shape the server will hand back, so the conversation on
+   * screen now and the one a reload reads are the same thing. A posting starts a conversation —
+   * the kit you had open is not what the run is about, so the panel closes and the transcript
+   * begins again. A rewrite is the next turn of the one you are already having.
    */
-  const startRun = useCallback((ids: string[], ask: AskParts) => {
+  const startRun = useCallback((sessionId: string, fresh: SessionTurnView[], opensNew: boolean) => {
     setStaleKitId(null);
     setComparing(false);
-    if (ask.kind === "change") {
-      setJobIds((previous) => [...previous, ...ids.filter((id) => !previous.includes(id))]);
-    } else {
-      setJobIds(ids);
+    setActiveSessionId(sessionId);
+    setPendingKitLink(null);
+    if (opensNew) {
+      setTurns(fresh);
       setActiveKitId(null);
       setPanelOpen(false);
+    } else {
+      setTurns((previous) => [...previous, ...fresh.filter((t) => !previous.some((p) => p.job_id === t.job_id))]);
     }
-    const at = Date.now();
-    setAsks((previous) => {
-      const next = { ...previous };
-      for (const id of ids) next[id] = { ...ask, at };
-      return next;
-    });
   }, []);
 
-  /**
-   * A run that produced nothing. There is no kit to open — only a row to add to the rail.
-   *
-   * The refetch is the whole point: the job has been in Mongo since it was accepted, so the row
-   * exists server-side already, and the rail simply has not asked since. Without this the
-   * failure stays on screen and out of the list until a reload.
-   *
-   * The id is recorded too. "Running" was defined as "in `jobIds` and not yet in `runs`", and
-   * `runs` only ever gains an entry when a kit is produced — so a failed run satisfied that
-   * definition forever and the header claimed to be running a job that had stopped minutes ago.
-   */
-  const onRunFailed = useCallback((jobId: string) => {
-    setFailedJobs((previous) => (previous.has(jobId) ? previous : new Set(previous).add(jobId)));
+  /** A turn settled, however it settled: record it so the transcript stops calling it live. */
+  const settleTurn = useCallback((jobId: string, status: SessionTurnView["status"], kitId: string | null) => {
+    setTurns((previous) =>
+      previous.map((turn) => (turn.job_id === jobId ? { ...turn, status, kit_id: kitId ?? turn.kit_id } : turn)),
+    );
     setKitsLoading(true);
     setHistoryNonce((nonce) => nonce + 1);
   }, []);
+
+  /**
+   * A run that produced nothing. There is no kit to open — only a row to update in the rail.
+   *
+   * The refetch is the whole point: the job has been in the store since it was accepted, so the
+   * row exists server-side already and the rail simply has not asked since.
+   */
+  const onRunFailed = useCallback((jobId: string) => settleTurn(jobId, "failed", null), [settleTurn]);
 
   /**
    * A retry started. Show the new run in place of the one it came from.
    *
-   * The failed run is not lost by this — it is in the history rail, which is the whole reason
-   * that rail now lists runs. Keeping both on screen would mean two traces for what the user
-   * experienced as one attempt, and the older of the two is the one they have finished with.
+   * The retry joins the same conversation on the server, so the transcript simply reloads and
+   * the new turn arrives where it belongs — below the failure it repeats, which is the order it
+   * happened in.
    */
-  const onRetried = useCallback((jobId: string) => {
-    setJobIds([jobId]);
+  const onRetried = useCallback(() => {
     setKitsLoading(true);
     setHistoryNonce((nonce) => nonce + 1);
+    setTranscriptNonce((nonce) => nonce + 1);
   }, []);
 
   // The panel opens on the first kit to finish. In a batch the others are reachable from
   // history; opening and reopening the drawer under someone as each one lands would be hostile.
   const onKitReady = useCallback(
     (jobId: string, kitId: string, spans: Span[]) => {
-      const asked = asks[jobId];
-      const changed = asked !== undefined && asked.kind === "change" ? asked.section : undefined;
+      const ask = turns.find((turn) => turn.job_id === jobId)?.ask ?? null;
+      const changed = ask?.kind === "rewrite" ? sectionId(ask) : undefined;
       setRuns((previous) => ({
         ...previous,
-        [jobId]: { jobId, kitId, spans, ask: askText(asked), ...(changed !== undefined ? { changed } : {}) },
+        [jobId]: { jobId, kitId, spans, ...(changed !== undefined ? { changed } : {}) },
       }));
-      setKitsLoading(true);
-      setHistoryNonce((nonce) => nonce + 1);
+      settleTurn(jobId, "done", kitId);
       // A rewrite forks, so this kit id is a NEW document and the one on screen is its parent,
       // untouched. Switching is the point: you asked for these questions to be rewritten, and
       // leaving the parent open would show you the questions you were trying to replace while
@@ -359,7 +387,7 @@ export function Workspace() {
       setActiveKitId((current) => (changed !== undefined ? kitId : (current ?? kitId)));
       setPanelOpen(true);
     },
-    [asks],
+    [turns, settleTurn],
   );
 
   // Both edges are draggable and both collapse, and the two are the same property: collapsed
@@ -391,10 +419,12 @@ export function Workspace() {
   // One decision, read by the panel and by the rail inside it.
   const railBeside = isWide && panelResize.width >= INDEX_RAIL_MIN_PANEL;
 
-  const kits = kitsOf(history);
+  const kits = kitsOf(sessions);
   const activeKitSummary = kits.find((entry) => entry.id === activeKitId) ?? null;
   const activeRun = Object.values(runs).find((run) => run.kitId === activeKitId) ?? null;
-  const running = jobIds.some((jobId) => runs[jobId] === undefined && !failedJobs.has(jobId));
+  // A turn the server has not settled yet. `runs` is not consulted: a turn is live or it is not,
+  // and that is now one field rather than a fact assembled from two collections.
+  const running = turns.some((turn) => turn.status === "queued" || turn.status === "running");
   const sidebarSized = hydrated && isDesktop;
 
   const spans = activeRun?.spans ?? [];
@@ -434,13 +464,13 @@ export function Workspace() {
             <HistorySidebar
               comparing={comparing}
               onCompare={() => setComparing(true)}
-              entries={history}
+              sessions={sessions}
               loading={kitsLoading}
               error={kitsError}
+              activeSessionId={activeSessionId}
               activeKitId={activeKitId}
-              activeJobId={jobIds.length === 1 ? (jobIds[0] as string) : null}
-              onSelect={selectKit}
-              onOpenRun={openRun}
+              onOpenSession={(sessionId) => openSession(sessionId)}
+              onOpenKit={openSession}
               onNew={startNew}
               onRetry={() => {
                 setKitsLoading(true);
@@ -554,8 +584,15 @@ export function Workspace() {
               ) : null}
 
               {comparing ? (
-                <CompareView kits={kits} onOpenKit={selectKit} onClose={() => setComparing(false)} />
-              ) : jobIds.length === 0 && !activeKitId ? (
+                <CompareView
+                  kits={kits}
+                  onOpenKit={(kitId) => {
+                    const session = sessionOfKit(sessions, kitId);
+                    if (session !== null) openSession(session, kitId);
+                  }}
+                  onClose={() => setComparing(false)}
+                />
+              ) : activeSessionId === null && turns.length === 0 && !activeKitId ? (
                 <div className="flex flex-1 flex-col justify-center gap-2 py-10">
                   <h1 className="text-[26px] md:text-[34px]">What are you preparing for?</h1>
                   <p className="text-ink/55 text-[14px] md:text-[15px]">
@@ -564,18 +601,18 @@ export function Workspace() {
                 </div>
               ) : (
                 <>
-                  {jobIds.map((jobId) => {
-                    const run = runs[jobId];
-                    const ask = asks[jobId];
+                  {turns.map((turn) => {
+                    const run = runs[turn.job_id];
+                    const ask = turn.ask;
+                    const live = turn.status === "queued" || turn.status === "running";
                     return (
-                      <div key={jobId} className="flex flex-col gap-5">
-                        {/* One posting is a document you can open; a batch is a sentence. */}
-                        {ask ? (
-                          isPosting(ask) ? (
-                            <AskDocument ask={ask} />
-                          ) : (
-                            <AskBubble at={ask.at}>{ask.text}</AskBubble>
-                          )
+                      <div key={turn.job_id} className="flex flex-col gap-5">
+                        {/* A posting is a document you can open; a rewrite is the sentence you
+                            sent, in the words you sent it. */}
+                        {ask?.kind === "posting" ? (
+                          <AskDocument ask={{ kind: "posting", jd: ask.jd, url: ask.companyUrl, days: ask.days, at: turn.created_at }} />
+                        ) : ask?.kind === "rewrite" ? (
+                          <AskBubble at={turn.created_at}>{ask.prompt}</AskBubble>
                         ) : null}
 
                         {run ? (
@@ -598,17 +635,23 @@ export function Workspace() {
                               <Trace spans={run.spans} />
                             </div>
                           </>
-                        ) : (
+                        ) : live ? (
                           <div className="md:ml-[38px]">
                             <GenerationStream
-                              jobId={jobId}
-                              showLabel={jobIds.length > 1}
-                              {...(ask?.kind === "change" ? { running: rewritingLabel(ask.section) } : {})}
+                              jobId={turn.job_id}
+                              showLabel={turns.length > 1}
+                              {...(ask?.kind === "rewrite" ? { running: rewritingLabel(sectionId(ask)) } : {})}
                               onComplete={onKitReady}
                               onFailed={onRunFailed}
                               onRetried={onRetried}
                             />
                           </div>
+                        ) : (
+                          /* Settled, but not in this browser session — so there are no spans to
+                             draw and no duration to claim. Traces live in the API process and
+                             are not persisted; saying what the turn did without inventing how
+                             long it took is the honest version of that. */
+                          <SettledTurn turn={turn} />
                         )}
                       </div>
                     );
@@ -716,10 +759,42 @@ function changedLabel(section: string): string {
   return category === undefined ? "Rewrote the questions" : `Rewrote the ${category} questions`;
 }
 
-/** Whatever was asked, as one line — for the run summary, which has no room for a document. */
-function askText(ask: Ask | undefined): string {
-  if (ask === undefined) return "";
-  return ask.kind === "posting" ? askTitle(ask.jd) : ask.text;
+/**
+ * The section an ask names, as the one string the rest of the UI keys rewrites by.
+ *
+ * `questions:technical` rather than a section and a category held apart, because every label
+ * function downstream — the running line, the past-tense line — takes one string and splits it.
+ */
+function sectionId(ask: { section: string; category?: string }): string {
+  return ask.section === "questions" && ask.category !== undefined
+    ? `questions:${ask.category}`
+    : ask.section;
+}
+
+/**
+ * A turn that finished before this page was open.
+ *
+ * Traces live in the API process and are not persisted, so a conversation reopened tomorrow has
+ * the asks and the outcomes and no spans. This says what the turn did and declines to say how
+ * long it took, which is the difference between a thinner transcript and a transcript that
+ * invents a duration of zero seconds.
+ */
+function SettledTurn({ turn }: { turn: SessionTurnView }) {
+  if (turn.status === "failed") {
+    return (
+      <Assistant>
+        {turn.error?.message ?? "No kit could be produced."}
+      </Assistant>
+    );
+  }
+  const changed = turn.ask?.kind === "rewrite" ? sectionId(turn.ask) : undefined;
+  return (
+    <Assistant>
+      {changed === undefined
+        ? `Built your kit — ${KIT_OUTPUTS.length} outputs.`
+        : `${changedLabel(changed)}, into a new kit.`}
+    </Assistant>
+  );
 }
 
 function AskBubble({ children, at }: { children: string; at: number }) {
@@ -809,9 +884,3 @@ function totalMs(spans: readonly Span[]): number {
     .reduce((sum, span) => sum + span.durationMs, 0);
 }
 
-function splitIds(raw: string | null): string[] {
-  return (raw ?? "")
-    .split(",")
-    .map((id) => id.trim())
-    .filter((id) => id.length > 0);
-}

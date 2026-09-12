@@ -7,6 +7,10 @@ The Next.js interface. One route, three panes, no navigation.
 `app/(signed-in)/page.tsx` mounts `<Workspace />` and that is the application: history on the
 left, the conversation in the middle, the kit on the right.
 
+The transcript itself comes from `GET /sessions/:id` rather than from React state, which is what
+makes a conversation survive a reload — the asks used to live here and a refresh returned the
+runs and lost what had been asked for.
+
 **Selecting a kit or starting a run changes state here rather than navigating.** A navigation
 would remount the shell, and remounting is what loses the panel's scroll position, the
 conversation so far, and the animation you were in the middle of. There is no `router.push`, no
@@ -53,12 +57,16 @@ The one thing the hop does do is rename the version guard: `X-Kit-Version` from 
 CDN — Vercel's edge evaluates `If-Match` against the response's ETag and answers 412 for a write
 that succeeded.
 
-## History is runs, not kits
+## History lists conversations
 
-A kit does not exist until its job succeeds, so a list built from kits alone loses every failure
-the moment the page reloads — which is the worst possible time to lose one. `lib/history.ts`
-merges both lists: a kit carries what a finished run was *about*, a job carries the runs that have
-no kit yet or never will.
+The rail listed kits, then kits merged with runs (a kit does not exist until its job succeeds, so
+a list of kits alone loses every failure on reload). Forking made that worse: one piece of work
+can hold four kits alike in every field a row shows.
+
+So the merge moved to the API, which holds both lists already, and the rail draws one row per
+**session** with its revisions nested under it. `lib/history.ts` is now only what the rail *says*
+about a group it is handed. The URL is `?session=<id>`; `?kit=` is still read and resolved to the
+session holding it, because links to it exist.
 
 ## Tests
 

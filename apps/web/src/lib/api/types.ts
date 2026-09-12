@@ -17,6 +17,11 @@ export type {
   KitListView,
   KitSummary,
   KitView,
+  SessionKitView,
+  SessionListView,
+  SessionSummary,
+  SessionTurnView,
+  SessionView,
 } from "@trao/api-contract";
 
 export { ApiError } from "@trao/api-contract";

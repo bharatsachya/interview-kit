@@ -1,4 +1,4 @@
-import type { JobRecord, Span } from "@trao/contracts";
+import type { JobAsk, JobRecord, Span } from "@trao/contracts";
 import type { BuilderKit, EvaluationCase, KitJSON, KitLineage, QuestionCategory } from "@trao/kit";
 
 /**
@@ -30,6 +30,14 @@ export interface CreateBatchRequest {
  */
 export interface CreateJobsResponse {
   job_ids: string[];
+  /**
+   * The conversation these runs are turns in.
+   *
+   * One session for a whole batch submission, because one ask produced all of it — six roles
+   * uploaded together are one thing the user did, and six sessions would put that single ask at
+   * the head of six transcripts it is only partly about.
+   */
+  session_id: string;
 }
 
 /**
@@ -47,6 +55,54 @@ export interface CreateKitResponse extends CreateJobsResponse {
   job_id: string;
   kit_id: string;
   existing: boolean;
+}
+
+/**
+ * A conversation: the posting, every rewrite since, and the kits they produced.
+ *
+ * Derived by grouping the jobs and kits the API already reads — there is no `sessions`
+ * collection. See `apps/api/src/sessions.ts` for why.
+ */
+export interface SessionTurnView {
+  job_id: string;
+  ask: JobAsk | null;
+  status: JobRecord["status"];
+  kit_id: string | null;
+  error: JobRecord["error"];
+  progress: JobRecord["progress"];
+  created_at: number;
+}
+
+export interface SessionKitView {
+  id: string;
+  title: string;
+  company: string;
+  days: number;
+  created_at: number;
+  revision: number;
+  /** What the rewrite that produced this kit did. Absent on the kit a posting built. */
+  changed?: string;
+}
+
+export interface SessionSummary {
+  id: string;
+  title: string;
+  created_at: number;
+  updated_at: number;
+  kits: SessionKitView[];
+  /** True while any turn is queued or running — one live dot per conversation. */
+  running: boolean;
+  /** The newest turn's status, so a session whose last run failed can say so without expanding. */
+  status: JobRecord["status"] | null;
+}
+
+export interface SessionListView {
+  sessions: SessionSummary[];
+}
+
+/** One conversation in full: every turn, in the order it was asked. */
+export interface SessionView extends SessionSummary {
+  turns: SessionTurnView[];
 }
 
 /** The three things the builder can ask to be rebuilt. Questions take a category, the rest do not. */
@@ -81,6 +137,8 @@ export interface RegenerateRequest {
 export interface RegenerateResponse {
   job_id: string;
   kit_id: string;
+  /** The conversation this rewrite joins — the one the source kit is already in. */
+  session_id: string;
   existing: boolean;
 }
 
@@ -131,6 +189,8 @@ export interface KitSummary {
   company: string;
   days: number;
   createdAt: number;
+  /** The conversation this kit belongs to. Synthesised for kits written before sessions existed. */
+  sessionId: string;
   /**
    * How many rewrites deep this kit is — 1 for one the pipeline built from a posting.
    *

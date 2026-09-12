@@ -15,7 +15,8 @@ fell back to memory is a demo that loses your kits on restart without telling yo
 
 | File | Holds |
 |---|---|
-| `app.ts` | assembly, `GET /kits`, `GET /jobs`, health |
+| `app.ts` | assembly, `GET /sessions`, `GET /kits`, `GET /jobs`, health |
+| `sessions.ts` | conversations, derived by grouping — there is no `sessions` collection |
 | `builder.ts` | the fourteen builder routes and the rewrite trigger |
 | `practice.ts` | the deck and the rating log |
 | `events.ts` | `GET /jobs/:id/events` — the SSE stream a running kit is watched through |
@@ -50,6 +51,21 @@ list would be a second source of truth and would be wrong the first time a step 
 
 Idempotency is by `(user, hash of JD + company_url + days)`, claimed **before the first await**,
 so two requests arriving in the same tick do not both start a run.
+
+## Sessions are a `GROUP BY`, not a collection
+
+`GET /sessions` groups this user's jobs and kits into conversations: the posting, every rewrite
+since, the runs and the kits they produced. `GET /sessions/:id` adds the turns, which is what a
+reload reads to put the transcript back.
+
+Nothing new is stored but one nullable field on each of two records, and the stores pass records
+through whole so neither adapter changed. A `sessions` collection would have meant a `turns`
+array that is a second source of truth about what ran — disagreeing with the job records the
+first time a write half-succeeded. Ownership needs no check on these routes: the sessions are
+built from this user's own records, so someone else's id simply is not in the map.
+
+Records written before sessions existed are grouped by a synthetic `kit:<id>` or `job:<id>`
+rather than migrated. See `sessions.ts`.
 
 ## Rewrites fork
 

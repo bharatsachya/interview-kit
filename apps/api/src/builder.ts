@@ -299,8 +299,18 @@ export function builderRoutes(deps: BuilderDeps): Router {
         ? { section: "questions" as const, category: body.value.category, ...steer }
         : { section: body.value.section, ...steer };
 
-      const { jobId, kitId, existing } = await deps.runner.regenerate(userId, record.id, request);
-      res.status(202).json({ job_id: jobId, kit_id: kitId, existing } satisfies RegenerateResponse);
+      // The conversation the source kit is in. A kit written before sessions existed has none,
+      // and `buildSessions` groups those under a synthetic `kit:<id>` — passing the same string
+      // here puts the rewrite in that same one rather than stranding it in a session of its own.
+      const sessionId = record.sessionId ?? `kit:${record.id}`;
+
+      const { jobId, kitId, existing } = await deps.runner.regenerate(userId, record.id, request, sessionId);
+      res.status(202).json({
+        job_id: jobId,
+        kit_id: kitId,
+        session_id: sessionId,
+        existing,
+      } satisfies RegenerateResponse);
     }),
   );
 
