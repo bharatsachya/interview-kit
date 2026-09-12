@@ -57,7 +57,27 @@ site can be re-pasted into that field, and an instruction block trusted for one 
 for every input that can reach it. The wrapper grants exactly one power (change the emphasis,
 difficulty and subject matter of *this section*) and refuses the rest.
 
+## Checking what the model asserted
+
+`checkClaims` compares the prose a call produced against the material that call was given, and
+reports the **names** and **numbers** nothing supports. It exists because extraction had a
+grounding check from the start and the brief did not — an invented requirement was dropped, an
+invented fact about the company shipped.
+
+It is not `checkGrounding`. A requirement is a phrase lifted from a document, so token coverage is
+the right test; a brief is a summary that rewords by design, and the same test would flag every
+good sentence in it. Names and numbers are what cannot be reworded and what a candidate would
+prepare against.
+
+Nothing is removed — the count and a sample go on the span. That keeps a false positive cheap,
+which is what makes it safe to run over question text too, where invention is partly the point.
+Its limit is that it tests presence, not entailment: `EXPLAIN` against a requirement that says
+"query tuning" is flagged, which is why question-side claims are recorded and never acted on.
+
 ## Tests
 
 `test/generation.test.ts` — including that the four calls are four calls, that they overlap in
 time, and that no category's prompt contains another category's requirement ids.
+`test/claims.test.ts` — mostly cases the check must stay *quiet* on, because its failure mode is
+noise. `evals/steps/15-claim-grounding` is the regression suite; one of its cases found a real
+hole the unit tests had missed.

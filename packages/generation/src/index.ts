@@ -13,6 +13,7 @@ export {
 } from "./brief";
 export { deriveFlashcards, frontFor } from "./flashcards";
 export { steerLines } from "./steer";
+export { checkClaims, claimsIn, type Claim, type ClaimCheck, type ClaimKind } from "./claims";
 export { createGapFillWriter, type GapFillDraft, type GapFillWriterOptions } from "./gap-fill";
 export {
   DEFAULT_QUESTIONS_PER_CATEGORY,

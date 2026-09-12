@@ -267,6 +267,14 @@ async function run(
         output_chars: result.brief.summary.length + result.brief.whatTheyDo.length,
         wrote_without_model: result.fabricationAvoided,
         cache_hit: result.cacheHit,
+        // A brief that reads well and cites nothing becomes visible here and nowhere else.
+        // `claims_checked` is reported alongside, because zero unsupported out of zero checked
+        // is a brief nobody could verify rather than one that passed.
+        claims_checked: result.claimsChecked,
+        unsupported_claims: result.unsupportedClaims.length,
+        ...(result.unsupportedClaims.length > 0
+          ? { unsupported_sample: result.unsupportedClaims.slice(0, 5).map((c) => c.text).join(", ") }
+          : {}),
       });
       return result.brief;
     } catch (error) {

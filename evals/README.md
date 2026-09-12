@@ -3,7 +3,7 @@
 One folder per pipeline step. Each `cases.json` is an array of cases with `input` and
 `expected`. Each folder's README says which function it targets and what to assert.
 
-Pure steps (02, 03, 04, 07, 08, 09, 10, 11, 12) are exact: expected output must match.
+Pure steps (02, 03, 04, 07, 08, 09, 10, 11, 12, 15) are exact: expected output must match.
 LLM steps (01, 05, 06) assert properties, and should be run 3 times each — a property
 that passes 2/3 is a flaky prompt, not a pass.
 
@@ -26,6 +26,7 @@ because every later step consumes its output.
 | 12 | toKitJSON | pure | 3 |
 | 13 | builder: edit/delete/move/reorder/regenerate | pure+fake | 13 |
 | 14 | API contract: ownership, idempotency, versions | integration | 10 |
+| 15 | checkClaims: what the model asserted vs what it was shown | pure | 9 |
 
 A step is done when every case passes and the trace for that step records the attrs
 the case names.

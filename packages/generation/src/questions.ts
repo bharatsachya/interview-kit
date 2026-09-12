@@ -1,5 +1,6 @@
 import { NOOP_SPAN, truncateForPrompt, untrustedBlock, type IdGenerator, type LlmProvider, type SpanHandle } from "@trao/contracts";
 import { steerLines } from "./steer";
+import { checkClaims } from "./claims";
 import type { Difficulty, InternalQuestion, QuestionCategory, Requirement } from "@trao/kit";
 import { z } from "zod";
 
@@ -133,6 +134,16 @@ export interface CategoryReport {
   failed?: string;
   /** True when this category's answer was recalled rather than generated. */
   cacheHit?: boolean;
+  /**
+   * Names and numbers the questions asserted that nothing in this call's context supports.
+   *
+   * Weaker evidence here than on the brief, and deliberately so. A question is *meant* to be
+   * generative — "how would you shard this?" invents a scenario, which is the product working —
+   * so this is a smell rather than a fault, and it is recorded and never acted on. What it does
+   * catch is the failure that matters: a question confidently naming a technology this company
+   * and this posting never mentioned, which sends a candidate to revise the wrong thing.
+   */
+  unsupportedClaims?: number;
 }
 
 export interface QuestionGenerationResult {
@@ -266,8 +277,35 @@ async function runCategory(
         });
       }
 
-      c.setAll({ questions_out: data.questions.length, cache_hit: cacheHit });
-      return { category, requirementsIn: seed.length, questionsOut: data.questions.length, cacheHit };
+      // Everything this call was given, which is the only thing its questions can be said to be
+      // supported by: its seeded requirements, the responsibilities it was shown as context, and
+      // whatever the crawl found about the company. The role title and company are allowed —
+      // they came in as arguments rather than as retrieved material.
+      const claims = checkClaims(
+        drafts.map((draft) => `${draft.prompt} ${draft.answerOutline}`).join(" "),
+        [...seed.map((r) => r.text), ...context, input.hiringProcess ?? "", input.companySummary ?? ""],
+        [input.company, input.roleTitle],
+      );
+
+      c.setAll({
+        questions_out: data.questions.length,
+        cache_hit: cacheHit,
+        ...(claims.unsupported.length > 0
+          ? {
+              unsupported_claims: claims.unsupported.length,
+              // A sample, not the list. The trace is read, not parsed, and five names say as
+              // much as forty about whether the call went off the material.
+              unsupported_sample: claims.unsupported.slice(0, 5).map((claim) => claim.text).join(", "),
+            }
+          : {}),
+      });
+      return {
+        category,
+        requirementsIn: seed.length,
+        questionsOut: data.questions.length,
+        cacheHit,
+        ...(claims.unsupported.length > 0 ? { unsupportedClaims: claims.unsupported.length } : {}),
+      };
     } catch (error) {
       // One category failing is a thinner kit, not a failed run. Recorded on the span rather
       // than thrown, so the sibling categories still run.

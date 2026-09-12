@@ -412,6 +412,37 @@ environment flag, defaulting off, that `npm run evaluate` turns on for itself an
 does. The deploy script pins it to `false` in production and does not let the deployment
 override it.
 
+**What the model asserted, against what it was shown.** Extraction has always checked this:
+`checkGrounding` drops a requirement whose distinctive words are not in the posting, because the
+brief's words are that nothing is invented. The company brief had no equivalent — so an invented
+*requirement* was dropped and recorded, while an invented *fact about the company* shipped to a
+candidate who was about to walk into an interview believing it.
+
+`checkClaims` closes that. It is deliberately not `checkGrounding`: a brief is a summary and
+rewords by design, so demanding token overlap from prose would flag every competent sentence. It
+looks only at the parts of a sentence that cannot be reworded and that a reader would act on —
+**names** (proper nouns, technologies) and **numbers** (amounts, years, counts). A sentence that
+turned "we help marketplaces move money" into "they build payment infrastructure" carries neither
+and is correctly ignored.
+
+Nothing is removed. The count, and a sample, go on the span — `claims_checked` beside
+`unsupported_claims`, because zero unsupported out of zero checked is a brief nobody could verify
+rather than one that passed. Dropping a sentence from a summary is blunter than dropping one
+requirement from a list: the prose around it stops making sense, and a false positive silently
+deletes a true statement. Recording it is also what makes the check safe to run over question
+text, where invention is partly the point.
+
+Its limit is stated rather than engineered around: it tests whether a token is *present*, not
+whether it is *entailed*. A question about `EXPLAIN` against a requirement that says "query
+tuning" is flagged, and that is why question-side claims are a smell and never acted on.
+
+**A prompt ceiling, as a bug detector.** Every input is already capped — the posting at 12,000
+characters, a page at 3,000, the crawl at eight pages — so the largest legitimate request is
+around ten thousand tokens. The gateway refuses anything over 32,000 and records `prompt_chars`
+and `input_tokens` on every span regardless. It never fires on a healthy run, which is the point:
+what it catches is a truncation that stopped truncating, arriving otherwise as a provider 400 at
+whichever context limit the fallback chain happened to reach.
+
 **Prompt injection: mitigated, not solved.** The pipeline fetches arbitrary company pages and
 puts their text in front of a model. Retrieved content is fenced in delimited blocks and labelled
 as data with an explicit instruction that it is not instructions. The rewrite prompt the user

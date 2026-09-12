@@ -63,6 +63,8 @@ export interface LlmGatewayOptions {
   requestBudgetMs?: number;
   cacheTtlSeconds?: number;
   backoff?: BackoffOptions;
+  /** Refuse a prompt bigger than this. See `DEFAULT_MAX_PROMPT_TOKENS`. */
+  maxPromptTokens?: number;
 
   /**
    * Record the prompt and the raw response on each call's span.
@@ -101,6 +103,26 @@ export const DEFAULT_OUTPUT_RESERVE = 1_024;
  */
 export const DEFAULT_REQUEST_BUDGET_MS = 30_000;
 
+/**
+ * The most a single prompt may be, before it is sent.
+ *
+ * **A bug detector, not a cost control.** Every real prompt in this system is bounded already and
+ * bounded small: the posting is capped at 12,000 characters, a crawled page at 3,000, the crawl
+ * itself at eight pages. The largest legitimate request — the brief, with eight pages and a
+ * discussion list — lands around ten thousand tokens. This sits three times above that.
+ *
+ * So it never fires on a healthy run, which is the point. What it catches is the class of bug
+ * that has no other symptom until a provider answers 400: a truncation that silently stopped
+ * truncating, a fixture loop that fed the same page back in, a future change raising the page
+ * cap without anyone doing the arithmetic. Those arrive as "the model rejected the request" from
+ * whichever provider the chain happened to reach, at whichever of its context limits, which is a
+ * bad way to learn that the crawler changed.
+ *
+ * Refusing here makes it one named error, at one place, with the number attached — and it is
+ * recorded on every span either way, so the headroom is a fact rather than an assumption.
+ */
+export const DEFAULT_MAX_PROMPT_TOKENS = 32_000;
+
 interface CachedResponse {
   text: string;
   model: string;
@@ -114,6 +136,7 @@ export class LlmGateway implements LlmProvider {
   readonly #maxAttempts: number;
   readonly #cacheTtl: number;
   readonly #requestBudgetMs: number;
+  readonly #maxPromptTokens: number;
 
   constructor(private readonly options: LlmGatewayOptions) {
     this.name = options.transport.name;
@@ -122,6 +145,7 @@ export class LlmGateway implements LlmProvider {
     this.#maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
     this.#cacheTtl = options.cacheTtlSeconds ?? DEFAULT_CACHE_TTL_SECONDS;
     this.#requestBudgetMs = options.requestBudgetMs ?? DEFAULT_REQUEST_BUDGET_MS;
+    this.#maxPromptTokens = options.maxPromptTokens ?? DEFAULT_MAX_PROMPT_TOKENS;
   }
 
   complete<T>(request: LlmRequest<T>): Promise<LlmResult<T>> {
@@ -141,12 +165,24 @@ export class LlmGateway implements LlmProvider {
       model,
       prompt_hash: hash.slice(0, 12),
       input_tokens: inputTokens,
+      prompt_chars: request.prompt.length,
       cache_hit: false,
       queued_ms: 0,
       attempt: 0,
       rate_limited: false,
       repair_attempted: false,
     });
+
+    // 0. Size. Before the cache, because a prompt this big is a bug whether or not an answer to
+    // it happens to be lying around, and a cache hit would hide it until the day it missed.
+    if (inputTokens > this.#maxPromptTokens) {
+      throw new KitError(
+        "INVALID_INPUT",
+        `The ${request.purpose} prompt is ${inputTokens} tokens, over the ${this.#maxPromptTokens} ceiling. ` +
+          "Every input to this system is capped well below that, so this is a truncation that did not happen.",
+        { details: { purpose: request.purpose, tokens: inputTokens, ceiling: this.#maxPromptTokens } },
+      );
+    }
 
     // 1. Cache.
     if (request.bypassCache !== true) {

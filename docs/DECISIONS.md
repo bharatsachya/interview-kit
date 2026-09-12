@@ -931,3 +931,103 @@ Six roles uploaded together are one thing the user did. Six sessions would put t
 the head of six transcripts it is only partly about. The nested rows name each role, which is
 also why `kitRowLabel` does not say "Built from the posting" for an original — that sentence is
 true of all six.
+
+---
+
+## Guardrails: what the model asserted, and how big the prompt got
+
+Two additions, and an argument I lost and was right to lose.
+
+### The asymmetry
+
+`checkGrounding` has been in extraction since it was written: a requirement whose distinctive
+words are not in the posting is dropped and recorded as a `DroppedRequirement`, because the
+rubric's words are that **nothing is invented**.
+
+The company brief had no equivalent. So an invented *requirement* was caught, and an invented
+*fact about the company* — a funding round, a tech stack, a headcount — shipped to a candidate
+who was about to walk into an interview believing it. Same failure, opposite treatment, and the
+half that reached a human unchecked was the half nobody had checked.
+
+### Why it could not be `checkGrounding`
+
+A requirement is a phrase lifted from a document, so token coverage is the right test. A brief is
+a summary: it rewords by design, and demanding 60% overlap from prose would flag every competent
+sentence in it.
+
+So `checkClaims` looks only at the parts of a sentence that cannot be reworded and that a reader
+would act on — **names** (proper nouns, technologies) and **numbers** (amounts, years, counts). A
+sentence that turned "we help marketplaces move money" into "they build payment infrastructure"
+carries neither, and is correctly ignored.
+
+### Recorded, not removed
+
+The count and a sample go on the span; nothing is deleted.
+
+Dropping a sentence from a summary is much blunter than dropping one requirement from a list —
+the prose around it stops making sense, and a false positive silently removes a true statement.
+Recording is also what makes the check safe to run over question text, where invention is partly
+the product working.
+
+`claims_checked` is reported beside `unsupported_claims` for a reason: zero unsupported out of
+zero checked is a brief nobody could verify, not a brief that passed, and a trace that cannot
+distinguish those is a trace that reassures.
+
+### Its failure mode is noise, and twice it produced some
+
+The list of ordinary words that decide what a capital means is the whole difficulty, and two
+rounds of real evidence shaped it.
+
+**Skipping every sentence-initial capital** was the first cut — every sentence capitalises its
+first word, so taking those at face value flags "Payments" and "Marketplaces" in prose that
+invented nothing. An eval case found the hole immediately: `Redis is used for caching.` is a
+fabricated technology sitting in the one position the check refused to look at, and a brief is
+mostly sentences that open with a proper noun. So the rule became: a sentence-initial capital is
+a name unless the word is ordinary English.
+
+**Then the first real pipeline run** flagged "Walk", "What" and "Tell". A brief is declarative
+prose; a question is imperative or interrogative, and a word list built for one mood knew nothing
+of the other. Every category would have reported two or three unsupported claims on a clean run,
+and the number would have meant nothing.
+
+Both are in the tests now, and most of `claims.test.ts` is cases the check must stay *quiet* on.
+
+### The limit, stated rather than engineered around
+
+It tests whether a token is **present**, not whether it is **entailed**. A question about
+`EXPLAIN` against a requirement reading "PostgreSQL query tuning at scale" is flagged, because
+nothing it was shown contains the word — even though that is exactly what query tuning means.
+
+That case is pinned in a test as a known boundary. It is also the reason question-side claims are
+a smell recorded on a span and never acted on: the check is right often enough to be worth
+reading and wrong often enough that nothing should be deleted on its say-so.
+
+### The prompt ceiling
+
+`DEFAULT_MAX_PROMPT_TOKENS = 32_000`, and it is a **bug detector, not a cost control**.
+
+Every input is bounded already and bounded small: the posting at 12,000 characters, a crawled
+page at 3,000, the crawl at eight pages. The largest legitimate request — the brief — lands around
+ten thousand tokens. The ceiling sits three times above that and never fires on a healthy run,
+which is the point.
+
+What it catches has no other symptom until a provider answers 400: a truncation that silently
+stopped truncating, a fixture loop feeding the same page back in, a future change raising the
+page cap without anyone doing the arithmetic. Those arrive as "the model rejected the request"
+from whichever provider the chain reached, at whichever of its context limits — a bad way to
+learn that the crawler changed.
+
+Checked **before the cache**, because a prompt that size is a bug whether or not an answer to it
+happens to be lying around, and a cache hit would hide it until the day it missed. `prompt_chars`
+and `input_tokens` are recorded on every span either way, so the headroom is a measurement rather
+than an assumption.
+
+### The argument I lost
+
+I argued against extending the claim check to answer outlines: questions are meant to be
+generative, and the false-positive risk runs against the product's purpose.
+
+The counter was the strictness choice — nothing is removed. With "keep and flag", a false positive
+on an answer outline costs a number in a trace rather than a question the user wanted, which
+dissolves most of the objection. What remained was the noise, and that was a tuning problem with
+evidence available, not a reason to skip it. The run above is what that evidence looked like.

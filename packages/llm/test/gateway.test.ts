@@ -59,7 +59,13 @@ interface Harness {
 
 function harness(
   script: ScriptedStep[] = [OK],
-  options: { rpm?: number; tpm?: number; budget?: (clock: Clock) => Budget; maxAttempts?: number } = {},
+  options: {
+    rpm?: number;
+    tpm?: number;
+    budget?: (clock: Clock) => Budget;
+    maxAttempts?: number;
+    maxPromptTokens?: number;
+  } = {},
 ): Harness {
   const clock = new TestClock(0);
   const transport = new FakeTransport(script);
@@ -77,6 +83,7 @@ function harness(
     requestsPerMinute: options.rpm ?? 10,
     tokensPerMinute: options.tpm ?? 250_000,
     ...(options.maxAttempts !== undefined ? { maxAttempts: options.maxAttempts } : {}),
+    ...(options.maxPromptTokens !== undefined ? { maxPromptTokens: options.maxPromptTokens } : {}),
     // Deterministic jitter: always the top of the range.
     backoff: { random: () => 1 },
   });
@@ -726,5 +733,53 @@ describe("the deadline bounds retries and fallback", () => {
 
     await gateway.complete(ask());
     expect(transport.requests[0]?.timeoutMs).toBe(DEFAULT_REQUEST_BUDGET_MS);
+  });
+})
+
+describe("the prompt ceiling", () => {
+  const huge = "word ".repeat(5_000);
+
+  it("refuses a prompt past the ceiling, naming the purpose and the size", async () => {
+    const { gateway } = harness([OK], { maxPromptTokens: 100 });
+
+    const error = await gateway
+      .complete(ask({ purpose: "generate_brief", prompt: huge }))
+      .then(() => null, (e: unknown) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/generate_brief/);
+    expect((error as Error).message).toMatch(/ceiling/);
+  });
+
+  it("refuses before the transport is ever reached", async () => {
+    const { gateway, transport } = harness([OK], { maxPromptTokens: 100 });
+
+    await gateway.complete(ask({ prompt: huge })).catch(() => undefined);
+    // Twice, because the second would be a cache hit if the check sat after the cache — and a
+    // stored answer hiding an oversized prompt buries the bug until the day it misses.
+    await gateway.complete(ask({ prompt: huge })).catch(() => undefined);
+
+    expect(transport.requests).toHaveLength(0);
+  });
+
+  it("leaves the largest legitimate prompt alone", async () => {
+    // Eight crawled pages at their 3,000-character cap plus a posting at its 12,000 cap: the
+    // biggest request this system can construct. Nothing here can reach the default, which is
+    // the property that makes it a bug detector rather than a budget.
+    const { gateway } = harness();
+
+    const result = await gateway.complete(ask({ prompt: "x ".repeat((3_000 * 8 + 12_000) / 2) }));
+
+    expect(result.data).toEqual({ greeting: "hello" });
+  });
+
+  it("records the size on every span, so the headroom is a fact rather than an assumption", async () => {
+    const { gateway, tracer } = harness();
+
+    await gateway.complete(ask({ prompt: "Say hello." }));
+
+    const span = tracer.spans.find((entry) => entry.step === "llm:greet");
+    expect(span?.attrs["prompt_chars"]).toBe("Say hello.".length);
+    expect(span?.attrs["input_tokens"]).toBeGreaterThan(0);
   });
 });

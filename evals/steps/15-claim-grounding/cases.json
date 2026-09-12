@@ -1,0 +1,147 @@
+[
+  {
+    "id": "faithful-summary",
+    "input": {
+      "prose": "They help online sellers move money between buyers and vendors, and settle it in more than a dozen currencies.",
+      "sources": [
+        "Vaultline builds payment infrastructure for online marketplaces. We process payouts in 14 currencies."
+      ],
+      "allowed": [
+        "Vaultline",
+        "Senior Backend Engineer"
+      ]
+    },
+    "expected": {
+      "unsupported": [],
+      "checked": 0
+    }
+  },
+  {
+    "id": "invented-technology",
+    "input": {
+      "prose": "The platform runs on PostgreSQL and Redis.",
+      "sources": [
+        "The platform runs on PostgreSQL and Kafka."
+      ],
+      "allowed": [
+        "Vaultline",
+        "Senior Backend Engineer"
+      ]
+    },
+    "expected": {
+      "unsupported": [
+        "Redis"
+      ],
+      "checked": 2
+    }
+  },
+  {
+    "id": "invented-number",
+    "input": {
+      "prose": "Vaultline processes 2bn a year across 14 currencies.",
+      "sources": [
+        "We process payouts in 14 currencies."
+      ],
+      "allowed": [
+        "Vaultline"
+      ]
+    },
+    "expected": {
+      "unsupported": [
+        "2bn"
+      ],
+      "checked": 3
+    }
+  },
+  {
+    "id": "sentence-initial",
+    "input": {
+      "prose": "Payments are their business. Marketplaces are the customer. Settlement happens daily.",
+      "sources": [
+        "We process payouts in 14 currencies."
+      ],
+      "allowed": []
+    },
+    "expected": {
+      "unsupported": [],
+      "checked": 0
+    }
+  },
+  {
+    "id": "self-evident-name",
+    "input": {
+      "prose": "GraphQL is the API layer.",
+      "sources": [
+        "The platform runs on PostgreSQL."
+      ],
+      "allowed": []
+    },
+    "expected": {
+      "unsupported": [
+        "GraphQL"
+      ],
+      "checked": 1
+    }
+  },
+  {
+    "id": "told-not-shown",
+    "input": {
+      "prose": "Northwind is hiring a Staff Platform Engineer.",
+      "sources": [
+        "The platform runs on PostgreSQL."
+      ],
+      "allowed": [
+        "Northwind",
+        "Staff Platform Engineer"
+      ]
+    },
+    "expected": {
+      "unsupported": [],
+      "checked": 4
+    }
+  },
+  {
+    "id": "generic-vocabulary",
+    "input": {
+      "prose": "Their API is public. The CEO is based in the EU.",
+      "sources": [
+        "The platform runs on PostgreSQL."
+      ],
+      "allowed": []
+    },
+    "expected": {
+      "unsupported": [],
+      "checked": 0
+    }
+  },
+  {
+    "id": "nothing-retrieved",
+    "input": {
+      "prose": "They run on Kafka.",
+      "sources": [],
+      "allowed": []
+    },
+    "expected": {
+      "unsupported": [
+        "Kafka"
+      ],
+      "checked": 1
+    }
+  },
+  {
+    "id": "repeated-claim",
+    "input": {
+      "prose": "Redis is used for caching. Redis is used for queues. Redis is everywhere.",
+      "sources": [
+        "The platform runs on PostgreSQL."
+      ],
+      "allowed": []
+    },
+    "expected": {
+      "unsupported": [
+        "Redis"
+      ],
+      "checked": 1
+    }
+  }
+]

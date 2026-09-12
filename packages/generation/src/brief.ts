@@ -1,5 +1,6 @@
 import { truncateForPrompt, untrustedBlock, type LlmProvider } from "@trao/contracts";
 import { steerLines } from "./steer";
+import { checkClaims, type Claim } from "./claims";
 import type { CompanyBrief } from "@trao/kit";
 import { z } from "zod";
 
@@ -55,6 +56,17 @@ export interface BriefResult {
   fabricationAvoided: boolean;
   /** True when an identical request had already been answered and the model was not called. */
   cacheHit: boolean;
+  /**
+   * Names and numbers the brief asserted that nothing retrieved supports.
+   *
+   * Recorded, never removed. Extraction drops an ungrounded requirement because a requirement is
+   * a phrase lifted from a document; a brief is a summary that rewords by design, so the same
+   * treatment would delete true sentences. The pipeline puts the count and a sample on the span,
+   * which is where a kit that reads well and cites nothing becomes visible. See `claims.ts`.
+   */
+  unsupportedClaims: Claim[];
+  /** How many checkable claims it made at all — zero unsupported out of zero is not a pass. */
+  claimsChecked: number;
 }
 
 const briefSchema = z.object({
@@ -86,6 +98,9 @@ export async function generateBrief(input: BriefInput): Promise<BriefResult> {
       sourcesUsed: 0,
       fabricationAvoided: true,
       cacheHit: false,
+      // Written in code from a fixed sentence. There is nothing here a model could have invented.
+      unsupportedClaims: [],
+      claimsChecked: 0,
     };
   }
 
@@ -105,6 +120,14 @@ export async function generateBrief(input: BriefInput): Promise<BriefResult> {
     gaps.push("The company site was read, but none of it described the interview process in enough detail to summarise.");
   }
 
+  // Checked against what the model was actually shown: the page text and the discussion it was
+  // given, plus the company and role, which reach the prompt as arguments rather than as a page.
+  const claims = checkClaims(
+    `${data.summary} ${data.what_they_do} ${hiringProcess}`,
+    [...input.pages.map((page) => `${page.title} ${page.text}`), ...input.discussion.map((item) => `${item.title} ${item.content}`)],
+    [input.company, input.roleTitle],
+  );
+
   return {
     brief: {
       summary: data.summary.trim(),
@@ -120,6 +143,8 @@ export async function generateBrief(input: BriefInput): Promise<BriefResult> {
     sourcesUsed: sources.length,
     fabricationAvoided: false,
     cacheHit,
+    unsupportedClaims: claims.unsupported,
+    claimsChecked: claims.checked,
   };
 }
 

@@ -212,6 +212,11 @@ async function regenerateBrief(
       output_chars: result.brief.summary.length + result.brief.whatTheyDo.length,
       wrote_without_model: result.fabricationAvoided,
       cache_hit: result.cacheHit,
+      claims_checked: result.claimsChecked,
+      unsupported_claims: result.unsupportedClaims.length,
+      ...(result.unsupportedClaims.length > 0
+        ? { unsupported_sample: result.unsupportedClaims.slice(0, 5).map((c) => c.text).join(", ") }
+        : {}),
     });
     return result.brief;
   });

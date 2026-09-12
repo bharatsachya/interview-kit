@@ -17,6 +17,12 @@ to reason about rate limits, retries, caching and malformed output, and one plac
   nothing. `MemoryCacheStore` and `NullCacheStore` ship here.
 * **One JSON repair attempt** (`extractJson`) before a step is given up on. Models wrap JSON in
   prose and fences more often than they emit invalid JSON.
+* **A prompt ceiling** (`DEFAULT_MAX_PROMPT_TOKENS`, 32,000) — a bug detector, not a cost
+  control. Every real prompt is bounded small already; this sits three times above the largest
+  one and catches a truncation that stopped truncating, which would otherwise surface as a
+  provider 400 at whichever context limit the fallback chain reached. `prompt_chars` and
+  `input_tokens` go on every span either way, so the headroom is a fact rather than an assumption.
+  Checked *before* the cache: a stored answer would hide the bug until the day it missed.
 * **A run budget** (`RunBudget`) — the gateway stops retrying at the run's deadline rather than
   letting one slow step eat the whole job.
 
