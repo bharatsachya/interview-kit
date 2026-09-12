@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { SessionKitView, SessionSummary } from "../src/lib/api/types";
-import { kitCount, kitRowLabel, kitsOf, sessionLabel, sessionOfKit } from "../src/lib/history";
+import type { SessionKitView, SessionSummary, SessionTurnView } from "../src/lib/api/types";
+import { kitCount, kitRowLabel, kitsOf, sessionLabel, sessionOfKit, settledLine } from "../src/lib/history";
 
 const kit = (id: string, over: Partial<SessionKitView> = {}): SessionKitView => ({
   id,
@@ -96,5 +96,55 @@ describe("kitRowLabel", () => {
   it("falls back only when there is genuinely nothing to say", () => {
     expect(kitRowLabel(kit("k1", { company: "", title: "" }))).toBe("Built from the posting");
     expect(kitRowLabel(kit("k1", { company: "" }))).toBe("Senior Backend Engineer");
+  });
+});
+
+const turn = (over: Partial<SessionTurnView> = {}): SessionTurnView => ({
+  job_id: "job_1",
+  ask: { kind: "posting", jd: "Senior Backend Engineer", companyUrl: "https://acme.test", days: 5 },
+  label: "Senior Backend Engineer",
+  status: "done",
+  kit_id: "kit_1",
+  error: null,
+  progress: null,
+  created_at: 0,
+  ...over,
+});
+
+/**
+ * What a turn that finished before this page was open says it did.
+ *
+ * The bug this is written against: five regenerations run on one kit before asks were stored
+ * rendered as **five more kits built**. Those job records carry `request: null`, so `ask` is
+ * null, and the first version answered "cannot tell" with "Built your kit" — the one claim it
+ * had no evidence for. One posting and five rewrites came out as six identical lines.
+ */
+describe("settledLine", () => {
+  it("reports a build only when the ask says a posting was sent", () => {
+    expect(settledLine(turn(), 6)).toBe("Built your kit — 6 outputs.");
+  });
+
+  it("does not claim a build for a turn whose ask was never stored", () => {
+    const legacy = turn({ ask: null, label: "Regenerating the company brief" });
+    expect(settledLine(legacy, 6)).not.toContain("Built your kit");
+    // The label is what the server recorded when it accepted the run. Repeating it back is
+    // honest where guessing was not.
+    expect(settledLine(legacy, 6)).toBe("Regenerating the company brief.");
+  });
+
+  it("says something rather than nothing when there is no ask and no label either", () => {
+    expect(settledLine(turn({ ask: null, label: "" }), 6)).toBe("This run finished.");
+  });
+
+  it("names the section a rewrite replaced, not the kit", () => {
+    const rewrite = turn({ ask: { kind: "rewrite", section: "questions", category: "technical", prompt: "Harder." } });
+    expect(settledLine(rewrite, 6)).toBe("Rewrote the technical questions, into a new kit.");
+    const brief = turn({ ask: { kind: "rewrite", section: "company_brief", prompt: "More detail." } });
+    expect(settledLine(brief, 6)).toBe("Rewrote the brief, into a new kit.");
+  });
+
+  it("gives a failure its reason rather than a build it never did", () => {
+    const failed = turn({ status: "failed", kit_id: null, error: { code: "TIMEOUT", message: "The run timed out." } });
+    expect(settledLine(failed, 6)).toBe("The run timed out.");
   });
 });

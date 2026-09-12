@@ -1,4 +1,4 @@
-import type { KitSummary, SessionKitView, SessionSummary } from "@/lib/api/types";
+import type { KitSummary, SessionKitView, SessionSummary, SessionTurnView } from "@/lib/api/types";
 
 /**
  * The history rail lists conversations.
@@ -81,4 +81,36 @@ export function kitRowLabel(kit: SessionKitView): string {
   const title = kit.title.trim();
   if (company !== "" && title !== "") return `${company} — ${title}`;
   return company || title || "Built from the posting";
+}
+
+/**
+ * What a turn that finished before this page was open says it did.
+ *
+ * Traces are not persisted, so a conversation reopened later has its asks and its outcomes and
+ * no spans. This says what happened and declines to say how long it took.
+ *
+ * The case that matters is the third one. A regeneration run before asks were stored recorded
+ * `request: null`, so `ask` is null and the turn cannot be identified from it — and the first
+ * version of this answered that by falling back to "Built your kit", which every such turn then
+ * claimed. Five regenerations of one kit rendered as six kits built. **A turn may only claim to
+ * have built a kit when its ask says it was a posting.** Everything else falls back to the job's
+ * own label, which is the one thing those records do say about themselves.
+ */
+export function settledLine(turn: SessionTurnView, outputCount: number): string {
+  if (turn.status === "failed") return turn.error?.message ?? "No kit could be produced.";
+
+  if (turn.ask?.kind === "posting") return `Built your kit — ${outputCount} outputs.`;
+  if (turn.ask?.kind === "rewrite") return `${rewroteLabel(turn.ask)}, into a new kit.`;
+
+  // No ask stored. The label is what the server recorded when it accepted the run — "Regenerating
+  // the company brief" — and repeating it back is honest where guessing was not.
+  const label = turn.label.trim();
+  return label === "" ? "This run finished." : `${label}.`;
+}
+
+/** Past tense, from the ask. Narrow on purpose: a rewrite replaces one section. */
+function rewroteLabel(ask: { section: string; category?: string }): string {
+  if (ask.section === "company_brief") return "Rewrote the brief";
+  if (ask.section === "schedule") return "Rebuilt the schedule";
+  return ask.category === undefined ? "Rewrote the questions" : `Rewrote the ${ask.category} questions`;
 }

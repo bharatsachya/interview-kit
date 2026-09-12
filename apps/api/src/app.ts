@@ -263,6 +263,7 @@ export function createApp(options: ApiOptions): express.Express {
         turns: session.turns.map((turn) => ({
           job_id: turn.jobId,
           ask: turn.ask,
+          label: turn.label,
           status: turn.status,
           kit_id: turn.kitId,
           error: turn.error,

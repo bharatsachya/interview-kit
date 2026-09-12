@@ -771,12 +771,20 @@ function turnFor(jobId: string, ask: SessionTurnView["ask"]): SessionTurnView {
   return {
     job_id: jobId,
     ask,
+    // What the server will name this run. Only ever read when `ask` is null, which an optimistic
+    // turn never is — set anyway, so the local shape matches the remote one field for field.
+    label: ask === null ? "" : ask.kind === "posting" ? firstLine(ask.jd) : ask.prompt,
     status: "queued",
     kit_id: null,
     error: null,
     progress: null,
     created_at: Date.now(),
   };
+}
+
+/** A posting's first non-empty line, which is what the API labels the run with. */
+function firstLine(jd: string): string {
+  return (jd.split(/\r?\n/).find((line) => line.trim() !== "")?.trim() ?? "").slice(0, 80);
 }
 
 /** What went wrong, in words, with the offline case named rather than left as a fetch error. */

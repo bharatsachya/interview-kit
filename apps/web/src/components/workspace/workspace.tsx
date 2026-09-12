@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import type { Span } from "@trao/contracts";
 import { api } from "@/lib/api/client";
 import { nextRewriteKey, rewritePrompt, rewritingLabel, type Rewrite } from "@/lib/rewrite";
-import { kitsOf, sessionOfKit } from "@/lib/history";
+import { kitsOf, sessionOfKit, settledLine } from "@/lib/history";
 import type { SessionSummary, SessionTurnView } from "@/lib/api/types";
 import { AskDocument } from "@/components/workspace/ask-document";
 import { KIT_OUTPUTS, seconds, type KitOutputId } from "@/lib/kit-outputs";
@@ -780,21 +780,7 @@ function sectionId(ask: { section: string; category?: string }): string {
  * invents a duration of zero seconds.
  */
 function SettledTurn({ turn }: { turn: SessionTurnView }) {
-  if (turn.status === "failed") {
-    return (
-      <Assistant>
-        {turn.error?.message ?? "No kit could be produced."}
-      </Assistant>
-    );
-  }
-  const changed = turn.ask?.kind === "rewrite" ? sectionId(turn.ask) : undefined;
-  return (
-    <Assistant>
-      {changed === undefined
-        ? `Built your kit — ${KIT_OUTPUTS.length} outputs.`
-        : `${changedLabel(changed)}, into a new kit.`}
-    </Assistant>
-  );
+  return <Assistant>{settledLine(turn, KIT_OUTPUTS.length)}</Assistant>;
 }
 
 function AskBubble({ children, at }: { children: string; at: number }) {

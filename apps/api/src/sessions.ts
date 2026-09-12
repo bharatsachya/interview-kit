@@ -23,6 +23,15 @@ import type { JobAsk, JobRecord, KitRecord } from "@trao/contracts";
 export interface SessionTurn {
   jobId: string;
   ask: JobAsk | null;
+  /**
+   * What the run was called when it was accepted.
+   *
+   * The only thing a run written before asks were stored says about itself. A regeneration from
+   * that era recorded `request: null` and a label of "Regenerating the company brief" — so
+   * without this the transcript knows a turn happened, cannot say what it was, and the fallback
+   * claimed it had built the kit. Six of those in one conversation is what that looked like.
+   */
+  label: string;
   status: JobRecord["status"];
   kitId: string | null;
   error: JobRecord["error"];
@@ -112,6 +121,7 @@ export function buildSessions(jobs: readonly JobRecord[], kits: readonly KitReco
     session.turns.push({
       jobId: job.id,
       ask: askOf(job.request),
+      label: job.label,
       status: job.status,
       kitId: job.kitId,
       error: job.error,

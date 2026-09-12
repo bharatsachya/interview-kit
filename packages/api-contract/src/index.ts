@@ -66,6 +66,8 @@ export interface CreateKitResponse extends CreateJobsResponse {
 export interface SessionTurnView {
   job_id: string;
   ask: JobAsk | null;
+  /** What the run was called. The only self-description a turn written before asks were stored has. */
+  label: string;
   status: JobRecord["status"];
   kit_id: string | null;
   error: JobRecord["error"];
