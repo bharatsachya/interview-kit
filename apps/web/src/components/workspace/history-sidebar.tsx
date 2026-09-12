@@ -3,6 +3,7 @@
 import { UserButton, useClerk, useUser } from "@clerk/nextjs";
 import { lineageLabel } from "@trao/kit";
 import { kitCount, runLabel, type HistoryEntry } from "@/lib/history";
+import type { KitSummary } from "@/lib/api/types";
 import { KIT_OUTPUTS } from "@/lib/kit-outputs";
 import { Button } from "@/components/industry/button";
 import { EmptyState, Skeleton } from "@/components/industry/states";
@@ -166,6 +167,7 @@ export function HistorySidebar({
 
               const { kit } = entry;
               const active = kit.id === activeKitId;
+              const name = kitName(kit);
               return (
                 <li key={kit.id}>
                   <button
@@ -173,7 +175,7 @@ export function HistorySidebar({
                     onClick={() => onSelect(kit.id)}
                     aria-current={active ? "true" : undefined}
                     className={`flex w-full flex-col rounded-xl px-3 py-2.5 text-left transition-colors ${
-                      active ? "bg-steel-100" : "hover:bg-tint"
+                      active ? "bg-steel-100 hover:bg-steel-200" : "hover:bg-tint"
                     }`}
                   >
                     <span className="flex items-center gap-2">
@@ -181,7 +183,7 @@ export function HistorySidebar({
                       <span
                         className={`font-head min-w-0 flex-1 truncate text-[15px] font-semibold ${active ? "text-steel-800" : ""}`}
                       >
-                        {kit.company}
+                        {name.primary}
                       </span>
                       {/* A rewrite forks, so one company can hold several rows that are alike in
                           every field this row shows. The number is what tells them apart at a
@@ -196,9 +198,9 @@ export function HistorySidebar({
                         </span>
                       ) : null}
                     </span>
-                    <span className="text-ink/55 truncate text-xs">
-                      {kit.forkedFrom ? lineageLabel(kit.forkedFrom) : kit.title}
-                    </span>
+                    {name.secondary === null ? null : (
+                      <span className="text-ink/55 truncate text-xs">{name.secondary}</span>
+                    )}
                     <span
                       className={`font-head mt-0.5 text-xs tracking-wider uppercase tabular-nums ${
                         active ? "text-steel-500" : "text-ink/40"
@@ -263,4 +265,30 @@ export function HistorySidebar({
       </div>
     </div>
   );
+}
+
+/**
+ * The two lines a kit row shows, neither of which may come out empty.
+ *
+ * The row was `company` over `title`, and a kit whose company extraction came back blank — a
+ * posting that never names the employer, a company URL that would not resolve — rendered its
+ * loudest line as nothing at all. What was left was a grey caption and a blue meta line under a
+ * dot, which next to a bold failed run reads as disabled rather than as the one kit that worked.
+ * The run rows had guarded this since they were written (`"Untitled run"`); the kit rows never
+ * did.
+ *
+ * So the identity line takes the first field that actually says something, and the second line
+ * is dropped rather than allowed to repeat it — "AI/ML Developer" twice is not more informative
+ * than once, and a blank line is a row that looks broken.
+ */
+export function kitName(kit: KitSummary): { primary: string; secondary: string | null } {
+  const company = kit.company.trim();
+  const title = kit.title.trim();
+  // A fork's second line says what the rewrite did, which beats the role title it shares with
+  // every other revision of the same kit.
+  const lineage = kit.forkedFrom ? lineageLabel(kit.forkedFrom) : null;
+
+  if (company !== "") return { primary: company, secondary: lineage ?? (title === "" ? null : title) };
+  if (title !== "") return { primary: title, secondary: lineage };
+  return { primary: "Untitled kit", secondary: lineage };
 }
