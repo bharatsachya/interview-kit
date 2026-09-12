@@ -4,8 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Span } from "@trao/contracts";
 import { seconds } from "@/lib/kit-outputs";
 import {
-  PIPELINE_STEP_ORDER,
-  parseStep,
   spanConsequence,
   spanResult,
   spanTone,
@@ -29,7 +27,7 @@ interface Row {
   label: string;
   detail: string | null;
   durationMs: number | null;
-  state: "done" | "active" | "pending";
+  state: "done" | "active";
   trouble: boolean;
 }
 
@@ -127,20 +125,26 @@ export function Trace({
       };
     };
 
+    // A replay reveals the run the way it happened: the steps after the playhead have not been
+    // reached yet, so they are not on screen yet either.
     if (replaying) {
-      const at = replayAt;
-      return finished.map((span, index) =>
-        describe(span, index < at ? "done" : index === at ? "active" : "pending"),
-      );
+      return finished.slice(0, replayAt + 1).map((span, index) => describe(span, index < replayAt ? "done" : "active"));
     }
 
     const done = finished.map((span) => describe(span, "done"));
     if (progress === null) return done;
 
-    // Live. The finished rows are real spans; the running step is a name and nothing else, and
-    // the rest are drawn from the canonical order so the list has its full height from the start.
-    const seen = new Set(finished.map((span) => parseStep(span.step).base));
-    const activeBase = parseStep(progress.step).base;
+    // Live: what has finished, and the one thing running. Nothing else.
+    //
+    // The list used to be padded out with every remaining step from `PIPELINE_STEP_ORDER`, drawn
+    // dim, so it had its full height from the first frame and never reflowed. That is a real
+    // benefit and it was the wrong trade. A run announcing all nine steps before it has done any
+    // of them reads as a fixed script the machine is working through — which is the opposite of
+    // what this pipeline is, and the opposite of what the trace is here to show. The steps are
+    // chosen as it goes: a site that will not load skips the crawl, a category with no
+    // requirements is never asked for, coverage may loop twice or not at all.
+    //
+    // So the list grows. What you have seen happened; what you have not seen is not promised.
     const active: Row = {
       key: `active:${progress.step}`,
       label: stepLabel(progress.step),
@@ -149,19 +153,8 @@ export function Trace({
       state: "active",
       trouble: false,
     };
-    const activeIndex = PIPELINE_STEP_ORDER.indexOf(activeBase);
-    const pending: Row[] = PIPELINE_STEP_ORDER.filter(
-      (step, index) => index > activeIndex && !seen.has(step),
-    ).map((step) => ({
-      key: `pending:${step}`,
-      label: stepLabel(step),
-      detail: null,
-      durationMs: null,
-      state: "pending" as const,
-      trouble: false,
-    }));
 
-    return [...done, active, ...pending];
+    return [...done, active];
   }, [finished, progress, replaying, replayAt]);
 
   // ── the elapsed clock ─────────────────────────────────────────────────────
@@ -169,7 +162,7 @@ export function Trace({
 
   if (rows.length === 0 && !live) return null;
 
-  const stepCount = rows.filter((row) => row.state !== "pending").length;
+  const stepCount = rows.length;
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -230,13 +223,12 @@ export function Trace({
 
 function TraceRow({ row, index }: { row: Row; index: number }) {
   const active = row.state === "active";
-  const pending = row.state === "pending";
 
   return (
     <li
-      className={`flex items-baseline gap-3 rounded-[10px] px-3 py-2 transition-[background-color,opacity] duration-300 ${
+      className={`flex items-baseline gap-3 rounded-[10px] px-3 py-2 transition-colors duration-300 ${
         active ? "bg-steel-100" : "hover:bg-tint"
-      } ${pending ? "opacity-40" : "opacity-100"}`}
+      }`}
     >
       <span className="flex w-4 shrink-0 justify-center self-center">
         {active ? (
@@ -265,7 +257,7 @@ function TraceRow({ row, index }: { row: Row; index: number }) {
         <span className="flex-1" />
       )}
 
-      {/* No time until there is one. A pending step showing 0.0s would read as instant. */}
+      {/* No time until there is one. A running step showing 0.0s would read as instant. */}
       <span className="font-head text-ink/40 w-10 shrink-0 text-right text-[13px] tabular-nums">
         {row.durationMs === null || row.state !== "done" ? "" : seconds(row.durationMs)}
       </span>
