@@ -7,6 +7,7 @@ import {
   type JobView,
   type KitListView,
   type KitView,
+  type KitExport,
   type SessionListView,
   type SessionView,
   VersionConflict,
@@ -232,6 +233,18 @@ export const api = {
   /** One conversation in full: every ask, in order, with its run and its kit. */
   async getSession(sessionId: string, signal?: AbortSignal): Promise<SessionView> {
     return request<SessionView>(`/sessions/${encodeURIComponent(sessionId)}`, { signal });
+  },
+
+  /**
+   * The kit as Appendix A, unwrapped — the same bytes `npm run evaluate` writes.
+   *
+   * Fetched rather than linked to. An anchor pointing at the route would download it too, and on
+   * the same origin it would even carry the session cookie, but a failure then arrives as a
+   * browser error page in a new tab instead of something the panel can report. This way a 404 or
+   * an expired session is an `ApiError` like every other call.
+   */
+  async exportKit(kitId: string): Promise<KitExport> {
+    return request<KitExport>(kitPath(kitId, "export"));
   },
 
   async getKit(kitId: string, signal?: AbortSignal): Promise<KitView> {

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Span } from "@trao/contracts";
 import type { InternalKit, QuestionCategory } from "@trao/kit";
-import { KIT_OUTPUTS, outputCount, outputDuration, type KitOutputId } from "@/lib/kit-outputs";
+import { KIT_OUTPUTS, outputCount, outputDuration, outputText, type KitOutputId } from "@/lib/kit-outputs";
 import { Button, IconButton } from "@/components/industry/button";
 import { ErrorNotice, Loading, Skeleton } from "@/components/industry/states";
 import { Kicker } from "@/components/industry/text";
@@ -12,6 +12,8 @@ import { ConflictBanner } from "@/components/workspace/conflict-banner";
 import { KitIndex } from "@/components/workspace/kit-index";
 import { KitOutputBody } from "@/components/workspace/kit-outputs-body";
 import { usePractice } from "@/lib/use-practice";
+import { api } from "@/lib/api/client";
+import { copyText } from "@/lib/copy";
 import type { Rewrite } from "@/lib/rewrite";
 
 /**
@@ -73,6 +75,29 @@ export function KitDrawer({
   const practice = usePractice(kitId);
   const [track, setTrack] = useState<QuestionCategory | null>(null);
 
+  // Copy puts the open output on the clipboard; Export downloads the whole kit as Appendix A.
+  const copyState = useTransientAction("Copy");
+  const exportState = useTransientAction("Export");
+
+  const copyOutput = useCallback(async () => {
+    if (kit === null) return;
+    // `copyText` returns a boolean rather than throwing, because a button that says "Copied"
+    // when nothing was copied is worse than one that quietly does nothing.
+    copyState.settle(await copyText(outputText(activeOutput, kit)), "Copied", "Could not copy");
+  }, [kit, activeOutput, copyState]);
+
+  const exportKit = useCallback(async () => {
+    if (kitId === null) return;
+    exportState.start();
+    try {
+      const json = await api.exportKit(kitId);
+      download(`kit-${kitId}.json`, JSON.stringify(json, null, 2));
+      exportState.settle(true, "Downloaded", "");
+    } catch {
+      exportState.settle(false, "", "Could not export");
+    }
+  }, [kitId, exportState]);
+
   const scroller = useRef<HTMLDivElement>(null);
   const positions = useRef(new Map<string, number>());
 
@@ -110,11 +135,15 @@ export function KitDrawer({
           <div className="flex items-center gap-2">
             <Kicker>{output.kicker}</Kicker>
             <span className="ml-auto flex shrink-0 items-center gap-0.5">
-              <IconButton label="Copy">
-                <CopyIcon />
+              {/* Both of these rendered for a while with no `onClick` at all — icons that looked
+                  like controls and were decoration. `IconButton` already draws its `label` as a
+                  tooltip, so changing the label is the whole feedback mechanism: the pointer is
+                  still over the button at the moment it matters. */}
+              <IconButton label={copyState.label} onClick={() => void copyOutput()} disabled={copyState.busy}>
+                {copyState.done ? <TickIcon /> : <CopyIcon />}
               </IconButton>
-              <IconButton label="Export">
-                <ExportIcon />
+              <IconButton label={exportState.label} onClick={() => void exportKit()} disabled={exportState.busy}>
+                {exportState.done ? <TickIcon /> : <ExportIcon />}
               </IconButton>
               {/* Reading is the other half of what this panel is for, and a question with a
                   long answer outline is cramped in a third of the window. Beside Close rather
@@ -276,6 +305,72 @@ function CloseIcon() {
       strokeLinecap="round"
     >
       <path d="M18 6L6 18M6 6l12 12" />
+    </svg>
+  );
+}
+
+/**
+ * A control that reports what it just did, in its own label, and then forgets.
+ *
+ * `IconButton` renders its `label` as a hover tooltip, and the pointer is still over the button
+ * in the moment after a click — so the label is the feedback surface an icon-only control
+ * already has, and no new component is needed to say "Copied".
+ *
+ * The reset matters as much as the message: a tick that stays a tick makes the next click look
+ * like it did nothing. `done` also drives the icon swap, so the two cannot disagree.
+ */
+function useTransientAction(idle: string) {
+  const [label, setLabel] = useState(idle);
+  const [done, setDone] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  const reset = useCallback(() => {
+    setLabel(idle);
+    setDone(false);
+  }, [idle]);
+
+  const settle = useCallback(
+    (ok: boolean, success: string, failure: string) => {
+      setBusy(false);
+      setDone(ok);
+      setLabel(ok ? success : failure);
+      clearTimeout(timer.current);
+      // Failure lingers, because it is the one a reader has to notice and might look away from.
+      timer.current = setTimeout(reset, ok ? 1_600 : 2_600);
+    },
+    [reset],
+  );
+
+  const start = useCallback(() => setBusy(true), []);
+
+  return { label, done, busy, start, settle };
+}
+
+/**
+ * Hand a file to the browser.
+ *
+ * An object URL rather than a `data:` one: a kit is tens of kilobytes of JSON, and a data URL
+ * that long is a URL some browsers refuse. Revoked on the next frame — revoking synchronously
+ * cancels the download in Safari, and never revoking leaks the blob for the life of the tab.
+ */
+function download(filename: string, contents: string): void {
+  const url = URL.createObjectURL(new Blob([contents], { type: "application/json" }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function TickIcon() {
+  return (
+    <svg aria-hidden width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3.5 8.5l3 3 6-7" />
     </svg>
   );
 }

@@ -14,6 +14,7 @@ export type {
   JobRecordView,
   JobSummary,
   JobView,
+  KitExport,
   KitListView,
   KitSummary,
   KitView,

@@ -111,3 +111,105 @@ export function outputDuration(id: KitOutputId, spans: readonly Span[]): string 
 
   return total === 0 ? null : seconds(total);
 }
+
+/**
+ * One output, as plain text you can paste somewhere.
+ *
+ * What the panel's Copy button puts on the clipboard. Per-output rather than whole-kit, because
+ * Copy sits in the header of the output you are reading and "copy" there can only reasonably
+ * mean this one — Export is the control that takes the whole document, and it takes it as
+ * Appendix A JSON.
+ *
+ * Written by hand per output rather than serialised generically. A kit pasted into a notes app
+ * is being *read*, so it wants headings and blank lines, not JSON with the quotes stripped; and
+ * provenance (`origin`, `pinned`, `active`) has no business on a clipboard any more than it has
+ * in Appendix A.
+ *
+ * Archived items are excluded everywhere here, for the same reason the builder never renders
+ * one: `active: false` means gone from every projection, and a clipboard is a projection.
+ */
+export function outputText(id: KitOutputId, kit: InternalKit): string {
+  const title = `${kit.role.company} — ${kit.role.title}`;
+
+  if (id === "brief") {
+    const brief = kit.companyBrief;
+    return join([
+      title,
+      "",
+      brief.summary,
+      section("What they do", brief.whatTheyDo),
+      section("Hiring process", brief.hiringProcess),
+      // The gaps travel with it. A brief pasted into a document without them reads as complete,
+      // and what this kit is careful about is exactly the difference between those two.
+      list("Not found", brief.gaps),
+      list("Sources", brief.sources),
+    ]);
+  }
+
+  if (id === "role") {
+    return join([
+      title,
+      kit.role.location,
+      "",
+      kit.role.summary,
+      list("Responsibilities", kit.role.responsibilities),
+      list(
+        "Requirements",
+        kit.requirements.map((r) => `[${r.priority}] ${r.text}`),
+      ),
+    ]);
+  }
+
+  if (id === "questions") {
+    const active = kit.questions.filter((q) => q.active);
+    return join([
+      `${title} — questions`,
+      ...QUESTION_CATEGORIES.map((category) => {
+        const mine = active.filter((q) => q.category === category);
+        if (mine.length === 0) return "";
+        return join([
+          "",
+          category.toUpperCase(),
+          ...mine.map((q, index) => `\n${index + 1}. ${q.prompt}\n   ${q.answerOutline}`),
+        ]);
+      }),
+    ]);
+  }
+
+  if (id === "flashcards" || id === "practice") {
+    // Practice has no document of its own — it is the deck, drilled. So Copy there hands over
+    // the deck rather than the screen, which is the only thing on it worth pasting anywhere.
+    const cards = kit.flashcards.filter((f) => f.active);
+    return join([
+      `${title} — flashcards`,
+      "",
+      ...cards.map((card) => `${card.front}\n  → ${card.back}\n`),
+    ]);
+  }
+
+  const byId = new Map(kit.questions.map((q) => [q.id, q]));
+  return join([
+    `${title} — ${kit.schedule.daysAvailable}-day plan`,
+    "",
+    ...kit.schedule.days.map((day) =>
+      join([
+        `Day ${day.day} — ${day.focus} (${day.minutes} min)`,
+        ...day.questionIds.map((qid) => `  · ${byId.get(qid)?.prompt ?? qid}`),
+        "",
+      ]),
+    ),
+  ]);
+}
+
+function section(heading: string, body: string): string {
+  return body.trim() === "" ? "" : `\n${heading.toUpperCase()}\n${body.trim()}`;
+}
+
+function list(heading: string, items: readonly string[]): string {
+  return items.length === 0 ? "" : `\n${heading.toUpperCase()}\n${items.map((i) => `  · ${i}`).join("\n")}`;
+}
+
+/** Drops the empties, so an absent section leaves no gap where a heading would have been. */
+function join(parts: readonly string[]): string {
+  return parts.filter((part) => part !== "").join("\n").trim();
+}
