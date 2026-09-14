@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import { ClerkLoaded, ClerkLoading } from "@clerk/nextjs";
+import { AuthSkeleton } from "@/components/auth/auth-skeleton";
 import { HeroStage } from "@/components/hero/hero-stage";
 
 /**
@@ -7,6 +9,9 @@ import { HeroStage } from "@/components/hero/hero-stage";
  * The split collapses below `lg` rather than stacking. On a phone the form is the entire reason
  * the page exists, and a hero above it would push the fields under the fold — the object is
  * decoration, and decoration does not get to come first.
+ *
+ * The card holds its height while Clerk's bundle loads — see the note on `min-h` below, and
+ * `AuthSkeleton` for why a placeholder shaped like the form beats a spinner.
  *
  * Hiding the hero was only half of it, though, and the half that is easy to check. What was left
  * was a card sized for a desktop: `min-h-screen` reserving height a phone browser's toolbars
@@ -129,7 +134,29 @@ export function AuthSplit({ children }: { children: ReactNode }) {
             "[&_.cl-footerActionText]:!text-[13px]",
           ].join(" ")}
         >
-          {children}
+          {/*
+            Held at the height of the form, from the first paint.
+
+            `<SignIn />` renders nothing until its own bundle has loaded and hydrated, so this
+            card was a sliver of padding that snapped to a full form a beat later and moved
+            everything on the page with it. `min-h` is what stops that; the placeholder is what
+            makes the wait legible. The two are a pair — a spinner inside a collapsed card would
+            just be an animation playing over the same jump.
+
+            The height is the form's, measured rather than guessed, and it is a *minimum*: a
+            sign-up form with more fields, or an error banner above the inputs, grows past it
+            without being clipped.
+          */}
+          <div className="flex min-h-[27rem] flex-col justify-center">
+            <ClerkLoading>
+              {/* Said once, in words, for anyone who cannot see the bars. */}
+              <p role="status" className="sr-only">
+                Loading the sign-in form.
+              </p>
+              <AuthSkeleton />
+            </ClerkLoading>
+            <ClerkLoaded>{children}</ClerkLoaded>
+          </div>
         </div>
       </div>
     </div>
