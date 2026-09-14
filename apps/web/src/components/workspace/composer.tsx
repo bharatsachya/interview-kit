@@ -516,7 +516,7 @@ export function Composer({
               onKeyDown={onKeyDown}
               aria-invalid={errors.jd ? true : undefined}
               aria-describedby={errors.jd ? "composer-jd-error" : "composer-hint"}
-              placeholder="Paste the posting, or ask for a change — ‘add more system-design questions’"
+              placeholder="Paste the whole job posting here"
               className="text-ink placeholder:text-ink/40 w-full resize-none bg-transparent px-0.5 pb-1.5 text-[14.5px] leading-relaxed outline-none"
             />
 
@@ -712,7 +712,13 @@ export function Composer({
           <p id="composer-hint" className="text-ink/55 text-xs">
             {queue.length > 0
               ? `${queue.length} ${queue.length === 1 ? "role" : "roles"} queued. Add another, or build them together.`
-              : "The whole posting works better than a summary."}
+              : // What is still missing, in the open, rather than in a tooltip on the disabled
+                // button. That tooltip needs a hover, and a phone has none — so the one place
+                // that said which of the three inputs were outstanding was unreachable on the
+                // device where the two badge-shaped ones are easiest to miss.
+                missing.length > 0
+                ? `Needs ${listWords(missing)}.`
+                : "The whole posting works better than a summary."}
           </p>
         )}
 

@@ -593,11 +593,37 @@ export function Workspace() {
                   onClose={() => setComparing(false)}
                 />
               ) : activeSessionId === null && turns.length === 0 && !activeKitId ? (
-                <div className="flex flex-1 flex-col justify-center gap-2 py-10">
-                  <h1 className="text-[26px] md:text-[34px]">What are you preparing for?</h1>
-                  <p className="text-ink/55 text-[14px] md:text-[15px]">
-                    Paste the posting, tell us where they live on the web, and how long you have.
-                  </p>
+                <div className="flex flex-1 flex-col justify-center gap-5 py-10">
+                  <div className="flex flex-col gap-2">
+                    <h1 className="text-[26px] md:text-[34px]">What are you preparing for?</h1>
+                    <p className="text-ink/55 text-[14px] md:text-[15px]">
+                      Three things, all in the box below. It takes about a minute and a half.
+                    </p>
+                  </div>
+
+                  {/* The three inputs, named and numbered, in the order the controls sit in.
+                      One sentence used to carry all of this — "paste the posting, tell us where
+                      they live on the web, and how long you have" — which reads as prose and
+                      scans as nothing. Two of the three are badges that look optional until the
+                      button refuses to work, and by then the reader has stopped looking for
+                      instructions. */}
+                  <ol className="flex list-none flex-col gap-2.5">
+                    {[
+                      { n: 1, what: "The job posting", how: "Paste the whole thing — a summary makes a thinner kit." },
+                      { n: 2, what: "The company website", how: "We read it for what they do and how they interview." },
+                      { n: 3, what: "Days until the interview", how: "The schedule is built backwards from this." },
+                    ].map((step) => (
+                      <li key={step.n} className="flex items-baseline gap-3">
+                        <span className="font-head bg-tint text-steel-700 grid size-5 shrink-0 place-items-center rounded-full text-[11px] font-semibold tabular-nums">
+                          {step.n}
+                        </span>
+                        <span className="min-w-0">
+                          <span className="text-[14px] font-semibold">{step.what}</span>
+                          <span className="text-ink/55 block text-[13px] leading-snug">{step.how}</span>
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
                 </div>
               ) : (
                 <>
