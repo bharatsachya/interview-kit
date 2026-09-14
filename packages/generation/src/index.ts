@@ -12,6 +12,7 @@ export {
   type SourcePage,
 } from "./brief";
 export { deriveFlashcards, frontFor } from "./flashcards";
+export { fundamentalsFor, type FundamentalsInput } from "./fundamentals";
 export { steerLines } from "./steer";
 export { checkClaims, claimsIn, type Claim, type ClaimCheck, type ClaimKind } from "./claims";
 export { createGapFillWriter, type GapFillDraft, type GapFillWriterOptions } from "./gap-fill";

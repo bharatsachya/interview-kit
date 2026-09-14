@@ -13,7 +13,7 @@ import {
 } from "@trao/contracts";
 import { runCoverage } from "@trao/coverage";
 import { extractRequirements } from "@trao/extraction";
-import { createGapFillWriter, deriveFlashcards, generateBrief, generateQuestions } from "@trao/generation";
+import { createGapFillWriter, deriveFlashcards, fundamentalsFor, generateBrief, generateQuestions } from "@trao/generation";
 import {
   toKitJSON,
   tryToKitJSON,
@@ -305,12 +305,28 @@ async function run(
       ...(deps.questionsPerCategory !== undefined ? { perCategory: deps.questionsPerCategory } : {}),
     });
 
+    // The band the posting cannot ask for.
+    //
+    // Data structures and algorithms are screened for in a large share of engineering interviews
+    // and named in almost none of the adverts, so a kit built strictly from the posting leaves a
+    // candidate unready for the round they are most likely to sit. These carry
+    // `requirementIds: []` and `origin: "fundamentals"` — they assert nothing about the employer
+    // and they close no coverage gap, which is what keeps the grounding rule intact.
+    //
+    // No model call: a known, stable body of material, written in code for the same reason the
+    // schedule is. See `fundamentalsFor`.
+    const fundamentals = fundamentalsFor({
+      roleTitle: extraction.role.title,
+      requirements: requirements.filter((r) => r.kind === "technical").map((r) => r.text),
+    }).map((question) => ({ ...question, id: deps.ids.next("q") }));
+
     s.setAll({
-      questions_out: result.questions.length,
+      questions_out: result.questions.length + fundamentals.length,
+      fundamentals_added: fundamentals.length,
       // True only when every category was recalled; a partial hit is not "this was cached".
       cache_hit: result.reports.filter((r) => r.skipped === undefined).every((r) => r.cacheHit === true),
     });
-    return result;
+    return { ...result, questions: [...result.questions, ...fundamentals] };
   });
 
   // ── 7 + 8. coverage_check, then gap_fill, back to 7 ────────────────────────────────────

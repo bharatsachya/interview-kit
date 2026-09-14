@@ -30,7 +30,15 @@ export type Difficulty = 1 | 2 | 3;
  * this kept" are different intents, and only the second one should survive a regeneration the
  * user explicitly asked for.
  */
-export type Origin = "generated" | "edited" | "manual" | "fallback";
+/**
+ * Where an item came from, which is what decides whether a regeneration may take it back.
+ *
+ * `generated` is the only disposable one — see `regenerateCategory`. The other four are all
+ * things the machine must not quietly undo: the user's own words, the user's edit, a question
+ * written in code because coverage had a hole, and a fundamentals question that was never
+ * derived from the posting in the first place.
+ */
+export type Origin = "generated" | "edited" | "manual" | "fallback" | "fundamentals";
 
 export interface Requirement {
   id: string;

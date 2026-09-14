@@ -57,6 +57,21 @@ site can be re-pasted into that field, and an instruction block trusted for one 
 for every input that can reach it. The wrapper grants exactly one power (change the emphasis,
 difficulty and subject matter of *this section*) and refuses the rest.
 
+## Fundamentals
+
+`fundamentalsFor` adds the questions the posting cannot ask for. DSA is screened for constantly
+and advertised almost never, so a kit grounded only in the advert misses the likeliest round.
+
+It does not break the grounding rule — that rule is about claims concerning the employer, and
+these make none. `requirementIds: []` says each covers no stated requirement (which is also what
+stops coverage treating them as closing a gap), and `origin: "fundamentals"` says where they came
+from and keeps a regeneration of the technical bank from sweeping them away. Non-engineering
+roles get none.
+
+No model call, for the same reason the schedule has none: known, stable material, and being
+deterministic makes the set reviewable — which matters here more than anywhere else, because
+there is no posting to check these against.
+
 ## Checking what the model asserted
 
 `checkClaims` compares the prose a call produced against the material that call was given, and

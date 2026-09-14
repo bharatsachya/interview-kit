@@ -412,6 +412,22 @@ environment flag, defaulting off, that `npm run evaluate` turns on for itself an
 does. The deploy script pins it to `false` in production and does not let the deployment
 override it.
 
+**Fundamentals, which the posting never asks for.** Data structures and algorithms are screened
+for in a large share of engineering interviews and named in almost none of the adverts — so a kit
+built strictly from the posting leaves a candidate unready for the round they are most likely to
+sit. Five questions are added for engineering roles, in the `technical` category because
+Appendix A's four are frozen.
+
+This is not an exception to the grounding rule, which is about **claims concerning the employer**:
+an invented requirement, a fabricated funding round, a stack nobody published. Nothing here
+asserts anything about the company. Each question carries `requirementIds: []` — the honest
+statement that it covers no stated requirement, and what stops coverage counting it as closing a
+gap — and `origin: "fundamentals"`, which says in the document where it came from and means a
+regeneration of the technical bank leaves it alone. A role with no technical requirements and a
+non-engineering title gets none. Written in code, like the schedule: a known, stable body of
+material does not need a model call against a daily cap, and it is reviewable, which matters
+because unlike every other question there is no posting to check these against.
+
 **What the model asserted, against what it was shown.** Extraction has always checked this:
 `checkGrounding` drops a requirement whose distinctive words are not in the posting, because the
 brief's words are that nothing is invented. The company brief had no equivalent — so an invented

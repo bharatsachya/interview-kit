@@ -574,7 +574,15 @@ function EditableQuestion({
             "pinned" is the word that says so. */}
         {question.origin !== "generated" ? (
           <span className="text-ink/40 text-[11px] font-medium">
-            {question.origin === "manual" ? "Yours" : question.origin === "edited" ? "Edited" : "Fallback"}
+            {question.origin === "manual"
+              ? "Yours"
+              : question.origin === "edited"
+                ? "Edited"
+                : // Said plainly, because it is the one label that explains why a question is
+                  // here at all when the posting never mentioned the subject.
+                  question.origin === "fundamentals"
+                  ? "Fundamentals"
+                  : "Fallback"}
           </span>
         ) : null}
 
