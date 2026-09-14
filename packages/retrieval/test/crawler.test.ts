@@ -295,6 +295,64 @@ describe("the fixture sites", () => {
     expect(hiring?.text).toContain("pair-programming");
   });
 
+  /**
+   * The crawl used to stop after one hop, and `maxDepth` was accepted and discarded.
+   *
+   * That loses the material the homepage never mentions: a homepage links "Careers", and the
+   * careers page links "How we interview" — which is the page actually worth reading. No amount
+   * of scoring reaches it, because the scorer was never shown it.
+   */
+  describe("the second hop", () => {
+    it("reaches the page the careers page links to, which the homepage never mentions", async () => {
+      const f = fetcher();
+      const result = await crawlSite(await homepageOf("https://verity.test/", f), {
+        fetcher: f,
+        clock: new TestClock(),
+      });
+
+      const deep = result.pages.find((page) => page.url.includes("/careers/interview-process"));
+      expect(deep?.text).toContain("take-home");
+      expect(deep?.depth).toBe(2);
+      // And the page it was found on is still there — the second hop adds, it does not replace.
+      expect(result.pages.some((page) => page.url.includes("/careers"))).toBe(true);
+    });
+
+    it("does not take it when the caller asked for one hop", async () => {
+      const f = fetcher();
+      const result = await crawlSite(await homepageOf("https://verity.test/", f), {
+        fetcher: f,
+        clock: new TestClock(),
+        maxDepth: 1,
+      });
+
+      // `maxDepth` was a documented option that did nothing. It does something now.
+      expect(result.pages.every((page) => page.depth <= 1)).toBe(true);
+      expect(result.pages.some((page) => page.url.includes("interview-process"))).toBe(false);
+    });
+
+    it("spends no more than the page budget, however much it finds", async () => {
+      const f = fetcher();
+      const result = await crawlSite(await homepageOf("https://verity.test/", f), {
+        fetcher: f,
+        clock: new TestClock(),
+        maxPages: 2,
+      });
+
+      expect(result.pages.length).toBeLessThanOrEqual(2);
+    });
+
+    it("never fetches the same page twice across the two hops", async () => {
+      const f = fetcher();
+      const result = await crawlSite(await homepageOf("https://verity.test/", f), {
+        fetcher: f,
+        clock: new TestClock(),
+      });
+
+      const urls = result.pages.map((page) => page.url);
+      expect(new Set(urls).size).toBe(urls.length);
+    });
+  });
+
   it("acme: crawls a site served from a sub-path", async () => {
     const f = fetcher();
     const result = await crawlSite(await homepageOf("http://localhost:8099/acme/", f), {

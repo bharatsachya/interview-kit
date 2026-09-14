@@ -19,10 +19,29 @@ you can read rather than a model you have to trust.
 `ATS_HOSTS` handles the case where the hiring page is on Greenhouse or Lever: same employer,
 different registrable domain, which `isSameSite` would otherwise reject.
 
-## The crawl
+## The crawl, in two hops
 
-`crawlSite` is breadth-first with a depth cap, a page cap, a byte cap, a per-request timeout and
-a requests-per-second limit. It parses and honours `robots.txt`, and it reports every URL it did
+`crawlSite` reads the homepage, ranks everything it links to, and fetches the winners. Then it
+does it again — with what those pages link to.
+
+The second hop is the one that matters and it was missing: `maxDepth` was an accepted option that
+the crawl explicitly discarded, so every page came back at depth 1. That loses the material a
+homepage never mentions. A homepage links "Careers"; the careers page links "How we interview",
+which is the page actually worth reading. No amount of scoring reaches it, because the scorer was
+never shown it.
+
+The second pass is a genuine **re-rank**, not a repeat: it knows something the first could not —
+*which page each link was found on*. A link discovered on a page the hiring scorer chose carries
+a bonus, because "Our process" is a weak anchor from a homepage and a strong one from the careers
+page. The bonus is small on purpose: it reorders links already worth considering and cannot
+promote one that scored nothing, or the crawl would fetch the careers page's privacy policy.
+
+Same-site only at depth 2 — one hop off the domain is already the rule for an ATS, and following
+an external page's external links is a crawl of somebody else's site. `pages_second_hop` on the
+trace says how many came from it.
+
+`crawlSite` is bounded by a depth cap, a page cap, a byte cap, a per-request timeout and a
+requests-per-second limit. It parses and honours `robots.txt`, and it reports every URL it did
 *not* fetch with a `SkipReason` — a crawl that quietly drops pages is a crawl you cannot debug.
 
 `html.ts` does the cleaning: `cleanText` strips script, style, nav and footer noise before any of

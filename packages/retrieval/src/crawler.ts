@@ -211,6 +211,8 @@ export async function crawlSite(homepage: FetchResult, options: CrawlOptions): P
   // ── Fetch ──────────────────────────────────────────────────────────────────────────────
   let hiringPageExternal = false;
   let lastRequestAt = options.clock.now();
+  /** Raw markup of the same-site pages hop one fetched, for the second hop to re-rank from. */
+  const harvested: { url: string; body: string; kind: ScorerKind }[] = [];
 
   for (const { link, kind } of selection) {
     const key = normaliseUrl(link.url);
@@ -271,9 +273,119 @@ export async function crawlSite(homepage: FetchResult, options: CrawlOptions): P
       kind,
       external: !sameSite,
     });
+    // The markup, kept only until the second hop has read it. `text` on the page is cleaned and
+    // has had its anchors stripped, so it cannot answer "what does this page link to".
+    if (sameSite) harvested.push({ url: result.finalUrl, body: result.body, kind });
   }
 
-  void maxDepth; // One hop from the homepage; depth 2 is the sitemap and framework routes.
+  // ── Second hop: re-rank what the pages we actually fetched link to ──────────────────────
+  //
+  // The crawl used to stop here, and `maxDepth` was accepted and discarded — every page came
+  // back at `depth: 1` because there was no other kind. Links were harvested from the homepage,
+  // ranked once, and the winners fetched; what those winners pointed at was never looked at.
+  //
+  // That loses the case the ranking cannot do anything about. A homepage links "Careers"; the
+  // careers page links "How we interview", "Life here", "Our engineering values" — the pages
+  // with the material actually worth reading, none of which the homepage mentions. No amount of
+  // scoring fixes it, because the scorer was never shown them.
+  //
+  // The second pass knows something the first could not: **which page a link was found on.** A
+  // link discovered on a page the hiring scorer chose is far likelier to be hiring material than
+  // the same link found in a footer, so it carries a bonus into the ranking. That is the "what
+  // the crawl now knows" that makes this a re-rank rather than a repeat.
+  //
+  // Same-site only. One hop off the domain is already the rule for an ATS, and following an
+  // external link's external links is a crawl of someone else's site.
+  if (maxDepth >= 2 && harvested.length > 0 && pages.length < maxPages) {
+    const deeper = mergeCandidates(
+      ...harvested.map((page) => candidatesFromHtml(page.body, page.url)),
+    ).filter((candidate) => {
+      const key = normaliseUrl(candidate.url);
+      return (
+        !visited.has(key) &&
+        !claimed.has(key) &&
+        isSameRegistrableSite(candidate.url, homepage.finalUrl)
+      );
+    });
+
+    // Where each link was found, for the parent bonus below.
+    const foundOn = new Map<string, ScorerKind>();
+    for (const page of harvested) {
+      for (const candidate of candidatesFromHtml(page.body, page.url)) {
+        const key = normaliseUrl(candidate.url);
+        // Hiring wins a tie: a link on both a hiring page and an about page is the interesting one.
+        if (page.kind === "hiring" || !foundOn.has(key)) foundOn.set(key, page.kind);
+      }
+    }
+
+    const deeperRanked: Record<ScorerKind, ScoredLink[]> = {
+      about: withParentBonus(rankLinks(deeper, "about", { origin }), foundOn, "about"),
+      hiring: withParentBonus(rankLinks(deeper, "hiring", { origin }), foundOn, "hiring"),
+    };
+
+    const second: { link: ScoredLink; kind: ScorerKind }[] = [];
+    for (let rank = 0; rank < perScorer; rank += 1) {
+      for (const kind of ["hiring", "about"] as const) {
+        const link = deeperRanked[kind].filter((l) => !claimed.has(normaliseUrl(l.url)))[0];
+        if (link === undefined || link.score <= 0) continue;
+        claimed.add(normaliseUrl(link.url));
+        second.push({ link, kind });
+      }
+    }
+
+    for (const { link, kind } of second) {
+      const key = normaliseUrl(link.url);
+      if (pages.length >= maxPages) {
+        outcomes.set(key, "skipped_budget");
+        skipped.push({ url: link.url, reason: "budget" });
+        continue;
+      }
+      if (!isAllowed(robots, new URL(link.url).pathname)) {
+        outcomes.set(key, "blocked_robots");
+        skipped.push({ url: link.url, reason: "robots" });
+        continue;
+      }
+
+      const sinceLast = options.clock.now() - lastRequestAt;
+      if (sinceLast < minIntervalMs) await options.clock.sleep(minIntervalMs - sinceLast);
+      lastRequestAt = options.clock.now();
+
+      let result: FetchResult;
+      try {
+        result = await options.fetcher.fetch(link.url, {
+          timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          maxBytes: options.maxBytes ?? DEFAULT_MAX_BYTES,
+        });
+      } catch (error) {
+        outcomes.set(key, "failed");
+        skipped.push({ url: link.url, reason: reasonFor(error), detail: message(error) });
+        continue;
+      }
+
+      if (result.status >= 400) {
+        outcomes.set(key, "failed");
+        skipped.push({ url: link.url, reason: "http_error", detail: String(result.status) });
+        continue;
+      }
+      if (!result.contentType.includes("html")) {
+        outcomes.set(key, "failed");
+        skipped.push({ url: link.url, reason: "wrong_content_type", detail: result.contentType });
+        continue;
+      }
+
+      visited.add(normaliseUrl(result.finalUrl));
+      outcomes.set(key, "fetched");
+      pages.push({
+        url: result.finalUrl,
+        title: pageTitle(result.body),
+        text: cleanText(result.body),
+        depth: 2,
+        score: link.score,
+        kind,
+        external: false,
+      });
+    }
+  }
 
   return {
     pages,
@@ -310,4 +422,38 @@ function reasonFor(error: unknown): SkipReason {
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * A link found on a page the scorer already chose is better evidence than the same link found
+ * anywhere else.
+ *
+ * This is the whole difference between a second hop and a repeat of the first. The homepage
+ * scorer judges a link on its URL and its anchor text, which is all there is before a fetch. By
+ * the second round the crawl knows something more: *which page the link was on*. "Our process"
+ * is a weak anchor from a homepage and a strong one from the careers page, and the scorer cannot
+ * see that difference — this is where it is added.
+ *
+ * Deliberately small. It reorders links that were already worth considering; it cannot promote a
+ * link that scored nothing, because a bonus large enough to do that would fetch every link on
+ * the careers page including the privacy policy.
+ */
+const PARENT_BONUS = 4;
+
+function withParentBonus(
+  links: readonly ScoredLink[],
+  foundOn: ReadonlyMap<string, ScorerKind>,
+  kind: ScorerKind,
+): ScoredLink[] {
+  return links
+    .map((link) => {
+      if (link.score <= 0) return link;
+      if (foundOn.get(normaliseUrl(link.url)) !== kind) return link;
+      return {
+        ...link,
+        score: link.score + PARENT_BONUS,
+        reasons: [...link.reasons, `parent:${kind}+${PARENT_BONUS}`],
+      };
+    })
+    .sort((a, b) => b.score - a.score);
 }

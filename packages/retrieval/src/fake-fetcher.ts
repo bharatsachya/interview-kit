@@ -135,7 +135,7 @@ function notFound(url: string): FetchResult {
   };
 }
 
-/** The standard mount set for the four fixture sites, plus the Appendix B sub-path shape. */
+/** The standard mount set for the fixture sites, plus the Appendix B sub-path shape. */
 export function fixtureMounts(): Record<string, string> {
   return {
     "https://meridian.test/": "gitlab-like",
@@ -146,6 +146,8 @@ export function fixtureMounts(): Record<string, string> {
     "https://kestrel.test/": "ats",
     "https://boards.greenhouse.io/kestrel": "greenhouse/acme",
     "https://lumen.test/": "nextjs",
+    // The page worth reading is two hops in: homepage → careers → how we interview.
+    "https://verity.test/": "nested",
     "http://localhost:8099/acme/": "acme",
   };
 }

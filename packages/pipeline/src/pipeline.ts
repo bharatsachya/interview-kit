@@ -211,6 +211,11 @@ async function run(
       links_found: result.linksFound,
       links_scored: result.linksScored,
       pages_fetched: result.pages.length,
+      // How many came from the second hop — pages the homepage never linked to, found by
+      // re-ranking what the first round actually fetched. Zero is ordinary (a flat site has no
+      // second level); it reading zero on a site with a careers section is the signal that the
+      // hop is not doing its job.
+      pages_second_hop: result.pages.filter((page) => page.depth >= 2).length,
       pages_skipped: result.skipped.length,
       robots_blocked: result.robotsBlocked,
       sitemap_urls: result.sitemapUrls,
