@@ -155,6 +155,23 @@
     }
   }
 
+  /* The hero poster, while the 3D object it stands in for is still loading. A born-still
+     illustration reads as broken rather than "getting there" — the same reasoning as the
+     loading identity above, at a scale suited to a full illustration rather than a small mark,
+     which is why the swing is a few percent of opacity rather than mark-breathe's near-half
+     scale. */
+  --animate-poster-breathe: poster-breathe 2.6s cubic-bezier(0.4, 0, 0.4, 1) infinite;
+
+  @keyframes poster-breathe {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.88;
+    }
+  }
+
   /* The flashcard answer. A longer travel than a trace step and a curve that decelerates hard,
      so the block reads as having been dealt onto the card rather than fading up through it —
      the same easing the deck switch uses, because they are the same gesture at two scales. */
