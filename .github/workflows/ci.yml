@@ -90,6 +90,11 @@ jobs:
       # skipped, which is the only reason it is worth running twice.
       - uses: gitleaks/gitleaks-action@v3
         env:
+          # v3 refuses to scan a pull request without it: on that event it reads the PR's
+          # commit list through the API rather than from the checkout. The default token is
+          # enough — read-only is all it needs. Only pull requests failed for want of it,
+          # which is why every push to main stayed green while every PR went red.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_CONFIG: .gitleaks.toml
 
   docker:
