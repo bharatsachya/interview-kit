@@ -8,6 +8,7 @@ import {
   type InternalKit,
   type InternalQuestion,
   type QuestionCategory,
+  type Requirement,
 } from "@trao/kit";
 import { CATEGORY_META } from "@/lib/categories";
 import type { BuilderState } from "@/lib/use-builder";
@@ -78,7 +79,22 @@ export function KitOutputBody({
       {output === "brief" ? <BriefBody kit={kit} builder={builder} onRewrite={onRewrite} /> : null}
       {output === "role" ? <RoleBody kit={kit} /> : null}
       {output === "questions" ? (
-        <QuestionsBody kit={kit} builder={builder} track={track} onTrack={onTrack} onRewrite={onRewrite} />
+        <QuestionsBody
+          kit={kit}
+          builder={builder}
+          track={track}
+          onTrack={onTrack}
+          onRewrite={onRewrite}
+          onOpenRequirement={(id) => {
+            onOpenOutput("role");
+            // The row only exists once the Role output has rendered, and the drawer restores its
+            // remembered scroll position in an effect right after — so this waits a beat and
+            // then wins. A hash link would have jumped to nothing.
+            setTimeout(() => {
+              document.getElementById(`requirement-${id}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+            }, 60);
+          }}
+        />
       ) : null}
       {output === "flashcards" ? (
         <FlashcardsBody
@@ -227,7 +243,7 @@ function BriefBody({
               <SignalTile
                 label="Sources"
                 value={String(brief.sources.length)}
-                detail={brief.sources.length === 1 ? "consulted" : "consulted"}
+                detail="consulted"
               />
               <SignalTile
                 label="Read in full"
@@ -392,12 +408,15 @@ function QuestionsBody({
   track,
   onTrack,
   onRewrite,
+  onOpenRequirement,
 }: {
   kit: InternalKit;
   builder: BuilderState;
   onRewrite: RewriteHandler;
   track: QuestionCategory | null;
   onTrack: (track: QuestionCategory | null) => void;
+  /** Show this requirement's row in the scorecard. */
+  onOpenRequirement: (id: string) => void;
 }) {
   const [showAll, setShowAll] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -406,6 +425,10 @@ function QuestionsBody({
     ? kit.questions.filter((question) => question.category === track)
     : kit.questions;
   const visible = showAll ? shown : shown.slice(0, FIRST_SHOWN);
+  const requirementsById = useMemo(
+    () => new Map(kit.requirements.map((requirement) => [requirement.id, requirement])),
+    [kit.requirements],
+  );
 
   return (
     <>
@@ -447,6 +470,8 @@ function QuestionsBody({
                   <EditableQuestion
                     question={question}
                     builder={builder}
+                    requirementsById={requirementsById}
+                    onOpenRequirement={onOpenRequirement}
                     // Within the filtered view, so the arrows move it past what you can see.
                     siblings={shown.filter((q) => q.category === question.category).map((q) => q.id)}
                   />
@@ -465,32 +490,31 @@ function QuestionsBody({
             </button>
           ) : null}
 
-          {/* Adding and regenerating both need a category, so both live behind the track filter.
-              With "All" selected there is no answer to "which category", and guessing one is how
-              a question ends up somewhere the user did not put it. */}
-          {track ? (
-            <div className="flex flex-wrap items-center gap-2 pt-1">
-              {adding ? null : (
-                <button
-                  type="button"
-                  onClick={() => setAdding(true)}
-                  className="bg-tint text-ink/70 hover:bg-steel-100 hover:text-steel-700 rounded-pill h-8 px-3.5 text-xs font-semibold transition-colors"
-                >
-                  + Write your own
-                </button>
-              )}
+          {/* Adding and regenerating both need a category. Regenerating stays behind the track
+              filter — it replaces a whole track, and guessing which is how generated work gets
+              thrown away. Adding does not: with "All" selected the form asks which track, and
+              the question ends up exactly where the user put it. Nothing is guessed either way. */}
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            {adding ? null : (
+              <button
+                type="button"
+                onClick={() => setAdding(true)}
+                className="bg-tint text-ink/70 hover:bg-steel-100 hover:text-steel-700 rounded-pill h-8 px-3.5 text-xs font-semibold transition-colors"
+              >
+                + Write your own
+              </button>
+            )}
+            {track ? (
               <RegenerateButton
                 label={`Regenerate ${CATEGORY_META[track].label.toLowerCase()}`}
                 onClick={() => onRewrite({ section: "questions", category: track })}
               />
-            </div>
-          ) : (
-            <p className="text-ink/40 pt-1 text-xs">
-              Pick a track to add a question or regenerate it.
-            </p>
-          )}
+            ) : (
+              <span className="text-ink/40 text-xs">Pick a track to regenerate it.</span>
+            )}
+          </div>
 
-          {adding && track ? (
+          {adding ? (
             <NewQuestionForm
               category={track}
               busy={builder.busy === "question:new"}
@@ -545,10 +569,14 @@ function TrackChip({
 function EditableQuestion({
   question,
   builder,
+  requirementsById,
+  onOpenRequirement,
   siblings,
 }: {
   question: InternalQuestion;
   builder: BuilderState;
+  requirementsById: ReadonlyMap<string, Requirement>;
+  onOpenRequirement: (id: string) => void;
   siblings: string[];
 }) {
   const busy = builder.busy === `question:${question.id}`;
@@ -586,7 +614,9 @@ function EditableQuestion({
           </span>
         ) : null}
 
-        <span className="ml-auto flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+        {/* Muted-until-hover is a pointer idea. Below md there is no hover, so the controls are
+            simply there — a phone that hides the only way to reorder or delete has no builder. */}
+        <span className="ml-auto flex items-center gap-0.5 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
           <CardAction label="Move up" onClick={() => moveTo(at - 1)} disabled={busy || at <= 0}>
             ↑
           </CardAction>
@@ -606,9 +636,7 @@ function EditableQuestion({
           >
             {question.pinned ? "★" : "☆"}
           </CardAction>
-          <CardAction label="Delete" onClick={() => builder.deleteQuestion(question.id)} disabled={busy} danger>
-            ✕
-          </CardAction>
+          <DeleteAction label="Delete this question" onDelete={() => builder.deleteQuestion(question.id)} disabled={busy} />
         </span>
       </div>
 
@@ -651,11 +679,101 @@ function EditableQuestion({
             {level === 1 ? "Easy" : level === 2 ? "Medium" : "Hard"}
           </button>
         ))}
-        <span className="text-ink/35 ml-auto text-[11px] tabular-nums">
-          {question.requirementIds.join(" · ") || "no requirement"}
-        </span>
       </div>
+
+      {/* Which requirements this question exists to cover, in the posting's own words. The ids
+          used to be printed here — `r1 · r3` — which told the reader nothing; the text is what
+          lets them judge whether the question actually tests what it claims to. Each one jumps
+          to its row in the scorecard, the same way the coverage cells do. */}
+      <RequirementTags ids={question.requirementIds} requirementsById={requirementsById} onOpen={onOpenRequirement} />
     </Frame>
+  );
+}
+
+function RequirementTags({
+  ids,
+  requirementsById,
+  onOpen,
+}: {
+  ids: readonly string[];
+  requirementsById: ReadonlyMap<string, Requirement>;
+  onOpen: (id: string) => void;
+}) {
+  if (ids.length === 0) {
+    return (
+      <p className="text-ink/35 text-[11px]">
+        Not tied to a requirement — it does not count towards coverage.
+      </p>
+    );
+  }
+  return (
+    <ul className="flex list-none flex-wrap gap-1.5">
+      {ids.map((id) => {
+        const requirement = requirementsById.get(id);
+        const must = requirement?.priority === "must";
+        return (
+          <li key={id} className="max-w-full">
+            <button
+              type="button"
+              onClick={() => onOpen(id)}
+              title={requirement ? `${requirement.text} — ${must ? "must" : "nice"}-have` : id}
+              className={`rounded-pill inline-flex h-6 max-w-full items-center gap-1.5 px-2.5 text-[11px] font-medium transition-colors ${
+                must
+                  ? "bg-steel-100 text-steel-800 hover:bg-steel-200"
+                  : "bg-tint text-ink/60 hover:bg-tint-strong hover:text-ink"
+              }`}
+            >
+              <span className="font-head shrink-0 text-[10px] tracking-widest uppercase opacity-70">
+                {must ? "Must" : "Nice"}
+              </span>
+              <span className="truncate">{requirement?.text ?? id}</span>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/**
+ * Delete, in two presses.
+ *
+ * One press arms it and the glyph becomes the word, so what the second press will do is written
+ * where the pointer already is. It disarms itself after a moment: a card left armed and
+ * forgotten would turn a later stray click into a deletion. No dialog — a modal for a question
+ * you can rewrite in a second is more ceremony than the action deserves — and no undo, because
+ * `active: false` is already how deletion is stored and a second mechanism for the same fact is
+ * one more thing to keep in step.
+ */
+function DeleteAction({ label, onDelete, disabled }: { label: string; onDelete: () => void; disabled: boolean }) {
+  const [armed, setArmed] = useState(false);
+
+  useEffect(() => {
+    if (!armed) return;
+    const timer = setTimeout(() => setArmed(false), 3_000);
+    return () => clearTimeout(timer);
+  }, [armed]);
+
+  if (!armed) {
+    return (
+      <CardAction label={label} onClick={() => setArmed(true)} disabled={disabled} danger>
+        ✕
+      </CardAction>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      autoFocus
+      onClick={onDelete}
+      onBlur={() => setArmed(false)}
+      disabled={disabled}
+      aria-label={`Confirm: ${label}`}
+      className="bg-alarm/10 text-alarm hover:bg-alarm/20 font-head inline-flex h-8 items-center rounded-md px-2 text-[11px] tracking-widest uppercase transition-colors disabled:opacity-30 md:h-6"
+    >
+      Delete?
+    </button>
   );
 }
 
@@ -681,7 +799,7 @@ function CardAction({
       disabled={disabled}
       aria-label={label}
       title={label}
-      className={`grid size-6 place-items-center rounded-md text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-30 ${
+      className={`grid size-8 place-items-center rounded-md text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-30 md:size-6 ${
         danger
           ? "text-ink/35 hover:bg-alarm/10 hover:text-alarm"
           : active
@@ -705,7 +823,7 @@ function MoveMenu({
   disabled: boolean;
 }) {
   return (
-    <label className="relative inline-grid size-6 place-items-center">
+    <label className="relative inline-grid size-8 place-items-center md:size-6">
       <span className="sr-only">Move {question.id} to another track</span>
       <span aria-hidden className="text-ink/35 pointer-events-none text-xs">
         ⇄
@@ -804,12 +922,13 @@ function NewFlashcardForm({
 }
 
 function NewQuestionForm({
-  category,
+  category: fixedCategory,
   busy,
   onAdd,
   onCancel,
 }: {
-  category: QuestionCategory;
+  /** The track the form was opened from, or null under "All" — then the form asks. */
+  category: QuestionCategory | null;
   busy: boolean;
   onAdd: (draft: {
     category: QuestionCategory;
@@ -823,10 +942,37 @@ function NewQuestionForm({
   const [prompt, setPrompt] = useState("");
   const [outline, setOutline] = useState("");
   const [difficulty, setDifficulty] = useState<Difficulty>(2);
+  const [chosen, setChosen] = useState<QuestionCategory | null>(fixedCategory);
+  const category = fixedCategory ?? chosen;
+  const ready = prompt.trim() !== "" && category !== null;
 
   return (
     <Frame className="flex flex-col gap-2.5 p-4">
-      <Kicker>New {CATEGORY_META[category].label.toLowerCase()} question</Kicker>
+      <Kicker>
+        {category ? `New ${CATEGORY_META[category].label.toLowerCase()} question` : "New question"}
+      </Kicker>
+
+      {/* Only asked when the answer is not already known. Opened from a track, the track is the
+          answer; opened from "All", nothing is guessed — the user says which. */}
+      {fixedCategory === null ? (
+        <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Track">
+          {QUESTION_CATEGORIES.map((option) => (
+            <button
+              key={option}
+              type="button"
+              role="radio"
+              aria-checked={chosen === option}
+              onClick={() => setChosen(option)}
+              className={`rounded-pill h-7 px-3 text-xs transition-colors ${
+                chosen === option ? "bg-steel-100 text-steel-700 font-semibold" : "bg-tint text-ink/70 hover:bg-steel-100"
+              }`}
+            >
+              {CATEGORY_META[option].label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       <textarea
         autoFocus
         value={prompt}
@@ -864,8 +1010,9 @@ function NewQuestionForm({
             variant="primary"
             busy={busy}
             busyLabel="Adding"
-            disabled={prompt.trim() === ""}
-            onClick={() =>
+            disabled={!ready}
+            onClick={() => {
+              if (category === null) return;
               onAdd({
                 category,
                 prompt: prompt.trim(),
@@ -874,8 +1021,8 @@ function NewQuestionForm({
                 // Left empty deliberately: coverage is computed from these, and a question the
                 // user wrote does not get to claim it closes a gap. They tag it, or it stays open.
                 requirementIds: [],
-              })
-            }
+              });
+            }}
           >
             Add question
           </Button>
@@ -1134,8 +1281,12 @@ function FlashcardsBody({
         <span className="font-head text-ink/40 text-xs tracking-wider uppercase">
           Card <b className="text-ink text-sm" style={metaStyle}>{index + 1}</b> / {total}
         </span>
-        <span className="text-steel-600 ml-auto text-xs font-medium" style={metaStyle}>
-          {card.requirementIds.length > 0 ? card.requirementIds.join(" · ") : "No requirement tag"}
+        <span className="text-steel-600 ml-auto min-w-0 truncate text-xs font-medium" style={metaStyle}>
+          {card.requirementIds.length > 0
+            ? card.requirementIds
+                .map((id) => kit.requirements.find((requirement) => requirement.id === id)?.text ?? id)
+                .join(" · ")
+            : "No requirement tag"}
         </span>
       </div>
 
@@ -1260,16 +1411,13 @@ function FlashcardsBody({
       <Frame tone="tile" className="flex flex-col gap-2 p-3.5">
         <div className="flex items-center gap-2">
           <Kicker>Edit this card</Kicker>
-          <button
-            type="button"
-            onClick={() => builder.deleteFlashcard(card.id)}
-            disabled={builder.busy === `flashcard:${card.id}`}
-            className="text-ink/35 hover:bg-alarm/10 hover:text-alarm ml-auto grid size-6 place-items-center rounded-md text-xs transition-colors disabled:opacity-30"
-            aria-label="Delete this card"
-            title="Delete this card"
-          >
-            ✕
-          </button>
+          <span className="ml-auto">
+            <DeleteAction
+              label="Delete this card"
+              onDelete={() => builder.deleteFlashcard(card.id)}
+              disabled={builder.busy === `flashcard:${card.id}`}
+            />
+          </span>
         </div>
         <div className="text-[13.5px] font-medium">
           <InlineEdit
@@ -1412,11 +1560,33 @@ function ScheduleBody({
                     {day.minutes} min
                   </span>
                 </div>
-                <p className="text-ink/40 mt-0.5 pl-[52px] text-[11.5px]">
-                  {placed.length === 0
-                    ? "No block. Rest day."
-                    : `${placed.length} ${placed.length === 1 ? "question" : "questions"}`}
-                </p>
+                {/* The count alone said "3 questions" and left the reader to go and find them.
+                    A day is a thing you sit down to do, so it lists what you will do: closed by
+                    default, because fourteen open days is the whole bank again; a native
+                    `details`, because it is a disclosure and the browser already knows how to
+                    open one with a keyboard. */}
+                {placed.length === 0 ? (
+                  <p className="text-ink/40 mt-0.5 pl-13 text-[11.5px]">No block. Rest day.</p>
+                ) : (
+                  <details className="group/day mt-0.5 pl-13">
+                    <summary className="text-ink/40 hover:text-steel-700 -ml-1 inline-flex cursor-pointer list-none items-center gap-1 rounded-md px-1 text-[11.5px] transition-colors [&::-webkit-details-marker]:hidden">
+                      <span aria-hidden className="inline-block text-[9px] transition-transform group-open/day:rotate-90">
+                        ▶
+                      </span>
+                      {placed.length} {placed.length === 1 ? "question" : "questions"}
+                    </summary>
+                    <ol className="mt-1.5 flex list-none flex-col gap-1">
+                      {placed.map((question) => (
+                        <li key={question.id} className="text-ink/70 flex gap-2 text-[12.5px] leading-snug">
+                          <span className="font-head text-steel-500 shrink-0 text-[10px] tracking-widest uppercase pt-0.5">
+                            {CATEGORY_META[question.category].letter}
+                          </span>
+                          <span className="min-w-0">{question.prompt}</span>
+                        </li>
+                      ))}
+                    </ol>
+                  </details>
+                )}
               </li>
             );
           })}
