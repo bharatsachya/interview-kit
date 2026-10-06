@@ -104,9 +104,18 @@ export function InlineEdit({
     className: `bg-surface rounded-control -mx-1.5 -my-0.5 w-full px-1.5 py-0.5 outline-none ring-2 ring-steel-400 ${className}`,
   };
 
-  return multiline ? (
-    <textarea {...shared} rows={Math.min(10, Math.max(2, draft.split("\n").length + 1))} />
-  ) : (
-    <input {...shared} />
+  if (!multiline) return <input {...shared} />;
+
+  // In a paragraph, Enter is a paragraph break and the commit key is the one nobody guesses. So it
+  // is written under the field for as long as the field is open — a hint that is only there while
+  // it applies costs nothing when it does not. Hidden on touch, where there is no ⌘ to press and
+  // tapping away already saves.
+  return (
+    <span className="flex flex-col gap-1">
+      <textarea {...shared} rows={Math.min(10, Math.max(2, draft.split("\n").length + 1))} />
+      <span aria-hidden className="text-ink/35 hidden text-[11px] [@media(hover:hover)]:block">
+        ⌘↵ / Ctrl↵ to save · Esc to cancel · click away saves too
+      </span>
+    </span>
   );
 }
